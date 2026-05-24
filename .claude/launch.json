@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "urjascan-dev",
+      "runtimeExecutable": "/Users/bharatjain/Desktop/Vymanik Aerospace/sunstone-sentinel/sunstone-sentinel-main/node_modules/.bin/vite",
+      "runtimeArgs": ["--port", "8080", "--host"],
+      "cwd": "/Users/bharatjain/Desktop/Vymanik Aerospace/sunstone-sentinel/sunstone-sentinel-main",
+      "port": 8080
+    }
+  ]
+}
