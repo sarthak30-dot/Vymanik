@@ -1,22 +1,23 @@
-import { supabase } from "./supabase";
-
 /**
- * Verifies a Supabase JWT from the Authorization header.
- * Returns the Supabase user object if valid, null otherwise.
+ * Verifies a Supabase JWT from the Authorization header by calling the
+ * Supabase Auth REST API directly.
  *
- * Called on every protected API route so only real Supabase Auth
- * users (created in the Dashboard) can access data.
+ * We use a raw fetch() instead of supabase.auth.getUser() because the SDK's
+ * auth module can behave unexpectedly when the client is initialised with the
+ * service_role key in a stateless serverless environment.
  */
-export async function verifyAuth(authHeader: string | undefined) {
-  if (!authHeader?.startsWith("Bearer ")) return null;
+export async function verifyAuth(authHeader: string | undefined): Promise<boolean> {
+  if (!authHeader?.startsWith("Bearer ")) return false;
   const token = authHeader.slice(7);
   try {
-    // supabase.auth.getUser() can throw (not just return {error}) when given
-    // a malformed token — wrap in try/catch so routes return 401, not 500.
-    const { data: { user }, error } = await supabase.auth.getUser(token);
-    if (error || !user) return null;
-    return user;
+    const res = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      },
+    });
+    return res.ok;
   } catch {
-    return null;
+    return false;
   }
 }
