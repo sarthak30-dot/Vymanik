@@ -178,6 +178,16 @@ async function req<T>(
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+
+  // If the server says our token is invalid/expired, clear the session and
+  // send the user back to the login page instead of leaving them on a blank screen.
+  if (res.status === 401) {
+    const { clearAuth } = await import("./auth");
+    clearAuth();
+    window.location.href = "/";
+    throw new Error("Session expired. Please log in again.");
+  }
+
   if (!res.ok) throw new Error(`API ${method} ${path} → ${res.status}`);
   return res.json() as Promise<T>;
 }
