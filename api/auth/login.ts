@@ -8,9 +8,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { email, password } = (req.body ?? {}) as {
+  const { email, password, role: requestedRole } = (req.body ?? {}) as {
     email?: string;
     password?: string;
+    role?: string;
   };
 
   if (!email || !password) {
@@ -46,10 +47,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
   };
 
-  // Role and plantIds are stored in user_metadata when the user is created
+  // Role is set in user_metadata when the user is created in Supabase Dashboard
   const role = session.user.user_metadata?.role
     ?? session.user.app_metadata?.role
     ?? "client";
+
+  // If the user selected a role tab that doesn't match their account, reject it.
+  // e.g. a "client" account cannot log in via the "Admin" or "Team" tab.
+  if (requestedRole && requestedRole !== role) {
+    return res.status(403).json({
+      error: `This account is not a ${requestedRole} account. Please select the correct role tab.`,
+    });
+  }
 
   const plantIds = session.user.user_metadata?.plantIds ?? ["plant-rajpur-1"];
 
