@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { supabase } from "../_lib/supabase";
-import { setCors, checkAuth } from "../_lib/cors";
+import { setCors } from "../_lib/cors";
+import { verifyAuth } from "../_lib/auth";
 import { toAnomalyDTO } from "../_lib/mappers";
 import type { AnomalyStatus } from "../../packages/types/src/index";
 
@@ -9,7 +10,7 @@ const VALID_STATUSES: AnomalyStatus[] = ["New", "Acknowledged", "In Repair", "Cl
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   setCors(res);
   if (req.method === "OPTIONS") return res.status(204).end();
-  if (!checkAuth(req.headers.authorization)) return res.status(401).json({ error: "Unauthorized" });
+  if (!await verifyAuth(req.headers.authorization)) return res.status(401).json({ error: "Unauthorized" });
 
   const { id } = req.query as { id: string };
 
