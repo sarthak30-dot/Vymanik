@@ -48,17 +48,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   };
 
   // Role is set in user_metadata when the user is created in Supabase Dashboard
-  const role = session.user.user_metadata?.role
+  const accountRole = session.user.user_metadata?.role
     ?? session.user.app_metadata?.role
     ?? "client";
 
-  // If the user selected a role tab that doesn't match their account, reject it.
-  // e.g. a "client" account cannot log in via the "Admin" or "Team" tab.
-  if (requestedRole && requestedRole !== role) {
+  // Admin accounts are super-users: they can log in via any role tab and will
+  // receive a session scoped to the requested role (so they can experience each
+  // portal). Non-admin accounts must use the tab that matches their stored role.
+  const isAdmin = accountRole === "admin";
+  if (requestedRole && requestedRole !== accountRole && !isAdmin) {
     return res.status(403).json({
       error: `This account is not a ${requestedRole} account. Please select the correct role tab.`,
     });
   }
+
+  // For admin users logging in via a non-admin tab, reflect the requested role
+  // back so the frontend renders the correct portal experience.
+  const role = (isAdmin && requestedRole) ? requestedRole : accountRole;
 
   const plantIds = session.user.user_metadata?.plantIds ?? ["plant-rajpur-1"];
 
