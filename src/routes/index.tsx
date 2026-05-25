@@ -23,6 +23,8 @@ function LoginPage() {
   const [lang, setLang] = useState<"en" | "hi">("en");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
+  const [otp, setOtp] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -30,6 +32,20 @@ function LoginPage() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    if (otpMode) {
+      if (!phone.trim()) {
+        setError(lang === "en" ? "Please enter your phone number." : "कृपया अपना फ़ोन नंबर दर्ज करें।");
+        return;
+      }
+      if (!otp.trim() || otp.trim().length < 6) {
+        setError(lang === "en" ? "Please enter the 6-digit OTP sent to your phone." : "कृपया 6-अंकीय OTP दर्ज करें।");
+        return;
+      }
+      setError(lang === "en" ? "OTP login is not yet available. Please use your email and password." : "OTP लॉगिन अभी उपलब्ध नहीं है। कृपया ईमेल और पासवर्ड का उपयोग करें।");
+      return;
+    }
+
     setLoading(true);
     try {
       const auth = await api.auth.login({ email, password, role });
@@ -38,9 +54,9 @@ function LoginPage() {
         role: auth.role,
         plantIds: auth.plantIds,
       });
-      await navigate({ to: role === "team" || role === "admin" ? "/dashboard" : "/dashboard" });
+      await navigate({ to: "/dashboard" });
     } catch {
-      setError("Login failed. Please check your credentials and try again.");
+      setError(lang === "en" ? "Login failed. Please check your credentials and try again." : "लॉगिन विफल। कृपया अपनी जानकारी जांचें।");
     } finally {
       setLoading(false);
     }
@@ -135,12 +151,24 @@ function LoginPage() {
                   <label className="text-xs font-semibold uppercase tracking-widest text-grey-400">Phone</label>
                   <div className="mt-1.5 relative">
                     <Phone size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                    <input className="w-full h-10 pl-9 pr-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre" placeholder="+91 98765 43210" />
+                    <input
+                      value={phone}
+                      onChange={e => setPhone(e.target.value)}
+                      className="w-full h-10 pl-9 pr-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+                      placeholder="+91 98765 43210"
+                    />
                   </div>
                 </div>
                 <div className="col-span-2">
                   <label className="text-xs font-semibold uppercase tracking-widest text-grey-400">OTP</label>
-                  <input className="mt-1.5 w-full h-10 px-3 border border-grey-200 bg-white mono tracking-widest text-sm focus:outline-none focus:ring-1 focus:ring-ochre" placeholder="• • • • • •" />
+                  <input
+                    value={otp}
+                    onChange={e => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    inputMode="numeric"
+                    maxLength={6}
+                    className="mt-1.5 w-full h-10 px-3 border border-grey-200 bg-white mono tracking-widest text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+                    placeholder="• • • • • •"
+                  />
                 </div>
               </div>
             )}

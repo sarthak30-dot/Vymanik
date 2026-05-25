@@ -1,5 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useState, useEffect } from "react";
+import { getUser } from "@/lib/auth";
 import { Upload, Image as ImageIcon, Plane, ClipboardCheck, Send, Layers, Cpu } from "lucide-react";
 import { reviewQueue, type QueueEntry } from "@/lib/mock-data";
 import type { ProcessingStage } from "@/lib/api";
@@ -182,7 +183,20 @@ function PipelineDiagram() {
 // ─── Main component ────────────────────────────────────────────────────────
 
 function TeamDashboard() {
+  const navigate = useNavigate();
+  const user = getUser();
   const [dragOver, setDragOver] = useState(false);
+
+  useEffect(() => {
+    if (!user || (user.role !== "team" && user.role !== "admin")) {
+      navigate({ to: "/dashboard" });
+    }
+  }, []);
+
+  if (!user || (user.role !== "team" && user.role !== "admin")) {
+    return null;
+  }
+
   const pendingCount = reviewQueue.filter(j => j.stage === "Ready").length;
   const processingCount = reviewQueue.filter(j => j.stage !== "Ready" && j.stage !== "Failed").length;
 

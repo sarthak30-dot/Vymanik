@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { Download, ArrowRight, Award } from "lucide-react";
 import { inspectionHistory, plant } from "@/lib/mock-data";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/reports")({
   head: () => ({ meta: [{ title: "Reports — UrjaScan" }] }),
@@ -55,7 +56,10 @@ function ReportsPage() {
                     <span className="text-normal text-xs font-medium">IEC 62446-3</span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <button className="inline-flex items-center gap-1 text-ochre hover:underline font-medium text-xs">
+                    <button
+                      onClick={() => toast.success(`Downloading report for ${i.date}…`, { description: "Your PDF will be ready in a few seconds." })}
+                      className="inline-flex items-center gap-1 text-ochre hover:underline font-medium text-xs"
+                    >
                       <Download size={12} /> PDF
                     </button>
                   </td>
@@ -116,7 +120,13 @@ function ReportsPage() {
             </button>
           ))}
         </div>
-        <button className="mt-4 h-10 px-5 bg-ochre hover:bg-ochre-light text-ochre-fg font-semibold text-sm inline-flex items-center gap-2">
+        <button
+          onClick={() => {
+            const label = reportType === "exec" ? "Executive Summary" : reportType === "tech" ? "Technical Report" : "Warranty Package";
+            toast.success(`Generating ${label}…`, { description: "Your report will be emailed once ready. ETA ~30 seconds." });
+          }}
+          className="mt-4 h-10 px-5 bg-ochre hover:bg-ochre-light text-ochre-fg font-semibold text-sm inline-flex items-center gap-2"
+        >
           <Download size={14} /> Generate {reportType === "exec" ? "Executive Summary" : reportType === "tech" ? "Technical Report" : "Warranty Package"}
         </button>
       </section>

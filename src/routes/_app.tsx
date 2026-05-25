@@ -3,6 +3,7 @@ import { AppHeader } from "@/components/layout/AppHeader";
 import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
 import { AppFooter } from "@/components/layout/AppFooter";
 import { I18nProvider } from "@/lib/i18n";
+import { Toaster } from "@/components/ui/sonner";
 
 export const Route = createFileRoute("/_app")({
   component: AppLayout,
@@ -18,6 +19,7 @@ function AppLayout() {
         </main>
         <AppFooter />
         <MobileBottomNav />
+        <Toaster richColors position="bottom-right" />
       </div>
     </I18nProvider>
   );
