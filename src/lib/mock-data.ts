@@ -130,6 +130,172 @@ export const digitizationRecords: DigitizationRecord[] = [
   { id: "dig-003", name: "Panel-Level Asset Map",           type: "Asset Map",     date: "12 Mar 2025", format: "GeoJSON + CSV", sizeLabel: "1.8 MB"  },
 ];
 
+// ─── Team members ───────────────────────────────────────────────────────────
+
+export type MemberStatus = "On Mission" | "Active" | "Off Duty";
+
+export interface TeamMember {
+  id: string;
+  name: string;
+  initials: string;
+  email: string;
+  phone: string;
+  droneModel: string;
+  certifications: string[];
+  assignedPlantId: string | null;
+  status: MemberStatus;
+  inspectionsCompleted: number;
+  anomaliesFound: number;
+  lastActive: string;
+}
+
+export const teamMembers: TeamMember[] = [
+  {
+    id: "arjun-k",
+    name: "Arjun Kumar",
+    initials: "AK",
+    email: "arjun@vymanik.com",
+    phone: "+91 98765 43210",
+    droneModel: "DJI Matrice 350 RTK + FLIR Zenmuse XT2",
+    certifications: ["DGCA UAS Pilot", "IEC 62446-3"],
+    assignedPlantId: "plant-001",
+    status: "On Mission",
+    inspectionsCompleted: 18,
+    anomaliesFound: 142,
+    lastActive: "Today, 10:22 AM",
+  },
+  {
+    id: "rahul-s",
+    name: "Rahul Sharma",
+    initials: "RS",
+    email: "rahul@vymanik.com",
+    phone: "+91 87654 32109",
+    droneModel: "DJI Matrice 30T",
+    certifications: ["DGCA UAS Pilot"],
+    assignedPlantId: "plant-002",
+    status: "Active",
+    inspectionsCompleted: 12,
+    anomaliesFound: 89,
+    lastActive: "Yesterday, 4:15 PM",
+  },
+  {
+    id: "priya-m",
+    name: "Priya Mehta",
+    initials: "PM",
+    email: "priya@vymanik.com",
+    phone: "+91 76543 21098",
+    droneModel: "Autel EVO II Dual 640T",
+    certifications: ["DGCA UAS Pilot", "IEC 62446-3", "Thermal Analysis L2"],
+    assignedPlantId: "plant-003",
+    status: "Active",
+    inspectionsCompleted: 9,
+    anomaliesFound: 67,
+    lastActive: "20 May 2026",
+  },
+  {
+    id: "vikram-t",
+    name: "Vikram Tiwari",
+    initials: "VT",
+    email: "vikram@vymanik.com",
+    phone: "+91 65432 10987",
+    droneModel: "Parrot ANAFI Thermal",
+    certifications: ["DGCA UAS Pilot"],
+    assignedPlantId: null,
+    status: "Off Duty",
+    inspectionsCompleted: 6,
+    anomaliesFound: 41,
+    lastActive: "15 May 2026",
+  },
+];
+
+/** Resolve an email/userId to the matching TeamMember, or null */
+export function getTeamMemberByEmail(email: string): TeamMember | null {
+  return teamMembers.find(m => m.email === email) ?? null;
+}
+
+// ─── Multi-plant fleet (Control Center) ─────────────────────────────────────
+
+export type PlantStatus = "Operational" | "Under Review" | "Inspection Overdue";
+
+export interface PlantSummary {
+  id: string;
+  name: string;
+  client: string;
+  location: string;
+  capacityMW: number;
+  totalPanels: number;
+  healthScore: number;
+  lastInspection: string;
+  nextInspection: string;
+  assignedInspectorId: string | null;
+  criticalCount: number;
+  mediumCount: number;
+  status: PlantStatus;
+}
+
+export const allPlants: PlantSummary[] = [
+  {
+    id: "plant-001",
+    name: "Rajpur Solar Plant",
+    client: "Rajpur Solar Pvt. Ltd.",
+    location: "Rajasthan",
+    capacityMW: 2.3,
+    totalPanels: 863,
+    healthScore: 83,
+    lastInspection: "3 May 2026",
+    nextInspection: "3 Aug 2026",
+    assignedInspectorId: "arjun-k",
+    criticalCount: 4,
+    mediumCount: 12,
+    status: "Operational",
+  },
+  {
+    id: "plant-002",
+    name: "Jaisalmer Wind-Solar Hybrid",
+    client: "Greenko Energy",
+    location: "Rajasthan",
+    capacityMW: 5.1,
+    totalPanels: 1920,
+    healthScore: 91,
+    lastInspection: "19 May 2026",
+    nextInspection: "19 Aug 2026",
+    assignedInspectorId: "rahul-s",
+    criticalCount: 2,
+    mediumCount: 8,
+    status: "Under Review",
+  },
+  {
+    id: "plant-003",
+    name: "Kutch Solar Phase II",
+    client: "Adani Green",
+    location: "Gujarat",
+    capacityMW: 8.4,
+    totalPanels: 3200,
+    healthScore: 76,
+    lastInspection: "10 Apr 2026",
+    nextInspection: "20 May 2026",
+    assignedInspectorId: "priya-m",
+    criticalCount: 18,
+    mediumCount: 31,
+    status: "Inspection Overdue",
+  },
+  {
+    id: "plant-004",
+    name: "Charanka Solar Park Block C",
+    client: "Torrent Power",
+    location: "Gujarat",
+    capacityMW: 4.2,
+    totalPanels: 1580,
+    healthScore: 88,
+    lastInspection: "1 Mar 2026",
+    nextInspection: "1 Jun 2026",
+    assignedInspectorId: null,
+    criticalCount: 6,
+    mediumCount: 14,
+    status: "Operational",
+  },
+];
+
 // ─── Processing queue (Team portal) ────────────────────────────────────────
 
 import type { ProcessingStage } from "./api";

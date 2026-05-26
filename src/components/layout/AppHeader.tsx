@@ -12,11 +12,25 @@ const MOCK_NOTIFICATIONS = [
   { id: "3", title: "Inspection report ready", body: "3 May 2026 IEC 62446-3 certified report published", time: "3 days ago", unread: false },
 ];
 
-const NAV_ITEMS = [
+const CLIENT_NAV = [
   { to: "/dashboard", label: "Dashboard" },
   { to: "/map",       label: "Map" },
   { to: "/anomalies", label: "Anomalies" },
   { to: "/reports",   label: "Reports" },
+  { to: "/services",  label: "Services" },
+] as const;
+
+const TEAM_NAV = [
+  { to: "/team",      label: "Inspector Portal" },
+  { to: "/anomalies", label: "Anomalies" },
+  { to: "/reports",   label: "Reports" },
+  { to: "/services",  label: "Services" },
+] as const;
+
+const ADMIN_NAV = [
+  { to: "/admin",     label: "Control Center" },
+  { to: "/dashboard", label: "Plants" },
+  { to: "/team",      label: "Team" },
   { to: "/services",  label: "Services" },
 ] as const;
 
@@ -55,8 +69,8 @@ export function AppHeader() {
 
         {/* Desktop navigation */}
         <nav className="hidden md:flex items-center gap-0.5">
-          {NAV_ITEMS.map(({ to, label }) => {
-            const active = loc.pathname === to || (to !== "/dashboard" && loc.pathname.startsWith(to));
+          {(user?.role === "admin" ? ADMIN_NAV : user?.role === "team" ? TEAM_NAV : CLIENT_NAV).map(({ to, label }) => {
+            const active = loc.pathname === to || (to !== "/dashboard" && to !== "/admin" && to !== "/team" && loc.pathname.startsWith(to));
             return (
               <Link
                 key={to}
@@ -132,6 +146,11 @@ export function AppHeader() {
                   <Link to="/settings" onClick={() => setShowUserMenu(false)} className="block px-4 py-2 text-xs text-foreground hover:bg-grey-50">
                     Settings
                   </Link>
+                  {user?.role === "admin" && (
+                    <Link to="/admin" onClick={() => setShowUserMenu(false)} className="block px-4 py-2 text-xs text-foreground hover:bg-grey-50">
+                      Control Center
+                    </Link>
+                  )}
                   {(user?.role === "team" || user?.role === "admin") && (
                     <Link to="/team" onClick={() => setShowUserMenu(false)} className="block px-4 py-2 text-xs text-foreground hover:bg-grey-50">
                       Inspector Portal

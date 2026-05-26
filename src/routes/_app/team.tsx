@@ -1,9 +1,10 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { getUser } from "@/lib/auth";
-import { Upload, Image as ImageIcon, Plane, ClipboardCheck, Send, Layers, Cpu } from "lucide-react";
-import { reviewQueue, type QueueEntry } from "@/lib/mock-data";
+import { Upload, Image as ImageIcon, Plane, ClipboardCheck, Send, Layers, Cpu, AlertTriangle, CheckCircle2, User2, MapPin } from "lucide-react";
+import { reviewQueue, teamMembers, allPlants, anomalyTypes, getTeamMemberByEmail, type QueueEntry } from "@/lib/mock-data";
 import type { ProcessingStage } from "@/lib/api";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/team")({
   head: () => ({ meta: [{ title: "Inspector Portal — UrjaScan" }] }),
@@ -182,6 +183,115 @@ function PipelineDiagram() {
 
 // ─── Main component ────────────────────────────────────────────────────────
 
+// ─── Report Anomaly form ────────────────────────────────────────────────────
+
+function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
+  const [plantId, setPlantId] = useState("");
+  const [panelId, setPanelId] = useState("");
+  const [type, setType] = useState("");
+  const [deltaT, setDeltaT] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!plantId || !panelId || !type) return;
+    setSubmitted(true);
+    const plant = allPlants.find(p => p.id === plantId);
+    toast.success(`Anomaly flagged on ${plant?.name ?? "plant"}`, {
+      description: `Panel ${panelId} — ${type}${deltaT ? ` · ΔT +${deltaT}°C` : ""}. Plant owner will be notified.`,
+    });
+    // reset
+    setPlantId(""); setPanelId(""); setType(""); setDeltaT(""); setNotes(""); setSubmitted(false);
+  }
+
+  return (
+    <section className="bg-white border border-grey-200 p-5 md:p-6">
+      <h2 className="font-semibold flex items-center gap-2 text-sm mb-1">
+        <AlertTriangle size={15} className="text-critical" /> Report New Anomaly to Plant Owner
+      </h2>
+      <p className="text-xs text-muted-foreground mb-5">
+        Flag a new finding during an active inspection. It will appear immediately on the plant owner's Anomalies page.
+      </p>
+      {submitted ? (
+        <div className="flex items-center gap-2 text-normal text-sm py-4">
+          <CheckCircle2 size={16} /> Anomaly reported. Plant owner has been notified.
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Field label="Plant">
+            <select
+              required
+              value={plantId}
+              onChange={e => setPlantId(e.target.value)}
+              className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+            >
+              <option value="">Select plant…</option>
+              {allPlants.map(p => (
+                <option key={p.id} value={p.id}>{p.name} — {p.client}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Panel ID">
+            <input
+              required
+              value={panelId}
+              onChange={e => setPanelId(e.target.value)}
+              placeholder="e.g. R14-M07"
+              className="w-full h-9 px-3 border border-grey-200 bg-white text-sm mono focus:outline-none focus:ring-1 focus:ring-ochre"
+            />
+          </Field>
+          <Field label="Anomaly Type">
+            <select
+              required
+              value={type}
+              onChange={e => setType(e.target.value)}
+              className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+            >
+              <option value="">Select type…</option>
+              {anomalyTypes.map(t => <option key={t}>{t}</option>)}
+            </select>
+          </Field>
+          <Field label="ΔT above reference (°C) — optional">
+            <input
+              type="number"
+              min={0}
+              value={deltaT}
+              onChange={e => setDeltaT(e.target.value)}
+              placeholder="e.g. 47"
+              className="w-full h-9 px-3 border border-grey-200 bg-white text-sm mono focus:outline-none focus:ring-1 focus:ring-ochre"
+            />
+          </Field>
+          <div className="md:col-span-2">
+            <Field label="Inspection Notes">
+              <textarea
+                rows={3}
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                placeholder="Describe what you observed in the RGB and thermal imagery…"
+                className="w-full px-3 py-2 border border-grey-200 bg-white text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ochre"
+              />
+            </Field>
+          </div>
+          <div className="md:col-span-2 flex items-center gap-3">
+            <button
+              type="submit"
+              className="h-9 px-5 bg-critical hover:opacity-90 text-white font-semibold text-sm"
+            >
+              Flag Anomaly
+            </button>
+            <p className="text-[11px] text-muted-foreground">
+              Reported by <span className="font-medium text-foreground">{inspectorName}</span>
+            </p>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
+// ─── Main component ────────────────────────────────────────────────────────
+
 function TeamDashboard() {
   const navigate = useNavigate();
   const user = getUser();
@@ -197,22 +307,91 @@ function TeamDashboard() {
     return null;
   }
 
+  // Resolve logged-in inspector's name from teamMembers
+  const member = getTeamMemberByEmail(user.userId);
+  const inspectorName = member?.name ?? user.userId;
+  const assignedPlant = member?.assignedPlantId
+    ? allPlants.find(p => p.id === member.assignedPlantId)
+    : null;
+
   const pendingCount = reviewQueue.filter(j => j.stage === "Ready").length;
   const processingCount = reviewQueue.filter(j => j.stage !== "Ready" && j.stage !== "Failed").length;
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">
-      <header>
-        <h1 className="text-2xl md:text-3xl font-bold">Inspector Portal — Vymanik Aerospace</h1>
-        <p className="text-muted-foreground mt-1 text-sm">Upload drone imagery, monitor the TGIS pipeline, and publish reports to plant owners.</p>
-      </header>
 
-      {/* Stats */}
+      {/* ── Personal welcome banner ── */}
+      <section className="bg-primary text-white p-6 md:p-8 flex flex-col md:flex-row md:items-center gap-6">
+        <div className="w-14 h-14 bg-white/10 border border-white/20 flex items-center justify-center text-white font-bold text-xl shrink-0">
+          {member?.initials ?? "IN"}
+        </div>
+        <div className="flex-1">
+          <p className="text-[11px] uppercase tracking-widest text-white/50 mb-1">Inspector Portal</p>
+          <h1 className="text-2xl md:text-3xl font-bold text-white">Welcome back, {inspectorName}</h1>
+          {member && (
+            <p className="text-white/60 mt-1 text-sm">{member.droneModel} · {member.certifications.join(" · ")}</p>
+          )}
+        </div>
+        {/* Personal stats */}
+        <div className="grid grid-cols-2 md:grid-cols-2 gap-px bg-white/10 border border-white/10 shrink-0">
+          {[
+            { label: "Inspections", value: member?.inspectionsCompleted ?? 0 },
+            { label: "Anomalies Found", value: member?.anomaliesFound ?? 0 },
+          ].map(s => (
+            <div key={s.label} className="bg-white/5 px-5 py-3 text-center">
+              <p className="mono text-2xl font-bold text-ochre">{s.value}</p>
+              <p className="text-[11px] text-white/50 mt-0.5">{s.label}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Assigned plant ── */}
+      {assignedPlant ? (
+        <section className="bg-white border border-grey-200 p-5 flex flex-col md:flex-row md:items-center gap-4">
+          <div className="w-9 h-9 bg-grey-50 border border-grey-200 flex items-center justify-center shrink-0">
+            <MapPin size={16} className="text-ochre" />
+          </div>
+          <div className="flex-1">
+            <p className="text-[11px] uppercase tracking-widest text-grey-400 mb-0.5">Currently Assigned Plant</p>
+            <p className="font-semibold text-foreground">{assignedPlant.name}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {assignedPlant.client} · {assignedPlant.location} · {assignedPlant.capacityMW} MW · {assignedPlant.totalPanels.toLocaleString()} panels
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="text-center">
+              <p className="mono text-2xl font-bold text-foreground">{assignedPlant.healthScore}</p>
+              <p className="text-[10px] text-muted-foreground">Health</p>
+            </div>
+            <div className="text-center">
+              <p className="mono text-2xl font-bold text-critical">{assignedPlant.criticalCount}</p>
+              <p className="text-[10px] text-muted-foreground">Critical</p>
+            </div>
+            <Link
+              to="/anomalies"
+              className="h-8 px-4 bg-ochre hover:bg-ochre-light text-ochre-fg font-medium text-xs flex items-center"
+            >
+              View Anomalies
+            </Link>
+          </div>
+        </section>
+      ) : (
+        <section className="bg-white border border-grey-200 p-5 flex items-center gap-4">
+          <User2 size={16} className="text-muted-foreground shrink-0" />
+          <p className="text-sm text-muted-foreground">No plant currently assigned. Contact your Control Center admin.</p>
+        </section>
+      )}
+
+      {/* ── Pipeline stats ── */}
       <section className="bg-white border border-grey-200 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-grey-200">
         <TeamStat label="Jobs processing now" value={processingCount} icon={Plane} />
         <TeamStat label="Ready for analyst review" value={pendingCount} icon={ClipboardCheck} />
         <TeamStat label="Published to clients this month" value={3} icon={Send} />
       </section>
+
+      {/* ── Report new anomaly ── */}
+      <ReportAnomalyForm inspectorName={inspectorName} />
 
       {/* Pipeline diagram */}
       <PipelineDiagram />
@@ -241,7 +420,11 @@ function TeamDashboard() {
             <input type="date" className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre" />
           </Field>
           <Field label="Pilot">
-            <input placeholder="Pilot name" className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre" />
+            <input
+              defaultValue={inspectorName}
+              placeholder="Pilot name"
+              className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+            />
           </Field>
           <Field label="Drone Model">
             <select className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre">

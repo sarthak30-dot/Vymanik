@@ -54,7 +54,8 @@ function LoginPage() {
         role: auth.role,
         plantIds: auth.plantIds,
       });
-      await navigate({ to: "/dashboard" });
+      const dest = auth.role === "admin" ? "/admin" : auth.role === "team" ? "/team" : "/dashboard";
+      await navigate({ to: dest });
     } catch {
       setError(lang === "en" ? "Login failed. Please check your credentials and try again." : "लॉगिन विफल। कृपया अपनी जानकारी जांचें।");
     } finally {
