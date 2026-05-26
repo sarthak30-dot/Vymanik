@@ -1,9 +1,10 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { getUser } from "@/lib/auth";
-import { Upload, Image as ImageIcon, Plane, ClipboardCheck, Send, Layers, Cpu, AlertTriangle, CheckCircle2, User2, MapPin } from "lucide-react";
+import { Upload, Image as ImageIcon, Plane, ClipboardCheck, Send, Layers, Cpu, AlertTriangle, User2, MapPin } from "lucide-react";
 import { reviewQueue, teamMembers, allPlants, anomalyTypes, getTeamMemberByEmail, type QueueEntry } from "@/lib/mock-data";
 import type { ProcessingStage } from "@/lib/api";
+import { useAddAnomaly } from "@/lib/queries";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/team")({
@@ -191,18 +192,36 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
   const [type, setType] = useState("");
   const [deltaT, setDeltaT] = useState("");
   const [notes, setNotes] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+
+  const addAnomaly = useAddAnomaly();
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!plantId || !panelId || !type) return;
-    setSubmitted(true);
+
     const plant = allPlants.find(p => p.id === plantId);
-    toast.success(`Anomaly flagged on ${plant?.name ?? "plant"}`, {
-      description: `Panel ${panelId} — ${type}${deltaT ? ` · ΔT +${deltaT}°C` : ""}. Plant owner will be notified.`,
-    });
-    // reset
-    setPlantId(""); setPanelId(""); setType(""); setDeltaT(""); setNotes(""); setSubmitted(false);
+    const deltaTNum = deltaT ? parseFloat(deltaT) : null;
+
+    addAnomaly.mutate(
+      {
+        plantId,
+        panelId,
+        type,
+        deltaT: deltaTNum,
+        notes,
+        inspectorName,
+        gps: plant?.gps ?? { lat: 26.4521, lng: 73.0192 },
+      },
+      {
+        onSuccess: () => {
+          toast.success(`Anomaly added to ${plant?.name ?? "plant"} dashboard`, {
+            description: `Panel ${panelId.toUpperCase()} — ${type}${deltaTNum ? ` · ΔT +${deltaTNum}°C` : ""}. Visible to plant owner now.`,
+          });
+          // Reset form
+          setPlantId(""); setPanelId(""); setType(""); setDeltaT(""); setNotes("");
+        },
+      },
+    );
   }
 
   return (
@@ -213,11 +232,6 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
       <p className="text-xs text-muted-foreground mb-5">
         Flag a new finding during an active inspection. It will appear immediately on the plant owner's Anomalies page.
       </p>
-      {submitted ? (
-        <div className="flex items-center gap-2 text-normal text-sm py-4">
-          <CheckCircle2 size={16} /> Anomaly reported. Plant owner has been notified.
-        </div>
-      ) : (
         <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Field label="Plant">
             <select
@@ -276,16 +290,16 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
           <div className="md:col-span-2 flex items-center gap-3">
             <button
               type="submit"
-              className="h-9 px-5 bg-critical hover:opacity-90 text-white font-semibold text-sm"
+              disabled={addAnomaly.isPending}
+              className="h-9 px-5 bg-critical hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm inline-flex items-center gap-2"
             >
-              Flag Anomaly
+              {addAnomaly.isPending ? "Adding…" : "Flag Anomaly — Add to Plant Dashboard"}
             </button>
             <p className="text-[11px] text-muted-foreground">
               Reported by <span className="font-medium text-foreground">{inspectorName}</span>
             </p>
           </div>
         </form>
-      )}
     </section>
   );
 }

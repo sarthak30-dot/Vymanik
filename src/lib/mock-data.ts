@@ -231,6 +231,7 @@ export interface PlantSummary {
   criticalCount: number;
   mediumCount: number;
   status: PlantStatus;
+  gps: { lat: number; lng: number };
 }
 
 export const allPlants: PlantSummary[] = [
@@ -248,6 +249,7 @@ export const allPlants: PlantSummary[] = [
     criticalCount: 4,
     mediumCount: 12,
     status: "Operational",
+    gps: { lat: 26.4521, lng: 73.0192 },
   },
   {
     id: "plant-002",
@@ -263,6 +265,7 @@ export const allPlants: PlantSummary[] = [
     criticalCount: 2,
     mediumCount: 8,
     status: "Under Review",
+    gps: { lat: 26.9124, lng: 70.9126 },
   },
   {
     id: "plant-003",
@@ -278,6 +281,7 @@ export const allPlants: PlantSummary[] = [
     criticalCount: 18,
     mediumCount: 31,
     status: "Inspection Overdue",
+    gps: { lat: 23.7337, lng: 69.8597 },
   },
   {
     id: "plant-004",
@@ -293,6 +297,7 @@ export const allPlants: PlantSummary[] = [
     criticalCount: 6,
     mediumCount: 14,
     status: "Operational",
+    gps: { lat: 23.9288, lng: 71.1718 },
   },
 ];
 
