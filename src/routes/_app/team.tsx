@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { getUser } from "@/lib/auth";
-import { Upload, Image as ImageIcon, Plane, ClipboardCheck, Send, Layers, Cpu, AlertTriangle, User2, MapPin } from "lucide-react";
+import { getUser, setDisplayName } from "@/lib/auth";
+import { Upload, Image as ImageIcon, Plane, ClipboardCheck, Send, Layers, Cpu, AlertTriangle, User2, MapPin, Pencil, Check, X } from "lucide-react";
 import { reviewQueue, teamMembers, allPlants, anomalyTypes, getTeamMemberByEmail, type QueueEntry } from "@/lib/mock-data";
 import type { ProcessingStage } from "@/lib/api";
 import { useAddAnomaly } from "@/lib/queries";
@@ -311,6 +311,26 @@ function TeamDashboard() {
   const user = getUser();
   const [dragOver, setDragOver] = useState(false);
 
+  // Display name: member name > saved displayName > "Vymanik" default
+  const member = user ? getTeamMemberByEmail(user.userId) : null;
+  const savedName = user?.displayName ?? member?.name ?? "Vymanik";
+  const [displayName, setDisplayNameState] = useState(savedName);
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState(savedName);
+
+  function saveName() {
+    const trimmed = nameInput.trim() || "Vymanik";
+    setDisplayNameState(trimmed);
+    setDisplayName(trimmed);
+    setEditingName(false);
+    toast.success("Display name updated.");
+  }
+
+  function cancelEdit() {
+    setNameInput(displayName);
+    setEditingName(false);
+  }
+
   useEffect(() => {
     if (!user || (user.role !== "team" && user.role !== "admin")) {
       navigate({ to: "/dashboard" });
@@ -321,12 +341,17 @@ function TeamDashboard() {
     return null;
   }
 
-  // Resolve logged-in inspector's name from teamMembers
-  const member = getTeamMemberByEmail(user.userId);
-  const inspectorName = member?.name ?? user.userId;
   const assignedPlant = member?.assignedPlantId
     ? allPlants.find(p => p.id === member.assignedPlantId)
     : null;
+
+  // Initials from display name (first letter of each word, max 2)
+  const initials = displayName
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(w => w[0].toUpperCase())
+    .join("") || "IN";
 
   const pendingCount = reviewQueue.filter(j => j.stage === "Ready").length;
   const processingCount = reviewQueue.filter(j => j.stage !== "Ready" && j.stage !== "Failed").length;
@@ -337,17 +362,48 @@ function TeamDashboard() {
       {/* ── Personal welcome banner ── */}
       <section className="bg-primary text-white p-6 md:p-8 flex flex-col md:flex-row md:items-center gap-6">
         <div className="w-14 h-14 bg-white/10 border border-white/20 flex items-center justify-center text-white font-bold text-xl shrink-0">
-          {member?.initials ?? "IN"}
+          {initials}
         </div>
         <div className="flex-1">
           <p className="text-[11px] uppercase tracking-widest text-white/50 mb-1">Inspector Portal</p>
-          <h1 className="text-2xl md:text-3xl font-bold text-white">Welcome back, {inspectorName}</h1>
+
+          {/* Name — display or edit mode */}
+          {editingName ? (
+            <div className="flex items-center gap-2 mt-0.5">
+              <input
+                autoFocus
+                value={nameInput}
+                onChange={e => setNameInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") saveName(); if (e.key === "Escape") cancelEdit(); }}
+                className="bg-white/10 border border-white/30 text-white placeholder-white/40 text-xl font-bold px-3 py-1 focus:outline-none focus:border-ochre w-64"
+                placeholder="Your name"
+              />
+              <button onClick={saveName} className="p-1.5 bg-ochre hover:bg-ochre-light rounded-sm" title="Save">
+                <Check size={14} className="text-ochre-fg" />
+              </button>
+              <button onClick={cancelEdit} className="p-1.5 bg-white/10 hover:bg-white/20 rounded-sm" title="Cancel">
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl md:text-3xl font-bold text-white">Welcome back, {displayName}</h1>
+              <button
+                onClick={() => { setNameInput(displayName); setEditingName(true); }}
+                className="p-1 bg-white/10 hover:bg-white/20 rounded-sm opacity-70 hover:opacity-100 transition"
+                title="Edit display name"
+              >
+                <Pencil size={13} />
+              </button>
+            </div>
+          )}
+
           {member && (
             <p className="text-white/60 mt-1 text-sm">{member.droneModel} · {member.certifications.join(" · ")}</p>
           )}
         </div>
         {/* Personal stats */}
-        <div className="grid grid-cols-2 md:grid-cols-2 gap-px bg-white/10 border border-white/10 shrink-0">
+        <div className="grid grid-cols-2 gap-px bg-white/10 border border-white/10 shrink-0">
           {[
             { label: "Inspections", value: member?.inspectionsCompleted ?? 0 },
             { label: "Anomalies Found", value: member?.anomaliesFound ?? 0 },
@@ -405,7 +461,7 @@ function TeamDashboard() {
       </section>
 
       {/* ── Report new anomaly ── */}
-      <ReportAnomalyForm inspectorName={inspectorName} />
+      <ReportAnomalyForm inspectorName={displayName} />
 
       {/* Pipeline diagram */}
       <PipelineDiagram />
@@ -435,7 +491,7 @@ function TeamDashboard() {
           </Field>
           <Field label="Pilot">
             <input
-              defaultValue={inspectorName}
+              defaultValue={displayName}
               placeholder="Pilot name"
               className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
             />

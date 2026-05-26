@@ -62,10 +62,12 @@ export function AppHeader() {
           <UrjaScanLogo size="sm" />
         </Link>
 
-        <div className="hidden md:flex items-center gap-2 text-sm border border-grey-200 px-3 py-1.5 bg-grey-50 cursor-default select-none shrink-0">
-          <span className="font-medium text-foreground">{plant.name}</span>
-          <span className="mono text-muted-foreground">— {plant.capacityMW} MW</span>
-        </div>
+        {user?.role !== "admin" && (
+          <div className="hidden md:flex items-center gap-2 text-sm border border-grey-200 px-3 py-1.5 bg-grey-50 cursor-default select-none shrink-0">
+            <span className="font-medium text-foreground">{plant.name}</span>
+            <span className="mono text-muted-foreground">— {plant.capacityMW} MW</span>
+          </div>
+        )}
 
         {/* Desktop navigation */}
         <nav className="hidden md:flex items-center gap-0.5">

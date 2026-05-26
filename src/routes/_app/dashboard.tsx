@@ -1,12 +1,36 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Zap, Map, ClipboardList, TrendingUp, ArrowRight } from "lucide-react";
+import { useState } from "react";
+import { Zap, Map, ClipboardList, TrendingUp, ArrowRight, ChevronDown } from "lucide-react";
 import { HealthGauge } from "@/components/HealthGauge";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { useI18n } from "@/lib/i18n";
 import { usePlant, useAnomalies, useInspectionHistory } from "@/lib/queries";
+import { getUser } from "@/lib/auth";
+import { allPlants, teamMembers } from "@/lib/mock-data";
+import type { PlantDTO } from "@/lib/api";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from "recharts";
+
+/** Build a PlantDTO from the allPlants summary for admin multi-plant view */
+function summaryToDTO(p: typeof allPlants[0]): PlantDTO {
+  const dailyLossINR = p.criticalCount * 180 + p.mediumCount * 80;
+  return {
+    id: p.id,
+    name: p.name,
+    location: p.location,
+    capacityMW: p.capacityMW,
+    totalPanels: p.totalPanels,
+    lastInspection: p.lastInspection,
+    nextInspection: p.nextInspection,
+    healthScore: p.healthScore,
+    dailyLossINR,
+    dailyLossKWh: Math.round(dailyLossINR / 4.5),
+    feedInTariff: 4.5,
+    lat: p.gps.lat,
+    lng: p.gps.lng,
+  };
+}
 
 export const Route = createFileRoute("/_app/dashboard")({
   head: () => ({
@@ -27,11 +51,20 @@ function trendLabel(curr: number, prev: number, unit = "from last inspection") {
 
 function Dashboard() {
   const { t } = useI18n();
-  const { data: plant, isLoading: plantLoading } = usePlant();
+  const user = getUser();
+  const isAdmin = user?.role === "admin";
+
+  // Admin can switch between plants; default to first in the list
+  const [selectedPlantId, setSelectedPlantId] = useState(allPlants[0].id);
+  const selectedSummary = allPlants.find(p => p.id === selectedPlantId) ?? allPlants[0];
+
+  const { data: fetchedPlant, isLoading: plantLoading } = usePlant();
   const { data: anomalies = [], isLoading: anomaliesLoading } = useAnomalies();
   const { data: history = [], isLoading: historyLoading } = useInspectionHistory();
 
-  const isLoading = plantLoading || anomaliesLoading || historyLoading;
+  // For admin: use allPlants data for the selected plant; anomalies/history remain Rajpur mock
+  const plant: PlantDTO | undefined = isAdmin ? summaryToDTO(selectedSummary) : fetchedPlant;
+  const isLoading = isAdmin ? false : (plantLoading || anomaliesLoading || historyLoading);
 
   if (isLoading || !plant) {
     return (
@@ -48,11 +81,18 @@ function Dashboard() {
   const critical = anomalies.filter(a => a.severity === "critical");
   const medium = anomalies.filter(a => a.severity === "medium");
 
-  const severityCounts = {
-    critical: critical.length,
-    medium: medium.length,
-    normal: plant.totalPanels - critical.length - medium.length,
-  };
+  // For admin: use allPlants summary counts for selected plant; else use live anomaly counts
+  const severityCounts = isAdmin
+    ? {
+        critical: selectedSummary.criticalCount,
+        medium: selectedSummary.mediumCount,
+        normal: selectedSummary.totalPanels - selectedSummary.criticalCount - selectedSummary.mediumCount,
+      }
+    : {
+        critical: critical.length,
+        medium: medium.length,
+        normal: plant.totalPanels - critical.length - medium.length,
+      };
 
   const last = history[history.length - 1];
   const prev = history[history.length - 2];
@@ -70,6 +110,36 @@ function Dashboard() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">
+
+      {/* ── Admin: plant selector ── */}
+      {isAdmin && (
+        <section className="bg-white border border-grey-200 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex-1">
+            <p className="text-[11px] uppercase tracking-widest text-grey-400 mb-1">Viewing Plant Data For</p>
+            <div className="relative inline-block">
+              <select
+                value={selectedPlantId}
+                onChange={e => setSelectedPlantId(e.target.value)}
+                className="appearance-none h-9 pl-3 pr-8 border border-grey-200 bg-white text-sm font-semibold focus:outline-none focus:ring-1 focus:ring-ochre cursor-pointer"
+              >
+                {allPlants.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} — {p.client}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            </div>
+          </div>
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <span>{selectedSummary.location} · <span className="mono font-medium">{selectedSummary.capacityMW} MW</span></span>
+            <span className={`font-semibold ${selectedSummary.status === "Inspection Overdue" ? "text-critical" : selectedSummary.status === "Under Review" ? "text-ochre-fg" : "text-normal"}`}>
+              {selectedSummary.status}
+            </span>
+          </div>
+        </section>
+      )}
+
       {/* Hero — health gauge */}
       <section className="bg-white border border-grey-200 p-6 md:p-8 flex flex-col md:flex-row items-center gap-8">
         <HealthGauge value={plant.healthScore} />
@@ -80,6 +150,12 @@ function Dashboard() {
           <div className="mt-4 inline-flex flex-wrap gap-x-6 gap-y-1 text-sm">
             <span className="text-muted-foreground">{t("last_inspected")}: <span className="text-foreground font-medium">{plant.lastInspection}</span></span>
             <span className="text-muted-foreground">{t("next")}: <span className="text-foreground font-medium">{plant.nextInspection}</span></span>
+            {isAdmin && (() => {
+              const inspector = teamMembers.find(m => m.id === selectedSummary.assignedInspectorId);
+              return inspector
+                ? <span className="text-muted-foreground">Inspector: <span className="text-foreground font-medium">{inspector.name}</span></span>
+                : <span className="text-critical font-medium text-xs">⚠ No inspector assigned</span>;
+            })()}
           </div>
         </div>
       </section>
@@ -121,7 +197,14 @@ function Dashboard() {
         </Link>
       </section>
 
-      {/* Critical anomalies */}
+      {/* Critical anomalies — only shown when anomaly detail data is available */}
+      {isAdmin && selectedSummary.id !== allPlants[0].id ? (
+        <section className="bg-white border border-grey-200 p-5 text-center">
+          <p className="text-sm text-muted-foreground">
+            Detailed panel-level anomaly data for <span className="font-semibold text-foreground">{selectedSummary.name}</span> will appear here after the first inspection is processed.
+          </p>
+        </section>
+      ) : (
       <section className="bg-white border border-grey-200 overflow-hidden">
         <header className="px-5 py-3 border-b border-grey-200 flex items-center justify-between">
           <h2 className="font-semibold text-foreground flex items-center gap-2 text-sm">
@@ -151,9 +234,10 @@ function Dashboard() {
           ))}
         </div>
       </section>
+      )}
 
-      {/* History chart */}
-      {chartData.length > 0 && (
+      {/* History chart — only for plants with inspection history data */}
+      {(!isAdmin || selectedSummary.id === allPlants[0].id) && chartData.length > 0 && (
         <section className="bg-white border border-grey-200 p-5">
           <h2 className="font-semibold text-foreground flex items-center gap-2 mb-4 text-sm">
             <TrendingUp size={16} className="text-ochre" /> Inspection History

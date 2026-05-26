@@ -5,6 +5,7 @@ export interface StoredUser {
   userId: string;
   role: "client" | "team" | "admin";
   plantIds: string[];
+  displayName?: string;
 }
 
 export function getToken(): string | null {
@@ -33,4 +34,10 @@ export function getUser(): StoredUser | null {
 
 export function isAuthenticated(): boolean {
   return !!getToken();
+}
+
+export function setDisplayName(name: string): void {
+  const user = getUser();
+  if (!user) return;
+  localStorage.setItem(USER_KEY, JSON.stringify({ ...user, displayName: name.trim() }));
 }
