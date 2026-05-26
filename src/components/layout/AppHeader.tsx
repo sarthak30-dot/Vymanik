@@ -1,10 +1,11 @@
 import { Link, useNavigate, useLocation } from "@tanstack/react-router";
-import { Bell, X } from "lucide-react";
+import { Bell, X, ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { UrjaScanLogo } from "@/components/UrjaScanLogo";
 import { useI18n } from "@/lib/i18n";
-import { plant } from "@/lib/mock-data";
+import { plant, allPlants } from "@/lib/mock-data";
 import { getUser, clearAuth } from "@/lib/auth";
+import { usePlantContext } from "@/lib/plant-context";
 
 const MOCK_NOTIFICATIONS = [
   { id: "1", title: "Critical: R14-M07 Multi Hotspot", body: "ΔT +47°C · Immediate action required", time: "2h ago", unread: true },
@@ -39,6 +40,10 @@ export function AppHeader() {
   const navigate = useNavigate();
   const loc = useLocation();
   const user = getUser();
+  const { selectedPlant, setSelectedPlantId } = usePlantContext();
+  const isAdmin = user?.role === "admin";
+  const isTeam = user?.role === "team";
+  const onControlCenter = loc.pathname === "/admin";
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
@@ -62,11 +67,28 @@ export function AppHeader() {
           <UrjaScanLogo size="sm" />
         </Link>
 
-        {user?.role !== "admin" && (
-          <div className="hidden md:flex items-center gap-2 text-sm border border-grey-200 px-3 py-1.5 bg-grey-50 cursor-default select-none shrink-0">
-            <span className="font-medium text-foreground">{plant.name}</span>
-            <span className="mono text-muted-foreground">— {plant.capacityMW} MW</span>
-          </div>
+        {/* Plant chip — hidden on Control Center; dropdown for admin/team, static for client */}
+        {!onControlCenter && (
+          (isAdmin || isTeam) ? (
+            <div className="hidden md:flex items-center relative shrink-0">
+              <select
+                value={selectedPlant.id}
+                onChange={e => setSelectedPlantId(e.target.value)}
+                className="appearance-none h-8 pl-3 pr-7 border border-grey-200 bg-grey-50 text-sm font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-ochre cursor-pointer"
+                title="Switch plant"
+              >
+                {allPlants.map(p => (
+                  <option key={p.id} value={p.id}>{p.name} — {p.capacityMW} MW</option>
+                ))}
+              </select>
+              <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            </div>
+          ) : (
+            <div className="hidden md:flex items-center gap-2 text-sm border border-grey-200 px-3 py-1.5 bg-grey-50 cursor-default select-none shrink-0">
+              <span className="font-medium text-foreground">{plant.name}</span>
+              <span className="mono text-muted-foreground">— {plant.capacityMW} MW</span>
+            </div>
+          )
         )}
 
         {/* Desktop navigation */}

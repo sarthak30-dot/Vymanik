@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { getUser, setDisplayName } from "@/lib/auth";
+import { usePlantContext } from "@/lib/plant-context";
 import { Upload, Image as ImageIcon, Plane, ClipboardCheck, Send, Layers, Cpu, AlertTriangle, User2, MapPin, Pencil, Check, X } from "lucide-react";
 import { reviewQueue, teamMembers, allPlants, anomalyTypes, getTeamMemberByEmail, type QueueEntry } from "@/lib/mock-data";
 import type { ProcessingStage } from "@/lib/api";
@@ -187,7 +188,8 @@ function PipelineDiagram() {
 // ─── Report Anomaly form ────────────────────────────────────────────────────
 
 function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
-  const [plantId, setPlantId] = useState("");
+  const { selectedPlant, setSelectedPlantId } = usePlantContext();
+  const [plantId, setPlantId] = useState(selectedPlant.id);
   const [panelId, setPanelId] = useState("");
   const [type, setType] = useState("");
   const [deltaT, setDeltaT] = useState("");
@@ -237,10 +239,9 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
             <select
               required
               value={plantId}
-              onChange={e => setPlantId(e.target.value)}
+              onChange={e => { setPlantId(e.target.value); setSelectedPlantId(e.target.value); }}
               className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
             >
-              <option value="">Select plant…</option>
               {allPlants.map(p => (
                 <option key={p.id} value={p.id}>{p.name} — {p.client}</option>
               ))}

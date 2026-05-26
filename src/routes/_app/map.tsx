@@ -3,6 +3,7 @@ import { useState, useMemo, useRef, useCallback } from "react";
 import { X, ZoomIn, ZoomOut, Maximize2, MessageCircle, ArrowRight, Layers, Grid3x3, Map as MapIcon } from "lucide-react";
 import { anomalies, anomalyTypes, plant, severityCounts, type Anomaly, type Severity } from "@/lib/mock-data";
 import { SeverityBadge } from "@/components/SeverityBadge";
+import { usePlantContext } from "@/lib/plant-context";
 import Map, { Marker, Popup, NavigationControl, type MapRef } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 
@@ -17,9 +18,10 @@ interface HoverInfo {
   deltaT: number | null;
 }
 
-function buildWhatsAppLink(a: Anomaly) {
+// plant name passed at call-site from context
+function buildWhatsAppLink(a: Anomaly, plantName: string) {
   const msg = `[${a.severity.toUpperCase()}] FAULT — UrjaScan Alert
-Plant: ${plant.name}
+Plant: ${plantName}
 Panel: ${a.panelId} (Row ${a.row}, Module ${a.col})
 Fault: ${a.type}${a.deltaT ? ` | ΔT: +${a.deltaT}°C` : ""}
 Action: ${a.severity === "critical" ? "Immediate repair needed" : a.severity === "medium" ? "Schedule repair within 30 days" : "Monitor — no urgent action"}
@@ -35,8 +37,6 @@ export const Route = createFileRoute("/_app/map")({
 
 const ROWS = 24;
 const COLS = 36;
-
-const PLANT_CENTER = { lng: 73.0192, lat: 26.4523 };
 
 function severityFor(row: number, col: number): { severity: Severity; anomaly?: Anomaly } {
   const found = anomalies.find(a => a.row === row && a.col === col);
@@ -54,6 +54,12 @@ const SEVERITY_COLOR: Record<string, string> = {
 };
 
 function SiteMap() {
+  const { selectedPlant } = usePlantContext();
+  const PLANT_CENTER = { lng: selectedPlant.gps.lng, lat: selectedPlant.gps.lat };
+  // Only Rajpur (plant-001) has per-panel GPS anomaly data
+  const isRajpur = selectedPlant.id === "plant-001";
+  const visibleAnomalies = isRajpur ? anomalies : [];
+
   const [filters, setFilters] = useState({ critical: true, medium: true, normal: true, nodata: true });
   const [selected, setSelected] = useState<Anomaly | null>(null);
   const [hover, setHover] = useState<HoverInfo | null>(null);
@@ -137,8 +143,11 @@ function SiteMap() {
       <div className="flex-1 flex flex-col bg-grey-100 min-w-0">
         <div className="px-4 md:px-6 py-3 bg-white border-b border-grey-200 flex items-center justify-between flex-wrap gap-2">
           <div>
-            <h1 className="font-bold text-foreground">{plant.name} — Site Map</h1>
-            <p className="text-xs text-muted-foreground mono">{plant.totalPanels} panels · {ROWS} rows × {COLS} cols</p>
+            <h1 className="font-bold text-foreground">{selectedPlant.name} — Site Map</h1>
+            <p className="text-xs text-muted-foreground mono">
+              {selectedPlant.totalPanels.toLocaleString()} panels · {selectedPlant.location}
+              {isRajpur ? ` · ${ROWS} rows × ${COLS} cols` : ""}
+            </p>
           </div>
           <div className="flex items-center gap-2">
             {/* Mode toggle */}
@@ -177,16 +186,28 @@ function SiteMap() {
                 initialViewState={{
                   longitude: PLANT_CENTER.lng,
                   latitude: PLANT_CENTER.lat,
-                  zoom: 17,
+                  zoom: isRajpur ? 17 : 14,
                 }}
+                key={selectedPlant.id}
                 style={{ width: "100%", height: "100%" }}
                 mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
                 onClick={() => setPopupAnomaly(null)}
               >
                 <NavigationControl position="top-right" />
 
-                {/* Anomaly markers */}
-                {anomalies
+                {/* Plant centre marker for non-Rajpur plants */}
+                {!isRajpur && (
+                  <Marker longitude={PLANT_CENTER.lng} latitude={PLANT_CENTER.lat} anchor="center">
+                    <div style={{
+                      width: 24, height: 24, borderRadius: "50%",
+                      backgroundColor: "var(--ochre)", border: "3px solid white",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+                    }} title={selectedPlant.name} />
+                  </Marker>
+                )}
+
+                {/* Anomaly markers — only for plants with per-panel GPS data */}
+                {visibleAnomalies
                   .filter(a => filters[a.severity])
                   .map(a => (
                     <Marker
@@ -237,6 +258,16 @@ function SiteMap() {
                 )}
               </Map>
 
+              {/* Info overlay for plants without panel-level GPS data */}
+              {!isRajpur && (
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur border border-grey-200 px-4 py-2.5 text-xs shadow text-center max-w-xs">
+                  <p className="font-semibold text-foreground">{selectedPlant.name}</p>
+                  <p className="text-muted-foreground mt-0.5">{selectedPlant.location} · {selectedPlant.capacityMW} MW</p>
+                  <p className="text-muted-foreground mt-1">Panel-level GPS data available after first inspection is processed.</p>
+                  <p className="font-semibold text-critical mt-1">{selectedPlant.criticalCount} critical · {selectedPlant.mediumCount} medium anomalies</p>
+                </div>
+              )}
+
               {/* Map legend overlay */}
               <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur border border-grey-200 px-3 py-2 text-xs space-y-1.5 shadow">
                 {[
@@ -254,7 +285,20 @@ function SiteMap() {
           )}
 
           {/* Panel grid view */}
-          {mapMode === "grid" && (
+          {mapMode === "grid" && !isRajpur && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="bg-white border border-grey-200 p-8 text-center max-w-sm">
+                <p className="font-semibold text-foreground">{selectedPlant.name}</p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Panel grid view is available after the first inspection has been processed for this plant.
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Switch to satellite view to see the plant location.
+                </p>
+              </div>
+            </div>
+          )}
+          {mapMode === "grid" && isRajpur && (
             <div className="p-4 md:p-6">
               <div className="inline-block bg-white border border-grey-200 p-4">
                 {/* Column headers */}
@@ -305,7 +349,7 @@ function SiteMap() {
                 ))}
               </div>
             </div>
-          )}
+          )}  {/* end isRajpur grid */}
         </div>
 
         {/* Floating hover tooltip (grid mode only) */}
@@ -375,7 +419,7 @@ function SiteMap() {
                 View Full Detail <ArrowRight size={14} />
               </Link>
               <a
-                href={buildWhatsAppLink(selected)}
+                href={buildWhatsAppLink(selected, selectedPlant.name)}
                 target="_blank"
                 rel="noreferrer"
                 className="w-full h-10 bg-[#25D366] hover:opacity-90 text-white font-semibold text-sm flex items-center justify-center gap-2"

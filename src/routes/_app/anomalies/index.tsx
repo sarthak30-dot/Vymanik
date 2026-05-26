@@ -3,6 +3,7 @@ import { useState, useMemo } from "react";
 import { Search, Download, FileText, Loader2 } from "lucide-react";
 import { SeverityBadge, StatusBadge } from "@/components/SeverityBadge";
 import { useAnomalies, usePatchAnomaly } from "@/lib/queries";
+import { usePlantContext } from "@/lib/plant-context";
 import type { AnomalyDTO } from "@/lib/api";
 
 export const Route = createFileRoute("/_app/anomalies/")({
@@ -22,8 +23,19 @@ const SEV_DOT: Record<string, string> = {
 };
 
 function AnomalyList() {
-  const { data: anomalies = [], isLoading } = useAnomalies();
+  const { data: allAnomalies = [], isLoading } = useAnomalies();
+  const { selectedPlant } = usePlantContext();
   const patchAnomaly = usePatchAnomaly();
+
+  // Filter anomalies by selected plant.
+  // Mock anomalies have no plantId (they belong to Rajpur/plant-001).
+  // Inspector-reported anomalies carry the correct plantId.
+  const anomalies = useMemo(() =>
+    allAnomalies.filter(a =>
+      a.plantId === selectedPlant.id ||
+      (!a.plantId && selectedPlant.id === "plant-001"),
+    ),
+  [allAnomalies, selectedPlant.id]);
 
   const [sevFilter, setSevFilter] = useState<Severity | "all">("all");
   const [statusFilter, setStatusFilter] = useState<Status | "all">("all");
@@ -52,7 +64,7 @@ function AnomalyList() {
     );
   }
 
-  const plantName = anomalies[0] ? "Rajpur Solar Plant" : "—";
+  const plantName = selectedPlant.name;
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-5">
@@ -60,6 +72,11 @@ function AnomalyList() {
         <h1 className="text-2xl md:text-3xl font-bold text-foreground">All Anomalies — {plantName}</h1>
         <p className="text-sm text-muted-foreground mt-1">
           <span className="mono">{anomalies.length}</span> anomalies detected
+          {selectedPlant.id !== "plant-001" && anomalies.length === 0 && (
+            <span className="ml-2 text-xs text-ochre-fg bg-ochre-muted border border-ochre/20 px-2 py-0.5">
+              Panel-level data available after first inspection is processed
+            </span>
+          )}
         </p>
       </header>
 

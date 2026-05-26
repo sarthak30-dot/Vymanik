@@ -1,5 +1,4 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
 import { Zap, Map, ClipboardList, TrendingUp, ArrowRight, ChevronDown } from "lucide-react";
 import { HealthGauge } from "@/components/HealthGauge";
 import { SeverityBadge } from "@/components/SeverityBadge";
@@ -7,6 +6,7 @@ import { useI18n } from "@/lib/i18n";
 import { usePlant, useAnomalies, useInspectionHistory } from "@/lib/queries";
 import { getUser } from "@/lib/auth";
 import { allPlants, teamMembers } from "@/lib/mock-data";
+import { usePlantContext } from "@/lib/plant-context";
 import type { PlantDTO } from "@/lib/api";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
@@ -54,9 +54,8 @@ function Dashboard() {
   const user = getUser();
   const isAdmin = user?.role === "admin";
 
-  // Admin can switch between plants; default to first in the list
-  const [selectedPlantId, setSelectedPlantId] = useState(allPlants[0].id);
-  const selectedSummary = allPlants.find(p => p.id === selectedPlantId) ?? allPlants[0];
+  // Plant selection from shared context (driven by header dropdown)
+  const { selectedPlantId, setSelectedPlantId, selectedPlant: selectedSummary } = usePlantContext();
 
   const { data: fetchedPlant, isLoading: plantLoading } = usePlant();
   const { data: anomalies = [], isLoading: anomaliesLoading } = useAnomalies();
