@@ -13,6 +13,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppTeamRouteImport } from './routes/_app/team'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppServicesRouteImport } from './routes/_app/services'
 import { Route as AppReportsRouteImport } from './routes/_app/reports'
 import { Route as AppMapRouteImport } from './routes/_app/map'
 import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
@@ -36,6 +37,11 @@ const AppTeamRoute = AppTeamRouteImport.update({
 const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppServicesRoute = AppServicesRouteImport.update({
+  id: '/services',
+  path: '/services',
   getParentRoute: () => AppRoute,
 } as any)
 const AppReportsRoute = AppReportsRouteImport.update({
@@ -69,6 +75,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AppDashboardRoute
   '/map': typeof AppMapRoute
   '/reports': typeof AppReportsRoute
+  '/services': typeof AppServicesRoute
   '/settings': typeof AppSettingsRoute
   '/team': typeof AppTeamRoute
   '/anomalies/$id': typeof AppAnomaliesIdRoute
@@ -79,6 +86,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AppDashboardRoute
   '/map': typeof AppMapRoute
   '/reports': typeof AppReportsRoute
+  '/services': typeof AppServicesRoute
   '/settings': typeof AppSettingsRoute
   '/team': typeof AppTeamRoute
   '/anomalies/$id': typeof AppAnomaliesIdRoute
@@ -91,6 +99,7 @@ export interface FileRoutesById {
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/map': typeof AppMapRoute
   '/_app/reports': typeof AppReportsRoute
+  '/_app/services': typeof AppServicesRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/team': typeof AppTeamRoute
   '/_app/anomalies/$id': typeof AppAnomaliesIdRoute
@@ -103,6 +112,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/map'
     | '/reports'
+    | '/services'
     | '/settings'
     | '/team'
     | '/anomalies/$id'
@@ -113,6 +123,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/map'
     | '/reports'
+    | '/services'
     | '/settings'
     | '/team'
     | '/anomalies/$id'
@@ -124,6 +135,7 @@ export interface FileRouteTypes {
     | '/_app/dashboard'
     | '/_app/map'
     | '/_app/reports'
+    | '/_app/services'
     | '/_app/settings'
     | '/_app/team'
     | '/_app/anomalies/$id'
@@ -163,6 +175,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/services': {
+      id: '/_app/services'
+      path: '/services'
+      fullPath: '/services'
+      preLoaderRoute: typeof AppServicesRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/reports': {
@@ -207,6 +226,7 @@ interface AppRouteChildren {
   AppDashboardRoute: typeof AppDashboardRoute
   AppMapRoute: typeof AppMapRoute
   AppReportsRoute: typeof AppReportsRoute
+  AppServicesRoute: typeof AppServicesRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppTeamRoute: typeof AppTeamRoute
   AppAnomaliesIdRoute: typeof AppAnomaliesIdRoute
@@ -217,6 +237,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppDashboardRoute: AppDashboardRoute,
   AppMapRoute: AppMapRoute,
   AppReportsRoute: AppReportsRoute,
+  AppServicesRoute: AppServicesRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppTeamRoute: AppTeamRoute,
   AppAnomaliesIdRoute: AppAnomaliesIdRoute,

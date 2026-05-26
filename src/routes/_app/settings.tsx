@@ -34,8 +34,8 @@ function SettingsPage() {
   const [notifWhatsapp, setNotifWhatsapp] = useState(true);
 
   const roleLabel = user
-    ? user.role === "admin" ? "Admin" : user.role === "team" ? "Team" : "Client"
-    : "Client";
+    ? user.role === "admin" ? "Control Center" : user.role === "team" ? "Inspector" : "Plant Owner"
+    : "Plant Owner";
 
   const accountValue = `${plant.name} — ${roleLabel}`;
   const langValue = lang === "en" ? "English" : "हिंदी";

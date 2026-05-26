@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useLocation } from "@tanstack/react-router";
 import { Bell, X } from "lucide-react";
 import { useState } from "react";
 import { UrjaScanLogo } from "@/components/UrjaScanLogo";
@@ -12,19 +12,28 @@ const MOCK_NOTIFICATIONS = [
   { id: "3", title: "Inspection report ready", body: "3 May 2026 IEC 62446-3 certified report published", time: "3 days ago", unread: false },
 ];
 
+const NAV_ITEMS = [
+  { to: "/dashboard", label: "Dashboard" },
+  { to: "/map",       label: "Map" },
+  { to: "/anomalies", label: "Anomalies" },
+  { to: "/reports",   label: "Reports" },
+  { to: "/services",  label: "Services" },
+] as const;
+
 export function AppHeader() {
   const { lang, setLang } = useI18n();
   const navigate = useNavigate();
+  const loc = useLocation();
   const user = getUser();
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
   const initials = user
-    ? user.role === "admin" ? "AD" : user.role === "team" ? "TM" : "CL"
+    ? user.role === "admin" ? "CC" : user.role === "team" ? "IN" : "PO"
     : "?";
 
   const roleLabel = user
-    ? user.role === "admin" ? "Admin" : user.role === "team" ? "Team" : "Client"
+    ? user.role === "admin" ? "Control Center" : user.role === "team" ? "Inspector" : "Plant Owner"
     : "";
 
   function handleSignOut() {
@@ -39,10 +48,28 @@ export function AppHeader() {
           <UrjaScanLogo size="sm" />
         </Link>
 
-        <div className="hidden md:flex items-center gap-2 text-sm border border-grey-200 px-3 py-1.5 bg-grey-50 cursor-default select-none">
+        <div className="hidden md:flex items-center gap-2 text-sm border border-grey-200 px-3 py-1.5 bg-grey-50 cursor-default select-none shrink-0">
           <span className="font-medium text-foreground">{plant.name}</span>
           <span className="mono text-muted-foreground">— {plant.capacityMW} MW</span>
         </div>
+
+        {/* Desktop navigation */}
+        <nav className="hidden md:flex items-center gap-0.5">
+          {NAV_ITEMS.map(({ to, label }) => {
+            const active = loc.pathname === to || (to !== "/dashboard" && loc.pathname.startsWith(to));
+            return (
+              <Link
+                key={to}
+                to={to}
+                className={`px-3 py-1.5 text-sm font-medium transition ${
+                  active ? "text-ochre border-b-2 border-ochre" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {label}
+              </Link>
+            );
+          })}
+        </nav>
 
         <div className="flex items-center gap-3">
           <button
@@ -107,7 +134,7 @@ export function AppHeader() {
                   </Link>
                   {(user?.role === "team" || user?.role === "admin") && (
                     <Link to="/team" onClick={() => setShowUserMenu(false)} className="block px-4 py-2 text-xs text-foreground hover:bg-grey-50">
-                      Team Portal
+                      Inspector Portal
                     </Link>
                   )}
                   <button onClick={handleSignOut} className="w-full text-left px-4 py-2 text-xs text-critical hover:bg-grey-50">

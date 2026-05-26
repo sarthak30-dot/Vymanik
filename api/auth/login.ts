@@ -58,7 +58,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const isAdmin = accountRole === "admin";
   if (requestedRole && requestedRole !== accountRole && !isAdmin) {
     return res.status(403).json({
-      error: `This account is not a ${requestedRole} account. Please select the correct role tab.`,
+      error: `This account does not have ${requestedRole} access. Please select the correct portal tab.`,
     });
   }
 

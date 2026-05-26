@@ -6,7 +6,7 @@ import { reviewQueue, type QueueEntry } from "@/lib/mock-data";
 import type { ProcessingStage } from "@/lib/api";
 
 export const Route = createFileRoute("/_app/team")({
-  head: () => ({ meta: [{ title: "Team Portal — UrjaScan" }] }),
+  head: () => ({ meta: [{ title: "Inspector Portal — UrjaScan" }] }),
   component: TeamDashboard,
 });
 
@@ -203,8 +203,8 @@ function TeamDashboard() {
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">
       <header>
-        <h1 className="text-2xl md:text-3xl font-bold">Team Portal — Vymanik Aerospace</h1>
-        <p className="text-muted-foreground mt-1 text-sm">Process TGIS inspections and publish reports to clients.</p>
+        <h1 className="text-2xl md:text-3xl font-bold">Inspector Portal — Vymanik Aerospace</h1>
+        <p className="text-muted-foreground mt-1 text-sm">Upload drone imagery, monitor the TGIS pipeline, and publish reports to plant owners.</p>
       </header>
 
       {/* Stats */}

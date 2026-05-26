@@ -90,6 +90,46 @@ export const severityCounts = {
   nodata: 23,
 };
 
+// ─── Equipment Audit ────────────────────────────────────────────────────────
+
+export type AuditStatus = "Completed" | "In Progress" | "Scheduled";
+
+export interface EquipmentAudit {
+  id: string;
+  name: string;
+  type: string;
+  started: string;
+  completed: string | null;
+  status: AuditStatus;
+  modulesInspected: number;
+  findings: number;
+}
+
+export const equipmentAudits: EquipmentAudit[] = [
+  { id: "audit-001", name: "Annual Technical Audit 2025",     type: "Comprehensive",  started: "12 Sep 2025", completed: "15 Sep 2025", status: "Completed",   modulesInspected: 863, findings: 14 },
+  { id: "audit-002", name: "Semi-Annual Technical Audit 2026", type: "Spot Check",    started: "5 May 2026",  completed: null,           status: "In Progress", modulesInspected: 432, findings: 6  },
+  { id: "audit-003", name: "Annual Technical Audit 2026",      type: "Comprehensive", started: "5 Aug 2026",  completed: null,           status: "Scheduled",   modulesInspected: 0,   findings: 0  },
+];
+
+// ─── Plant Digitization ─────────────────────────────────────────────────────
+
+export type DigitizationType = "CAD Layout" | "String Diagram" | "Asset Map" | "3D Model";
+
+export interface DigitizationRecord {
+  id: string;
+  name: string;
+  type: DigitizationType;
+  date: string;
+  format: string;
+  sizeLabel: string;
+}
+
+export const digitizationRecords: DigitizationRecord[] = [
+  { id: "dig-001", name: "Rajpur Plant CAD Layout v2.1",    type: "CAD Layout",    date: "10 Mar 2025", format: "DWG + PDF",     sizeLabel: "24.5 MB" },
+  { id: "dig-002", name: "String Wiring Diagram — INV 1–3", type: "String Diagram", date: "10 Mar 2025", format: "PDF",           sizeLabel: "3.2 MB"  },
+  { id: "dig-003", name: "Panel-Level Asset Map",           type: "Asset Map",     date: "12 Mar 2025", format: "GeoJSON + CSV", sizeLabel: "1.8 MB"  },
+];
+
 // ─── Processing queue (Team portal) ────────────────────────────────────────
 
 import type { ProcessingStage } from "./api";

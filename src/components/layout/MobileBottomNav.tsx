@@ -1,12 +1,12 @@
 import { Link, useLocation } from "@tanstack/react-router";
-import { Home, Map, ClipboardList, FileBarChart, Settings } from "lucide-react";
+import { Home, Map, ClipboardList, FileBarChart, Layers } from "lucide-react";
 
 const items = [
-  { to: "/dashboard", icon: Home, label: "Home" },
-  { to: "/map", icon: Map, label: "Map" },
+  { to: "/dashboard", icon: Home,          label: "Home" },
+  { to: "/map",       icon: Map,           label: "Map" },
   { to: "/anomalies", icon: ClipboardList, label: "Anomalies" },
-  { to: "/reports", icon: FileBarChart, label: "Reports" },
-  { to: "/settings", icon: Settings, label: "Settings" },
+  { to: "/reports",   icon: FileBarChart,  label: "Reports" },
+  { to: "/services",  icon: Layers,        label: "Services" },
 ] as const;
 
 export function MobileBottomNav() {

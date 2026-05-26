@@ -94,9 +94,9 @@ function LoginPage() {
           {/* Role tabs */}
           <div className="mt-6 grid grid-cols-3 gap-px bg-grey-200 border border-grey-200">
             {([
-              { id: "client", icon: Building2, label: "Client" },
-              { id: "team", icon: Plane, label: "Team" },
-              { id: "admin", icon: Shield, label: "Admin" },
+              { id: "client", icon: Building2, label: "Plant Owner" },
+              { id: "team", icon: Plane, label: "Inspector" },
+              { id: "admin", icon: Shield, label: "Control Center" },
             ] as const).map(r => (
               <button
                 key={r.id}
