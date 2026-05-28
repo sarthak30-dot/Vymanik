@@ -471,21 +471,18 @@ function TeamDashboard() {
       <section className="bg-white border border-grey-200 p-5 md:p-6">
         <h2 className="font-semibold flex items-center gap-2 text-sm"><Upload size={15} className="text-ochre" /> Upload New Inspection</h2>
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field label="Client">
-            <select className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre">
-              <option value="">Select client...</option>
-              <option>Greenko Energy</option>
-              <option>Adani Green</option>
-              <option>Torrent Power</option>
-            </select>
-          </Field>
           <Field label="Plant">
             <select className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre">
-              <option value="">Select plant...</option>
-              <option>Rajpur Solar Plant</option>
-              <option>Jaisalmer Wind-Solar Hybrid</option>
-              <option>Kutch Solar Phase II</option>
+              {allPlants.map(p => (
+                <option key={p.id} value={p.id}>{p.name} — {p.location}</option>
+              ))}
             </select>
+          </Field>
+          <Field label="Block / Zone">
+            <input
+              placeholder="e.g. Block 20, Zone A"
+              className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+            />
           </Field>
           <Field label="Inspection Date">
             <input type="date" className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre" />

@@ -6,6 +6,23 @@ import { useAnomalies, usePatchAnomaly } from "@/lib/queries";
 import { usePlantContext } from "@/lib/plant-context";
 import type { AnomalyDTO } from "@/lib/api";
 
+function exportCSV(rows: AnomalyDTO[], plantName: string) {
+  const header = ["ID","Panel ID","Row","Col","Anomaly Type","ΔT (°C)","Severity","Table/String","Inverter","Status","Date","GPS Lat","GPS Lng","Image Ref"];
+  const lines = rows.map(a => [
+    a.id, a.panelId, a.row, a.col, a.type,
+    a.deltaT ?? "", a.severity, a.string, a.inverter, a.status, a.date,
+    a.gps.lat, a.gps.lng, a.rgbNote ?? "",
+  ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(","));
+  const csv = [header.join(","), ...lines].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `UrjaScan_${plantName.replace(/\s+/g, "_")}_Anomalies.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export const Route = createFileRoute("/_app/anomalies/")({
   head: () => ({ meta: [{ title: "All Anomalies — UrjaScan" }] }),
   component: AnomalyList,
@@ -119,11 +136,19 @@ function AnomalyList() {
           />
         </div>
         <div className="flex gap-2">
-          <button className="h-8 px-3 border border-grey-200 bg-white text-xs font-medium inline-flex items-center gap-1.5 hover:bg-grey-50">
-            <Download size={12} /> PDF
+          <button
+            onClick={() => exportCSV(rows, plantName)}
+            className="h-8 px-3 border border-grey-200 bg-white text-xs font-medium inline-flex items-center gap-1.5 hover:bg-grey-50"
+            title={`Export ${rows.length} filtered anomalies as CSV`}
+          >
+            <Download size={12} /> CSV
           </button>
-          <button className="h-8 px-3 border border-grey-200 bg-white text-xs font-medium inline-flex items-center gap-1.5 hover:bg-grey-50">
-            <FileText size={12} /> Excel
+          <button
+            onClick={() => exportCSV(anomalies, plantName)}
+            className="h-8 px-3 border border-grey-200 bg-white text-xs font-medium inline-flex items-center gap-1.5 hover:bg-grey-50"
+            title="Export all 347 anomalies"
+          >
+            <FileText size={12} /> Export All
           </button>
         </div>
       </div>

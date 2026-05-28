@@ -1,27 +1,14 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, MessageCircle, Download, Mail, MapPin, Check, Wrench, Loader2 } from "lucide-react";
+import { ArrowLeft, MessageCircle, Download, Mail, MapPin, Check, Wrench, Loader2, ExternalLink, Navigation } from "lucide-react";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { useAnomaly, usePatchAnomaly } from "@/lib/queries";
+import { anomalyTypeDefs, plant } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 
 export const Route = createFileRoute("/_app/anomalies/$id")({
-  head: ({ params }) => ({ meta: [{ title: `${params.id} — Anomaly Detail` }] }),
+  head: ({ params }) => ({ meta: [{ title: `Panel ${params.id} — Anomaly Detail — UrjaScan` }] }),
   component: AnomalyDetail,
 });
-
-const anomalyTypeDefs: Record<string, string> = {
-  "Hotspot": "Localized overheated solar cell — caused by crack, shading, or reverse bias",
-  "Multi Hotspot": "Multiple overheated cells in same module — elevated fire risk",
-  "Bypassed Substring": "Faulty bypass diode causing heat across 1/3 of module",
-  "Diode Failure": "Junction box bypass diode damaged — heat follows substring pattern",
-  "String Open Circuit": "Entire string disconnected — 100% production loss on string",
-  "PID Detected": "Potential Induced Degradation — up to 30% power loss",
-  "PID": "Potential Induced Degradation — up to 30% power loss",
-  "Heated Junction Box": "Abnormally warm terminal box — connection fault indicator",
-  "Soiling": "Dust/bird droppings blocking panel — cleanable during next maintenance",
-  "Shading": "Temporary shadow — monitor only",
-  "Shaded Module": "Temporary shadow — monitor only",
-};
 
 type Status = AnomalyDTO["status"];
 const STEPS: Status[] = ["New", "Acknowledged", "In Repair", "Closed"];
@@ -51,13 +38,21 @@ function AnomalyDetail() {
 
   const currentIdx = STEPS.indexOf(anomaly.status);
 
+  const actionText =
+    anomaly.severity === "critical" ? "⚠️ Immediate repair required" :
+    anomaly.severity === "medium"   ? "Schedule maintenance within 30 days" :
+    "Monitor — no urgent action";
+
   const whatsappMsg = encodeURIComponent(
-    `[${anomaly.severity.toUpperCase()}] FAULT — UrjaScan Alert
-Plant: Rajpur Solar Plant
+`🔴 FAULT ALERT — UrjaScan
+Plant: ${plant.name}
 Panel: ${anomaly.panelId} (Row ${anomaly.row}, Module ${anomaly.col})
-Fault: ${anomaly.type}${anomaly.deltaT ? ` | ΔT: +${anomaly.deltaT}°C` : ""}
-Action: Immediate repair needed
-GPS: ${anomaly.gps.lat}°N, ${anomaly.gps.lng}°E`
+Type: ${anomaly.type}${anomaly.deltaT ? ` | ΔT: +${anomaly.deltaT}°C` : ""}
+Severity: ${anomaly.severity.toUpperCase()}
+Action: ${actionText}
+GPS: ${anomaly.gps.lat}°N, ${anomaly.gps.lng}°E
+Navigate: https://www.google.com/maps?q=${anomaly.gps.lat},${anomaly.gps.lng}
+Ref: ${anomaly.rgbNote}`
   );
 
   return (
@@ -91,7 +86,7 @@ GPS: ${anomaly.gps.lat}°N, ${anomaly.gps.lng}°E`
 
       {/* Images */}
       <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ThermalImage peak={anomaly.peakTemp ?? 89} />
+        <ThermalImage peak={anomaly.peakTemp ?? 83} deltaT={anomaly.deltaT} />
         <RgbImage note={anomaly.rgbNote} />
       </section>
 
@@ -101,9 +96,14 @@ GPS: ${anomaly.gps.lat}°N, ${anomaly.gps.lng}°E`
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
           <Detail label="Anomaly Type" value={anomaly.type} tooltip={anomalyTypeDefs[anomaly.type]} />
           <Detail label="GPS Coordinates" value={`${anomaly.gps.lat}° N, ${anomaly.gps.lng}° E`} mono extra={
-            <a href={`https://www.google.com/maps?q=${anomaly.gps.lat},${anomaly.gps.lng}`} target="_blank" rel="noreferrer" className="text-ochre hover:underline text-xs inline-flex items-center gap-1 mt-1">
-              <MapPin size={12} /> Open in Maps
-            </a>
+            <div className="flex items-center gap-3 mt-1.5">
+              <a href={`https://www.google.com/maps?q=${anomaly.gps.lat},${anomaly.gps.lng}`} target="_blank" rel="noreferrer" className="text-ochre hover:underline text-xs inline-flex items-center gap-1">
+                <MapPin size={12} /> Open in Maps
+              </a>
+              <a href={`https://maps.google.com/maps?daddr=${anomaly.gps.lat},${anomaly.gps.lng}&dirflg=d`} target="_blank" rel="noreferrer" className="text-primary hover:underline text-xs inline-flex items-center gap-1">
+                <Navigation size={12} /> Navigate Here
+              </a>
+            </div>
           } />
           {anomaly.deltaT && <Detail label="ΔT (Delta T)" value={`+${anomaly.deltaT}°C`} mono critical tooltip="ΔT ≥ 20°C = warranty claim eligible" />}
           <Detail label="String" value={anomaly.string} />
@@ -134,12 +134,34 @@ GPS: ${anomaly.gps.lat}°N, ${anomaly.gps.lng}°E`
       <section className="bg-white border border-grey-200 p-5 md:p-6">
         <h2 className="font-semibold flex items-center gap-2 text-sm"><Wrench size={15} className="text-ochre" /> Recommended Action</h2>
         <p className="mt-3 text-foreground text-sm leading-relaxed">
-          {anomaly.severity === "critical"
-            ? "Immediate replacement or cell-level bypass required. Raise warranty claim with module manufacturer — ΔT exceeds 20°C warranty threshold."
+          {anomaly.type === "Diode Failure"
+            ? "Bypass diode in junction box has failed — heat is following the substring pattern. Replace the faulty diode or the entire junction box assembly. Raise warranty claim if ΔT ≥ 20°C (IEC 62446-3 eligible)."
+            : anomaly.type === "Multi-Module Hotspot"
+            ? "Multiple full modules are overheating — elevated fire and degradation risk. Immediately dispatch field team for visual inspection. Disconnect string if temperature is rising."
+            : anomaly.type === "Module Open Circuit"
+            ? "Module is not producing output. Check string-level fuses, MC4 connectors, and module wiring harness. This is 100% production loss on the affected module."
+            : anomaly.type === "Multi-Cell Hotspot"
+            ? "Multiple cells overheating within one module — likely caused by micro-crack or partial soiling. Schedule maintenance within 30 days and monitor thermal signature at next inspection."
+            : anomaly.type === "Vegetation/Multi-Cell Hotspot"
+            ? "Vegetation shadow triggering cell-level hotspots. Clear vegetation around the panel row and re-inspect within 30 days to confirm whether the hotspot persists after shading is removed."
+            : anomaly.type === "Cell Hotspot"
+            ? "Single cell hotspot detected. Monitor at next inspection cycle. If ΔT remains above 15°C, schedule targeted maintenance."
+            : anomaly.type === "Soiling"
+            ? "Dust or bird droppings reducing output. Schedule panel cleaning during the next routine O&M visit. No urgent action required."
+            : anomaly.type === "Shading"
+            ? "Temporary shadow detected at time of inspection. No action required — monitor only. Verify obstruction has not grown since last survey."
+            : anomaly.severity === "critical"
+            ? "Immediate replacement or bypass required. ΔT exceeds 20°C warranty threshold — raise claim with module manufacturer."
             : anomaly.severity === "medium"
             ? "Schedule a maintenance visit within 30 days. Verify junction box wiring and bypass diode integrity."
-            : "No urgent action required. Schedule cleaning during next routine O&M cycle."}
+            : "No urgent action required. Schedule during next routine O&M cycle."}
         </p>
+        {anomaly.deltaT && anomaly.deltaT >= 20 && (
+          <div className="mt-3 inline-flex items-center gap-2 bg-ochre-muted border border-ochre/30 px-3 py-1.5 text-xs text-foreground">
+            <ExternalLink size={11} className="text-ochre shrink-0" />
+            ΔT = +{anomaly.deltaT}°C — warranty claim eligible under IEC 62446-3
+          </div>
+        )}
       </section>
 
       {/* Status stepper */}
@@ -209,39 +231,70 @@ function Detail({ label, value, mono, critical, tooltip, extra }: { label: strin
   );
 }
 
-function ThermalImage({ peak }: { peak: number }) {
+function ThermalImage({ peak, deltaT }: { peak: number; deltaT: number | null }) {
   return (
     <div className="bg-white border border-grey-200 overflow-hidden">
       <div className="px-4 py-2.5 border-b border-grey-200 flex items-center justify-between">
-        <span className="font-semibold text-xs uppercase tracking-widest text-grey-400">Thermal Image (IR)</span>
-        <span className="mono text-xs text-critical font-semibold">Peak: {peak}°C</span>
-      </div>
-      <div className="relative aspect-video">
-        <div className="absolute inset-0" style={{ background: "radial-gradient(circle at 62% 45%, #fff 0%, #ffeb3b 8%, #ff5722 16%, #d32f2f 24%, #6a1b9a 40%, #1a237e 70%, #0d1842 100%)" }} />
-        <div className="absolute" style={{ left: "58%", top: "38%" }}>
-          <div className="w-14 h-14 border-2 border-white animate-pulse" style={{ borderRadius: "50%" }} />
-          <div className="absolute top-1/2 left-full ml-2 -translate-y-1/2 bg-black/80 text-white text-[10px] mono px-2 py-1">+{peak}°C</div>
+        <span className="font-semibold text-xs uppercase tracking-widest text-grey-400">Thermal Orthomosaic (IR)</span>
+        <div className="flex items-center gap-3">
+          {deltaT && <span className="mono text-xs text-critical font-semibold">ΔT: +{deltaT}°C</span>}
+          <span className="mono text-xs text-muted-foreground">Peak: {peak}°C</span>
         </div>
-        <div className="absolute right-2 top-2 bottom-2 w-3" style={{ background: "linear-gradient(to top, #1a237e, #d32f2f, #ffeb3b, #fff)" }} />
-        <div className="absolute right-6 top-2 text-[10px] mono text-white">{peak}°</div>
-        <div className="absolute right-6 bottom-2 text-[10px] mono text-white">20°</div>
+      </div>
+      <div className="relative aspect-video bg-black overflow-hidden">
+        {/* Actual Block 20 thermal orthomosaic */}
+        <img
+          src="/thermal_block20.png"
+          alt="Block 20 thermal orthomosaic"
+          className="absolute inset-0 w-full h-full object-cover"
+          style={{ filter: "saturate(1.15) contrast(1.05)" }}
+        />
+        {/* Scale bar */}
+        <div className="absolute right-2 top-2 bottom-2 flex flex-col items-center gap-1">
+          <span className="mono text-[9px] text-white drop-shadow">{peak}°</span>
+          <div className="w-3 flex-1" style={{ background: "linear-gradient(to bottom, #fff 0%, #ffeb3b 20%, #ff5722 45%, #d32f2f 65%, #6a1b9a 85%, #1a237e 100%)" }} />
+          <span className="mono text-[9px] text-white drop-shadow">20°</span>
+        </div>
+        <div className="absolute bottom-2 left-2 bg-black/60 text-white text-[10px] mono px-2 py-0.5">
+          Block 20 · 28 May 2026 · IEC 62446-3
+        </div>
       </div>
     </div>
   );
 }
 
 function RgbImage({ note }: { note: string }) {
+  // Extract filename from "Image: 7531.JPG (pos a)"
+  const match = note.match(/Image:\s*([\w.-]+\.(?:JPG|jpg|PNG|png))/i);
+  const filename = match?.[1] ?? null;
+  const pos = note.match(/\(pos ([ab])\)/)?.[1];
+
   return (
     <div className="bg-white border border-grey-200 overflow-hidden">
       <div className="px-4 py-2.5 border-b border-grey-200 flex items-center justify-between">
         <span className="font-semibold text-xs uppercase tracking-widest text-grey-400">Visual Image (RGB)</span>
-        <span className="text-xs text-muted-foreground max-w-[55%] text-right leading-tight">{note}</span>
+        {filename && (
+          <span className="mono text-xs text-muted-foreground">
+            {filename}{pos && <span className="text-grey-400"> · pos {pos}</span>}
+          </span>
+        )}
       </div>
-      <div className="relative aspect-video bg-gradient-to-br from-slate-700 to-slate-900">
-        <div className="absolute inset-4 grid grid-cols-6 grid-rows-4 gap-[2px]">
+      <div className="relative aspect-video bg-gradient-to-br from-slate-700 to-slate-900 flex flex-col items-center justify-center gap-2">
+        {/* Solar panels grid sketch */}
+        <div className="absolute inset-4 grid grid-cols-6 grid-rows-4 gap-[2px] opacity-30">
           {Array.from({ length: 24 }).map((_, i) => (
-            <div key={i} className="bg-gradient-to-br from-slate-800 to-slate-950 border border-slate-600/40" style={{ borderRadius: 1 }} />
+            <div key={i} className="bg-slate-400 border border-slate-500/40" style={{ borderRadius: 1 }} />
           ))}
+        </div>
+        <div className="relative z-10 text-center">
+          {filename ? (
+            <>
+              <p className="mono text-white text-sm font-semibold">{filename}</p>
+              <p className="text-white/50 text-xs mt-1">RGB image pending upload</p>
+            </>
+          ) : (
+            <p className="text-white/50 text-xs">RGB reference not available</p>
+          )}
         </div>
       </div>
     </div>

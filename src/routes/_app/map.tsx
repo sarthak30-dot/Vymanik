@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useMemo, useRef, useCallback } from "react";
-import { X, ZoomIn, ZoomOut, Maximize2, MessageCircle, ArrowRight, Layers, Grid3x3, Map as MapIcon, Thermometer } from "lucide-react";
+import { X, ZoomIn, ZoomOut, Maximize2, MessageCircle, ArrowRight, Layers, Grid3x3, Map as MapIcon, Thermometer, Navigation } from "lucide-react";
 import { anomalies, anomalyTypes, plant, severityCounts, type Anomaly, type Severity } from "@/lib/mock-data";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { usePlantContext } from "@/lib/plant-context";
@@ -67,21 +67,39 @@ const SEVERITY_COLOR: Record<string, string> = {
 function SiteMap() {
   const { selectedPlant } = usePlantContext();
   const PLANT_CENTER = { lng: selectedPlant.gps.lng, lat: selectedPlant.gps.lat };
-  // Only Rajpur (plant-001) has per-panel GPS anomaly data
+  // Only Block 20 (plant-001) has per-panel GPS anomaly data
   const isRajpur = selectedPlant.id === "plant-001";
-  const visibleAnomalies = isRajpur ? anomalies : [];
 
-  const [filters, setFilters] = useState({ critical: true, medium: true, normal: true, nodata: true });
+  const [filters, setFilters] = useState<Record<string, boolean>>({ critical: true, medium: true, normal: true, nodata: true });
   const [selected, setSelected] = useState<Anomaly | null>(null);
   const [hover, setHover] = useState<HoverInfo | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [typeFilter, setTypeFilter] = useState("all");
   const [stringFilter, setStringFilter] = useState("all");
   const [inverterFilter, setInverterFilter] = useState("all");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [mapMode, setMapMode] = useState<"grid" | "satellite">("grid");
+  const [mapMode, setMapMode] = useState<"grid" | "satellite">("satellite");
   const [popupAnomaly, setPopupAnomaly] = useState<Anomaly | null>(null);
   const [thermalVisible, setThermalVisible] = useState(false);
   const [thermalOpacity, setThermalOpacity] = useState(0.65);
+
+  // Unique filter options derived from real data
+  const uniqueInverters = useMemo(() => ["all", ...Array.from(new Set(anomalies.map(a => a.inverter))).sort()], []);
+  const uniqueTables = useMemo(() => ["all", ...Array.from(new Set(anomalies.map(a => a.string))).sort((a, b) => {
+    const na = parseInt(a.replace("Table-", ""));
+    const nb = parseInt(b.replace("Table-", ""));
+    return na - nb;
+  })], []);
+
+  const visibleAnomalies = useMemo(() => {
+    if (!isRajpur) return [];
+    return anomalies.filter(a =>
+      filters[a.severity] &&
+      (typeFilter === "all" || a.type === typeFilter) &&
+      (inverterFilter === "all" || a.inverter === inverterFilter) &&
+      (stringFilter === "all" || a.string === stringFilter),
+    );
+  }, [isRajpur, filters, typeFilter, inverterFilter, stringFilter]);
 
   const mapRef = useRef<MapRef>(null);
 
@@ -128,27 +146,38 @@ function SiteMap() {
           ))}
         </div>
 
-        <div className="mt-6 space-y-4">
-          <FilterSelect label="Anomaly Type" value="all" options={["all", ...anomalyTypes]} />
+        {isRajpur && (
+          <p className="mt-4 text-[11px] text-muted-foreground mono border-t border-grey-200 pt-3">
+            {visibleAnomalies.length} of {anomalies.length} anomalies shown
+          </p>
+        )}
+
+        <div className="mt-4 space-y-4">
           <FilterSelect
-            label="String"
-            value={stringFilter}
-            onChange={setStringFilter}
-            options={["all", ...Array.from({ length: 12 }, (_, i) => `String ${String(i + 1).padStart(2, "0")}`)]}
+            label="Anomaly Type"
+            value={typeFilter}
+            onChange={setTypeFilter}
+            options={["all", ...anomalyTypes.filter(t => anomalies.some(a => a.type === t))]}
           />
           <FilterSelect
             label="Inverter"
             value={inverterFilter}
             onChange={setInverterFilter}
-            options={["all", "INV-1", "INV-2", "INV-3"]}
+            options={uniqueInverters}
+          />
+          <FilterSelect
+            label="Table / String"
+            value={stringFilter}
+            onChange={setStringFilter}
+            options={uniqueTables}
           />
         </div>
 
         <button
-          onClick={() => { setFilters({ critical: true, medium: true, normal: true, nodata: true }); setStringFilter("all"); setInverterFilter("all"); }}
+          onClick={() => { setFilters({ critical: true, medium: true, normal: true, nodata: true }); setTypeFilter("all"); setStringFilter("all"); setInverterFilter("all"); }}
           className="mt-6 text-xs text-ochre font-medium hover:underline"
         >
-          Reset Filters
+          Reset All Filters
         </button>
       </aside>
 
@@ -250,9 +279,8 @@ function SiteMap() {
                   </Marker>
                 )}
 
-                {/* Anomaly markers — only for plants with per-panel GPS data */}
+                {/* Anomaly markers — filtered via visibleAnomalies (severity + type + inverter + string) */}
                 {visibleAnomalies
-                  .filter(a => filters[a.severity])
                   .map(a => (
                     <Marker
                       key={a.id}
@@ -288,15 +316,41 @@ function SiteMap() {
                     onClose={() => setPopupAnomaly(null)}
                     style={{ padding: 0 }}
                   >
-                    <div className="p-3 min-w-[180px] text-sm font-sans">
-                      <p className="font-bold mono">{popupAnomaly.panelId}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{popupAnomaly.type}</p>
+                    <div className="p-3 min-w-[200px] text-sm font-sans">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="font-bold mono">{popupAnomaly.panelId}</p>
+                        <span style={{
+                          fontSize: 10, fontWeight: 700, padding: "1px 6px",
+                          backgroundColor: SEVERITY_COLOR[popupAnomaly.severity] + "22",
+                          color: SEVERITY_COLOR[popupAnomaly.severity],
+                          border: `1px solid ${SEVERITY_COLOR[popupAnomaly.severity]}44`,
+                          textTransform: "uppercase",
+                        }}>{popupAnomaly.severity}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">{popupAnomaly.type}</p>
                       {popupAnomaly.deltaT && (
                         <p className="text-xs font-semibold text-critical mono mt-1">ΔT +{popupAnomaly.deltaT}°C</p>
                       )}
-                      <p className="text-[10px] text-muted-foreground mono mt-1">
-                        {popupAnomaly.gps.lat.toFixed(4)}°N, {popupAnomaly.gps.lng.toFixed(4)}°E
+                      <p className="text-[10px] text-muted-foreground mono mt-1.5">
+                        {popupAnomaly.gps.lat.toFixed(5)}°N, {popupAnomaly.gps.lng.toFixed(5)}°E
                       </p>
+                      <div className="flex items-center gap-3 mt-2 pt-2 border-t border-grey-100">
+                        <a
+                          href={`https://maps.google.com/maps?daddr=${popupAnomaly.gps.lat},${popupAnomaly.gps.lng}&dirflg=d`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] text-ochre hover:underline font-medium inline-flex items-center gap-1"
+                        >
+                          <Navigation size={10} /> Navigate
+                        </a>
+                        <Link
+                          to="/anomalies/$id"
+                          params={{ id: popupAnomaly.id }}
+                          className="text-[11px] text-primary hover:underline font-medium"
+                        >
+                          Full detail →
+                        </Link>
+                      </div>
                     </div>
                   </Popup>
                 )}

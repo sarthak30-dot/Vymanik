@@ -161,9 +161,9 @@ function Dashboard() {
 
       {/* Severity data tiles */}
       <section className="bg-white border border-grey-200 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-grey-200">
-        <DataTile color="critical" count={severityCounts.critical} label={t("critical_anomalies")} sub={t("immediate")} trend={criticalTrend} />
-        <DataTile color="medium" count={severityCounts.medium} label={t("medium_anomalies")} sub={t("schedule_30")} trend={mediumTrend} />
-        <DataTile color="normal" count={severityCounts.normal} label={t("panels_healthy")} sub={t("no_action")} trend={normalTrend} />
+        <DataTile color="critical" count={severityCounts.critical} label={t("critical_anomalies")} sub={t("immediate")} trend={criticalTrend} total={plant.totalPanels} />
+        <DataTile color="medium" count={severityCounts.medium} label={t("medium_anomalies")} sub={t("schedule_30")} trend={mediumTrend} total={plant.totalPanels} />
+        <DataTile color="normal" count={severityCounts.normal} label={t("panels_healthy")} sub={t("no_action")} trend={normalTrend} total={plant.totalPanels} />
       </section>
 
       {/* Financial impact */}
@@ -225,7 +225,9 @@ function Dashboard() {
               <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-3 items-center">
                 <span className="mono font-semibold text-foreground text-sm">{a.panelId}</span>
                 <span className="text-sm text-foreground">{a.type}</span>
-                <span className="mono text-sm font-semibold text-critical">+{a.deltaT}°C</span>
+                <span className="mono text-sm font-semibold text-critical">
+                  {a.deltaT ? `+${a.deltaT}°C` : "—"}
+                </span>
                 <SeverityBadge severity={a.severity} />
               </div>
               <ArrowRight size={14} className="text-muted-foreground group-hover:text-ochre transition" />
@@ -262,15 +264,19 @@ function Dashboard() {
 }
 
 function DataTile({
-  color, count, label, sub, trend,
-}: { color: "critical" | "medium" | "normal"; count: number; label: string; sub: string; trend: string }) {
+  color, count, label, sub, trend, total,
+}: { color: "critical" | "medium" | "normal"; count: number; label: string; sub: string; trend: string; total?: number }) {
   const textColor = { critical: "text-critical", medium: "text-medium", normal: "text-normal" }[color];
   const dotColor = { critical: "var(--critical)", medium: "var(--medium)", normal: "var(--normal)" }[color];
+  const pct = total && total > 0 ? ((count / total) * 100).toFixed(1) : null;
   return (
     <div className="p-5">
       <div className="flex items-start justify-between">
         <div>
-          <p className={`mono text-4xl font-bold ${textColor} leading-none`}>{count.toLocaleString("en-IN")}</p>
+          <div className="flex items-baseline gap-2">
+            <p className={`mono text-4xl font-bold ${textColor} leading-none`}>{count.toLocaleString("en-IN")}</p>
+            {pct && <span className={`mono text-sm font-medium ${textColor} opacity-60`}>{pct}%</span>}
+          </div>
           <p className="font-semibold text-foreground mt-3 text-sm flex items-center gap-1.5">
             <span aria-hidden style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", backgroundColor: dotColor, flexShrink: 0 }} />
             {label}

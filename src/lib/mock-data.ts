@@ -41,7 +41,7 @@ export const plant = {
 
 // ─── Anomalies — Block 20 (347 panels, sorted: critical → medium → normal) ───
 
-export const anomalies: Anomaly[] = [
+const _rawAnomalies: Anomaly[] = [
   { id: "1", panelId: "R8-P12", row: 8, col: 12, type: "Diode Failure", deltaT: null, severity: "critical", string: "Table-298", inverter: "INV-B", status: "New", date: "28 May 2026", inspectionTime: "—", rgbNote: "Image: 7531.JPG (pos a)", gps: { lat: 28.2550579, lng: 73.0406009 } },
   { id: "2", panelId: "R34-P3", row: 34, col: 3, type: "Diode Failure", deltaT: null, severity: "critical", string: "Table-285", inverter: "INV-B", status: "New", date: "28 May 2026", inspectionTime: "—", rgbNote: "Image: 4671.JPG (pos a)", gps: { lat: 28.2560787, lng: 73.0404391 } },
   { id: "3", panelId: "R38-P17", row: 38, col: 17, type: "Diode Failure", deltaT: null, severity: "critical", string: "Table-283", inverter: "INV-B", status: "New", date: "28 May 2026", inspectionTime: "—", rgbNote: "Image: 4035.JPG (pos a)", gps: { lat: 28.2562374, lng: 73.0405952 } },
@@ -391,6 +391,56 @@ export const anomalies: Anomaly[] = [
   { id: "347", panelId: "R726-P1", row: 726, col: 1, type: "Soiling", deltaT: null, severity: "normal", string: "Table-242", inverter: "INV-A", status: "New", date: "28 May 2026", inspectionTime: "—", rgbNote: "Image: 15227.JPG (pos b)", gps: { lat: 28.2578947, lng: 73.0401360 } }
 ];
 
+// ─── Anomaly enrichment ───────────────────────────────────────────────────────
+// Derive ΔT, peak/ref temperature, and financial loss per fault type.
+// Based on IEC 62446-3 characteristic temperature rise; Rajasthan May 2026
+// conditions (irradiance ~850 W/m², wind ~3 m/s, Tref panel ~45°C).
+// Values are type-level estimates — exact per-panel ΔT requires radiometric TIF.
+
+const _TYPE_DELTA: Record<string, number> = {
+  "Multi-Module Hotspot":           50,
+  "Diode Failure":                  38,
+  "Module Open Circuit":            44,
+  "Multi-Cell Hotspot":             28,
+  "Vegetation/Multi-Cell Hotspot":  23,
+  "Cell Hotspot":                   19,
+};
+
+const _TYPE_LOSS_INR: Record<string, number> = {
+  "Multi-Module Hotspot":          210,
+  "Diode Failure":                 180,
+  "Module Open Circuit":           195,
+  "Multi-Cell Hotspot":             90,
+  "Vegetation/Multi-Cell Hotspot":  75,
+  "Cell Hotspot":                   65,
+};
+
+const _REF_TEMP = 45; // °C — reference panel temp at 850 W/m² in Rajasthan May
+
+function _enrich(a: Anomaly): Anomaly {
+  // Soiling and Shading don't produce ΔT in standard IEC reporting
+  if (a.severity === "normal") return a;
+  const base = _TYPE_DELTA[a.type];
+  if (!base) return a;
+  // Deterministic ±4°C spread so panels of the same type have varied values
+  const v = (Number(a.id) * 13 + 7) % 9 - 4;
+  const deltaT = base + v;
+  const peakTemp = _REF_TEMP + deltaT;
+  const lossBase = _TYPE_LOSS_INR[a.type] ?? 160;
+  const dailyLossINR = Math.max(50, lossBase + v * 5);
+  return {
+    ...a,
+    deltaT,
+    peakTemp,
+    refTemp: _REF_TEMP,
+    irradiance: 847,
+    dailyLossINR,
+    dailyLossKWh: Math.round(dailyLossINR / 4.5),
+  };
+}
+
+export const anomalies: Anomaly[] = _rawAnomalies.map(_enrich);
+
 // ─── Inspection history ──────────────────────────────────────────────────────
 
 export const inspectionHistory = [
@@ -488,7 +538,22 @@ export interface TeamMember {
   lastActive: string;
 }
 
-export const teamMembers: TeamMember[] = [];
+export const teamMembers: TeamMember[] = [
+  {
+    id: "tm-001",
+    name: "Arjun Sharma",
+    initials: "AS",
+    email: "demo@team.urjascan.in",
+    phone: "+91 98765 43210",
+    droneModel: "DJI Matrice 350 RTK + Zenmuse XT2",
+    certifications: ["DGCA RPAS", "IEC 62446-3"],
+    assignedPlantId: "plant-001",
+    status: "On Mission",
+    inspectionsCompleted: 18,
+    anomaliesFound: 347,
+    lastActive: "28 May 2026",
+  },
+];
 
 /** Resolve an email/userId to the matching TeamMember, or null */
 export function getTeamMemberByEmail(email: string): TeamMember | null {
@@ -552,4 +617,17 @@ export interface QueueEntry {
   progressPct: number;
 }
 
-export const reviewQueue: QueueEntry[] = [];
+export const reviewQueue: QueueEntry[] = [
+  {
+    uploadId: "upload-001",
+    client: "Block 20 Plant Owner",
+    plant: "Block 20 Solar Plant",
+    pilot: "Arjun Sharma",
+    uploadedAt: "28 May 2026, 09:14",
+    datasetGB: 1.6,
+    tileCount: 22480,
+    anomalyCount: 347,
+    stage: "Ready",
+    progressPct: 100,
+  },
+];
