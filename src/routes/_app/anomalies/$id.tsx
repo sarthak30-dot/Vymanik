@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
 import { ArrowLeft, MessageCircle, Download, Mail, MapPin, Check, Wrench, Loader2, ExternalLink, Navigation } from "lucide-react";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { useAnomaly, usePatchAnomaly } from "@/lib/queries";
@@ -86,7 +87,7 @@ Ref: ${anomaly.rgbNote}`
 
       {/* Images */}
       <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ThermalImage peak={anomaly.peakTemp ?? 83} deltaT={anomaly.deltaT} />
+        <ThermalImage note={anomaly.rgbNote} peak={anomaly.peakTemp ?? 83} deltaT={anomaly.deltaT} />
         <RgbImage note={anomaly.rgbNote} />
       </section>
 
@@ -231,43 +232,91 @@ function Detail({ label, value, mono, critical, tooltip, extra }: { label: strin
   );
 }
 
-function ThermalImage({ peak, deltaT }: { peak: number; deltaT: number | null }) {
+// Parse "Image: 7531.JPG (pos a)" → { filename: "7531.jpg", pos: "a" }
+function parseImageRef(note: string): { filename: string | null; pos: "a" | "b" | null } {
+  const fname = note.match(/Image:\s*([\w.-]+\.JPG)/i)?.[1] ?? null;
+  const pos   = (note.match(/\(pos ([ab])\)/)?.[1] ?? null) as "a" | "b" | null;
+  return { filename: fname ? fname.toLowerCase() : null, pos };
+}
+
+function ThermalImage({ note, peak, deltaT }: { note: string; peak: number; deltaT: number | null }) {
+  const { filename, pos } = parseImageRef(note);
+  const src = filename ? `/defimages/${filename}` : null;
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
+
   return (
     <div className="bg-white border border-grey-200 overflow-hidden">
       <div className="px-4 py-2.5 border-b border-grey-200 flex items-center justify-between">
-        <span className="font-semibold text-xs uppercase tracking-widest text-grey-400">Thermal Orthomosaic (IR)</span>
+        <span className="font-semibold text-xs uppercase tracking-widest text-grey-400">Thermal Image (IR)</span>
         <div className="flex items-center gap-3">
           {deltaT && <span className="mono text-xs text-critical font-semibold">ΔT: +{deltaT}°C</span>}
           <span className="mono text-xs text-muted-foreground">Peak: {peak}°C</span>
         </div>
       </div>
       <div className="relative aspect-video bg-black overflow-hidden">
-        {/* Actual Block 20 thermal orthomosaic */}
-        <img
-          src="/thermal_block20.png"
-          alt="Block 20 thermal orthomosaic"
-          className="absolute inset-0 w-full h-full object-cover"
-          style={{ filter: "saturate(1.15) contrast(1.05)" }}
-        />
-        {/* Scale bar */}
-        <div className="absolute right-2 top-2 bottom-2 flex flex-col items-center gap-1">
-          <span className="mono text-[9px] text-white drop-shadow">{peak}°</span>
-          <div className="w-3 flex-1" style={{ background: "linear-gradient(to bottom, #fff 0%, #ffeb3b 20%, #ff5722 45%, #d32f2f 65%, #6a1b9a 85%, #1a237e 100%)" }} />
-          <span className="mono text-[9px] text-white drop-shadow">20°</span>
-        </div>
-        <div className="absolute bottom-2 left-2 bg-black/60 text-white text-[10px] mono px-2 py-0.5">
-          Block 20 · 28 May 2026 · IEC 62446-3
-        </div>
+        {src && !errored ? (
+          <>
+            <img
+              src={src}
+              alt={`Thermal defect image ${filename}`}
+              className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${loaded ? "opacity-100" : "opacity-0"}`}
+              style={{ filter: "saturate(1.1) contrast(1.05)" }}
+              onLoad={() => setLoaded(true)}
+              onError={() => setErrored(true)}
+            />
+            {!loaded && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              </div>
+            )}
+            {/* Position indicator — "pos a" = top panel, "pos b" = bottom panel */}
+            {pos && loaded && (
+              <div className={`absolute ${pos === "a" ? "top-2" : "bottom-2"} left-2 bg-black/70 text-white text-[10px] mono px-2 py-0.5 flex items-center gap-1`}>
+                <span className="w-1.5 h-1.5 rounded-full bg-critical inline-block" />
+                Defect: pos {pos} ({pos === "a" ? "top" : "bottom"} panel)
+              </div>
+            )}
+            {/* Scale bar */}
+            {loaded && (
+              <div className="absolute right-2 top-2 bottom-2 flex flex-col items-center gap-1">
+                <span className="mono text-[9px] text-white drop-shadow">{peak}°</span>
+                <div className="w-3 flex-1" style={{ background: "linear-gradient(to bottom, #fff 0%, #ffeb3b 20%, #ff5722 45%, #d32f2f 65%, #6a1b9a 85%, #1a237e 100%)" }} />
+                <span className="mono text-[9px] text-white drop-shadow">20°</span>
+              </div>
+            )}
+            <div className="absolute bottom-2 right-8 bg-black/60 text-white text-[10px] mono px-2 py-0.5">
+              Block 20 · 28 May 2026
+            </div>
+          </>
+        ) : (
+          /* Fallback: block-level orthomosaic if per-panel image unavailable */
+          <>
+            <img
+              src="/thermal_block20.png"
+              alt="Block 20 thermal orthomosaic"
+              className="absolute inset-0 w-full h-full object-cover"
+              style={{ filter: "saturate(1.15) contrast(1.05)" }}
+            />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="bg-black/70 text-white/70 text-xs mono px-3 py-1.5">
+                Block 20 orthomosaic (per-panel image unavailable)
+              </div>
+            </div>
+            <div className="absolute right-2 top-2 bottom-2 flex flex-col items-center gap-1">
+              <span className="mono text-[9px] text-white drop-shadow">{peak}°</span>
+              <div className="w-3 flex-1" style={{ background: "linear-gradient(to bottom, #fff 0%, #ffeb3b 20%, #ff5722 45%, #d32f2f 65%, #6a1b9a 85%, #1a237e 100%)" }} />
+              <span className="mono text-[9px] text-white drop-shadow">20°</span>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
 function RgbImage({ note }: { note: string }) {
-  // Extract filename from "Image: 7531.JPG (pos a)"
-  const match = note.match(/Image:\s*([\w.-]+\.(?:JPG|jpg|PNG|png))/i);
-  const filename = match?.[1] ?? null;
-  const pos = note.match(/\(pos ([ab])\)/)?.[1];
+  const { filename, pos } = parseImageRef(note);
 
   return (
     <div className="bg-white border border-grey-200 overflow-hidden">
@@ -275,26 +324,22 @@ function RgbImage({ note }: { note: string }) {
         <span className="font-semibold text-xs uppercase tracking-widest text-grey-400">Visual Image (RGB)</span>
         {filename && (
           <span className="mono text-xs text-muted-foreground">
-            {filename}{pos && <span className="text-grey-400"> · pos {pos}</span>}
+            {filename.toUpperCase()}{pos && <span className="text-grey-400"> · pos {pos}</span>}
           </span>
         )}
       </div>
       <div className="relative aspect-video bg-gradient-to-br from-slate-700 to-slate-900 flex flex-col items-center justify-center gap-2">
-        {/* Solar panels grid sketch */}
-        <div className="absolute inset-4 grid grid-cols-6 grid-rows-4 gap-[2px] opacity-30">
+        <div className="absolute inset-4 grid grid-cols-6 grid-rows-4 gap-[2px] opacity-20">
           {Array.from({ length: 24 }).map((_, i) => (
             <div key={i} className="bg-slate-400 border border-slate-500/40" style={{ borderRadius: 1 }} />
           ))}
         </div>
-        <div className="relative z-10 text-center">
-          {filename ? (
-            <>
-              <p className="mono text-white text-sm font-semibold">{filename}</p>
-              <p className="text-white/50 text-xs mt-1">RGB image pending upload</p>
-            </>
-          ) : (
-            <p className="text-white/50 text-xs">RGB reference not available</p>
-          )}
+        <div className="relative z-10 text-center px-6">
+          <p className="mono text-white/80 text-sm font-semibold">{filename?.toUpperCase() ?? "—"}</p>
+          <p className="text-white/40 text-xs mt-1.5 leading-relaxed">
+            RGB visual photo available in the original inspection dataset.
+            {pos && <><br />Anomaly is in the <strong className="text-white/60">pos {pos}</strong> ({pos === "a" ? "top" : "bottom"}) panel of this frame.</>}
+          </p>
         </div>
       </div>
     </div>
