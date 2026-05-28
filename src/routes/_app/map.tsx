@@ -1,11 +1,22 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useMemo, useRef, useCallback } from "react";
-import { X, ZoomIn, ZoomOut, Maximize2, MessageCircle, ArrowRight, Layers, Grid3x3, Map as MapIcon } from "lucide-react";
+import { X, ZoomIn, ZoomOut, Maximize2, MessageCircle, ArrowRight, Layers, Grid3x3, Map as MapIcon, Thermometer } from "lucide-react";
 import { anomalies, anomalyTypes, plant, severityCounts, type Anomaly, type Severity } from "@/lib/mock-data";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { usePlantContext } from "@/lib/plant-context";
-import Map, { Marker, Popup, NavigationControl, type MapRef } from "react-map-gl/mapbox";
+import Map, { Marker, Popup, NavigationControl, Source, Layer, type MapRef } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
+
+// Geographic bounds of the Block 20 thermal orthomosaic (from GeoTIFF metadata)
+const THERMAL_BOUNDS = {
+  // [lng, lat] order — Mapbox image source: [NW, NE, SE, SW]
+  coordinates: [
+    [73.033843, 28.261343], // NW
+    [73.043200, 28.261343], // NE
+    [73.043200, 28.254336], // SE
+    [73.033843, 28.254336], // SW
+  ] as [[number,number],[number,number],[number,number],[number,number]],
+};
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string;
 
@@ -69,6 +80,8 @@ function SiteMap() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [mapMode, setMapMode] = useState<"grid" | "satellite">("grid");
   const [popupAnomaly, setPopupAnomaly] = useState<Anomaly | null>(null);
+  const [thermalVisible, setThermalVisible] = useState(false);
+  const [thermalOpacity, setThermalOpacity] = useState(0.65);
 
   const mapRef = useRef<MapRef>(null);
 
@@ -167,6 +180,21 @@ function SiteMap() {
                 <MapIcon size={14} />
               </button>
             </div>
+            {/* Thermal overlay toggle — only for plants with thermal data */}
+            {isRajpur && mapMode === "satellite" && (
+              <button
+                onClick={() => setThermalVisible(v => !v)}
+                title="Toggle thermal overlay"
+                className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium border transition ${
+                  thermalVisible
+                    ? "bg-red-600 text-white border-red-600"
+                    : "bg-white text-muted-foreground border-grey-200 hover:bg-grey-50"
+                }`}
+              >
+                <Thermometer size={13} />
+                Thermal
+              </button>
+            )}
             <button onClick={() => setSidebarOpen(true)} className="md:hidden px-3 py-1.5 text-xs border border-grey-200 bg-white">Filters</button>
             {mapMode === "grid" && <>
               <button onClick={() => setZoom(Math.max(0.6, zoom - 0.2))} className="w-8 h-8 bg-white border border-grey-200 flex items-center justify-center hover:bg-grey-50"><ZoomOut size={14} /></button>
@@ -194,6 +222,22 @@ function SiteMap() {
                 onClick={() => setPopupAnomaly(null)}
               >
                 <NavigationControl position="top-right" />
+
+                {/* Thermal orthomosaic overlay — Block 20 */}
+                {isRajpur && thermalVisible && (
+                  <Source
+                    id="thermal-overlay"
+                    type="image"
+                    url="/thermal_block20.png"
+                    coordinates={THERMAL_BOUNDS.coordinates}
+                  >
+                    <Layer
+                      id="thermal-raster"
+                      type="raster"
+                      paint={{ "raster-opacity": thermalOpacity, "raster-fade-duration": 300 }}
+                    />
+                  </Source>
+                )}
 
                 {/* Plant centre marker for non-Rajpur plants */}
                 {!isRajpur && (
@@ -280,6 +324,23 @@ function SiteMap() {
                     <span>{l.label}</span>
                   </div>
                 ))}
+                {isRajpur && thermalVisible && (
+                  <div className="pt-1.5 border-t border-grey-200 space-y-1">
+                    <div className="flex items-center gap-1.5 text-red-600 font-medium">
+                      <Thermometer size={11} /> Thermal overlay
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground">Opacity</span>
+                      <input
+                        type="range" min={0.2} max={1} step={0.05}
+                        value={thermalOpacity}
+                        onChange={e => setThermalOpacity(Number(e.target.value))}
+                        className="w-20 accent-red-600"
+                      />
+                      <span className="mono text-muted-foreground">{Math.round(thermalOpacity * 100)}%</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
