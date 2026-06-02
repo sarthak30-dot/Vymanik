@@ -14,8 +14,8 @@ export const Route = createFileRoute("/_app/settings")({
 function EditModal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white border border-grey-200 w-full max-w-sm mx-4">
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-grey-200">
+      <div className="bg-card border border-border w-full max-w-sm mx-4">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-border">
           <p className="font-semibold text-sm">{title}</p>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={16} /></button>
         </div>
@@ -63,7 +63,7 @@ function SettingsPage() {
         {lang === "en" ? "Settings" : "सेटिंग्स"}
       </h1>
 
-      <div className="bg-white border border-grey-200 divide-y divide-grey-200">
+      <div className="bg-card border border-border divide-y divide-border">
         {/* Account */}
         <div className="flex items-center gap-4 p-4">
           <div className="w-9 h-9 bg-grey-50 border border-grey-200 flex items-center justify-center">
@@ -156,7 +156,7 @@ function SettingsPage() {
               <button
                 key={l}
                 onClick={() => saveLanguage(l)}
-                className={`w-full text-left px-4 py-3 border text-sm font-medium transition ${lang === l ? "border-ochre bg-ochre-muted" : "border-grey-200 hover:bg-grey-50"}`}
+                className={`w-full text-left px-4 py-3 border text-sm font-medium transition ${lang === l ? "border-ochre bg-ochre-muted" : "border-grey-200 hover:bg-muted"}`}
               >
                 {l === "en" ? "English" : "हिंदी (Hindi)"}
               </button>

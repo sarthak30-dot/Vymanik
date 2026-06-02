@@ -64,7 +64,7 @@ function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col lg:flex-row bg-white">
+    <div className="min-h-screen flex flex-col lg:flex-row bg-background">
       {/* Left brand panel */}
       <div className="lg:w-1/2 bg-primary text-white relative flex flex-col justify-between p-8 lg:p-12 min-h-[40vh] lg:min-h-screen">
         <div>
@@ -79,7 +79,7 @@ function LoginPage() {
             Drone thermography, anomaly tracking, and warranty-grade reports for India&apos;s solar plants.
           </p>
         </div>
-        <p className="text-white/50 text-xs tracking-wide">
+        <p className="text-white/80 text-xs tracking-wide">
           Drone Inspected · GPS Mapped · IEC 62446-3 Certified
         </p>
       </div>
@@ -93,7 +93,7 @@ function LoginPage() {
           <p className="text-muted-foreground mt-1.5 text-sm">Access your solar plant inspection portal.</p>
 
           {/* Role tabs */}
-          <div className="mt-6 grid grid-cols-3 gap-px bg-grey-200 border border-grey-200">
+          <div className="mt-6 grid grid-cols-3 gap-px bg-border border border-border">
             {([
               { id: "client", icon: Building2, label: "Plant Owner" },
               { id: "team", icon: Plane, label: "Inspector" },
@@ -106,7 +106,7 @@ function LoginPage() {
                 className={`flex flex-col items-center gap-1 py-3 text-sm font-medium transition ${
                   role === r.id
                     ? "bg-primary text-white"
-                    : "bg-white text-muted-foreground hover:text-foreground hover:bg-grey-50"
+                    : "bg-card text-muted-foreground hover:text-foreground hover:bg-muted"
                 }`}
               >
                 <r.icon size={16} />
@@ -125,7 +125,7 @@ function LoginPage() {
                   required
                   value={email}
                   onChange={e => setEmail(e.target.value)}
-                  className="w-full h-10 pl-9 pr-3 border border-grey-200 bg-white text-foreground text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+                  className="w-full h-10 pl-9 pr-3 border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
                   placeholder="you@company.com"
                 />
               </div>
@@ -141,7 +141,7 @@ function LoginPage() {
                     minLength={6}
                     value={password}
                     onChange={e => setPassword(e.target.value)}
-                    className="w-full h-10 pl-9 pr-3 border border-grey-200 bg-white text-foreground text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+                    className="w-full h-10 pl-9 pr-3 border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
                     placeholder="Minimum 6 characters"
                   />
                 </div>
@@ -155,7 +155,7 @@ function LoginPage() {
                     <input
                       value={phone}
                       onChange={e => setPhone(e.target.value)}
-                      className="w-full h-10 pl-9 pr-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+                      className="w-full h-10 pl-9 pr-3 border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
                       placeholder="+91 98765 43210"
                     />
                   </div>
@@ -167,7 +167,7 @@ function LoginPage() {
                     onChange={e => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
                     inputMode="numeric"
                     maxLength={6}
-                    className="mt-1.5 w-full h-10 px-3 border border-grey-200 bg-white mono tracking-widest text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+                    className="mt-1.5 w-full h-10 px-3 border border-border bg-card text-foreground mono tracking-widest text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
                     placeholder="• • • • • •"
                   />
                 </div>

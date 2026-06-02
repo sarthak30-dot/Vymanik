@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Zap, Map, ClipboardList, TrendingUp, ArrowRight, ChevronDown } from "lucide-react";
+import { Zap, Map, ClipboardList, TrendingUp, ArrowRight, ChevronDown, RefreshCw } from "lucide-react";
+import { useState, useEffect } from "react";
 import { HealthGauge } from "@/components/HealthGauge";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { useI18n } from "@/lib/i18n";
@@ -57,21 +58,47 @@ function Dashboard() {
   // Plant selection from shared context (driven by header dropdown)
   const { selectedPlantId, setSelectedPlantId, selectedPlant: selectedSummary } = usePlantContext();
 
-  const { data: fetchedPlant, isLoading: plantLoading } = usePlant();
-  const { data: anomalies = [], isLoading: anomaliesLoading } = useAnomalies();
+  const { data: fetchedPlant, isLoading: plantLoading, isError: plantError } = usePlant();
+  const { data: anomalies = [], isLoading: anomaliesLoading, isError: anomaliesError } = useAnomalies();
   const { data: history = [], isLoading: historyLoading } = useInspectionHistory();
 
   // For admin: use allPlants data for the selected plant; anomalies/history remain Rajpur mock
   const plant: PlantDTO | undefined = isAdmin ? summaryToDTO(selectedSummary) : fetchedPlant;
   const isLoading = isAdmin ? false : (plantLoading || anomaliesLoading || historyLoading);
+  const isError = !isAdmin && (plantError || anomaliesError);
+
+  // After 7 s of unresolved loading, show a retry prompt instead of infinite skeleton
+  const [timedOut, setTimedOut] = useState(false);
+  useEffect(() => {
+    if (!isLoading) { setTimedOut(false); return; }
+    const t = setTimeout(() => setTimedOut(true), 7000);
+    return () => clearTimeout(t);
+  }, [isLoading]);
+
+  if (isError || (isLoading && timedOut)) {
+    return (
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-24 flex flex-col items-center gap-4 text-center">
+        <p className="text-foreground font-semibold">Could not load plant data</p>
+        <p className="text-sm text-muted-foreground max-w-xs">
+          {isError ? "The server returned an error." : "Data is taking longer than expected."} Check your connection and try again.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="inline-flex items-center gap-2 h-9 px-4 bg-ochre hover:bg-ochre-light text-ochre-fg text-sm font-semibold"
+        >
+          <RefreshCw size={14} /> Retry
+        </button>
+      </div>
+    );
+  }
 
   if (isLoading || !plant) {
     return (
       <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6">
         <div className="animate-pulse space-y-4">
-          <div className="h-32 bg-grey-100 rounded" />
-          <div className="h-24 bg-grey-100 rounded" />
-          <div className="h-16 bg-grey-100 rounded" />
+          <div className="h-32 bg-grey-100" />
+          <div className="h-24 bg-grey-100" />
+          <div className="h-16 bg-grey-100" />
         </div>
       </div>
     );
@@ -112,14 +139,14 @@ function Dashboard() {
 
       {/* ── Admin: plant selector ── */}
       {isAdmin && (
-        <section className="bg-white border border-grey-200 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+        <section className="bg-card border border-border p-4 flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="flex-1">
             <p className="text-[11px] uppercase tracking-widest text-grey-400 mb-1">Viewing Plant Data For</p>
             <div className="relative inline-block">
               <select
                 value={selectedPlantId}
                 onChange={e => setSelectedPlantId(e.target.value)}
-                className="appearance-none h-9 pl-3 pr-8 border border-grey-200 bg-white text-sm font-semibold focus:outline-none focus:ring-1 focus:ring-ochre cursor-pointer"
+                className="appearance-none h-9 pl-3 pr-8 border border-border bg-card text-foreground text-sm font-semibold focus:outline-none focus:ring-1 focus:ring-ochre cursor-pointer"
               >
                 {allPlants.map(p => (
                   <option key={p.id} value={p.id}>
@@ -140,7 +167,7 @@ function Dashboard() {
       )}
 
       {/* Hero — health gauge */}
-      <section className="bg-white border border-grey-200 p-6 md:p-8 flex flex-col md:flex-row items-center gap-8">
+      <section className="bg-card border border-border p-6 md:p-8 flex flex-col md:flex-row items-center gap-8">
         <HealthGauge value={plant.healthScore} />
         <div className="flex-1 text-center md:text-left">
           <p className="text-[11px] uppercase tracking-widest text-grey-400">{t("plant_health")}</p>
@@ -160,7 +187,7 @@ function Dashboard() {
       </section>
 
       {/* Severity data tiles */}
-      <section className="bg-white border border-grey-200 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-grey-200">
+      <section className="bg-card border border-border grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-border">
         <DataTile color="critical" count={severityCounts.critical} label={t("critical_anomalies")} sub={t("immediate")} trend={criticalTrend} total={plant.totalPanels} />
         <DataTile color="medium" count={severityCounts.medium} label={t("medium_anomalies")} sub={t("schedule_30")} trend={mediumTrend} total={plant.totalPanels} />
         <DataTile color="normal" count={severityCounts.normal} label={t("panels_healthy")} sub={t("no_action")} trend={normalTrend} total={plant.totalPanels} />
@@ -191,21 +218,21 @@ function Dashboard() {
         <Link to="/map" className="h-12 bg-ochre hover:bg-ochre-light text-ochre-fg font-semibold flex items-center justify-center gap-2 transition text-sm">
           <Map size={18} /> {t("view_map")}
         </Link>
-        <Link to="/anomalies" className="h-12 bg-white border border-grey-200 text-foreground font-semibold flex items-center justify-center gap-2 hover:bg-grey-50 transition text-sm">
+        <Link to="/anomalies" className="h-12 bg-card border border-border text-foreground font-semibold flex items-center justify-center gap-2 hover:bg-grey-50 transition text-sm">
           <ClipboardList size={18} /> {t("see_all")}
         </Link>
       </section>
 
       {/* Critical anomalies — only shown when anomaly detail data is available */}
       {isAdmin && selectedSummary.id !== allPlants[0].id ? (
-        <section className="bg-white border border-grey-200 p-5 text-center">
+        <section className="bg-card border border-border p-5 text-center">
           <p className="text-sm text-muted-foreground">
             Detailed panel-level anomaly data for <span className="font-semibold text-foreground">{selectedSummary.name}</span> will appear here after the first inspection is processed.
           </p>
         </section>
       ) : (
-      <section className="bg-white border border-grey-200 overflow-hidden">
-        <header className="px-5 py-3 border-b border-grey-200 flex items-center justify-between">
+      <section className="bg-card border border-border overflow-hidden">
+        <header className="px-5 py-3 border-b border-border flex items-center justify-between">
           <h2 className="font-semibold text-foreground flex items-center gap-2 text-sm">
             <span aria-hidden style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", backgroundColor: "var(--critical)", flexShrink: 0 }} />
             Critical — Needs Immediate Attention
@@ -214,7 +241,7 @@ function Dashboard() {
             View all <ArrowRight size={12} />
           </Link>
         </header>
-        <div className="divide-y divide-grey-200">
+        <div className="divide-y divide-border">
           {critical.slice(0, 3).map(a => (
             <Link
               key={a.id}
@@ -239,7 +266,7 @@ function Dashboard() {
 
       {/* History chart — only for plants with inspection history data */}
       {(!isAdmin || selectedSummary.id === allPlants[0].id) && chartData.length > 0 && (
-        <section className="bg-white border border-grey-200 p-5">
+        <section className="bg-card border border-border p-5">
           <h2 className="font-semibold text-foreground flex items-center gap-2 mb-4 text-sm">
             <TrendingUp size={16} className="text-ochre" /> Inspection History
           </h2>

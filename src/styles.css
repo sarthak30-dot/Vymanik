@@ -124,9 +124,31 @@
   --border:              oklch(1 0 0 / 10%);
   --input:               oklch(1 0 0 / 12%);
   --muted:               oklch(0.22 0.02 255);
-  --muted-foreground:    oklch(0.65 0.01 252);
+  --muted-foreground:    oklch(0.55 0.01 255);
   --secondary:           oklch(0.22 0.02 255);
   --secondary-foreground: oklch(0.97 0 0);
+  --popover:             oklch(0.18 0.02 255);
+  --popover-foreground:  oklch(0.97 0 0);
+
+  /* Grey scale — dark equivalents so bg-grey-* classes adapt automatically */
+  --grey-25:  oklch(0.155 0.015 255);
+  --grey-50:  oklch(0.18  0.015 255);
+  --grey-100: oklch(0.22  0.02  255);
+  --grey-200: oklch(0.28  0.02  255);
+  --grey-400: oklch(0.55  0.01  255);
+  --grey-900: oklch(0.97  0     0  );
+
+  /* Semantic surfaces */
+  --surface:             oklch(0.18 0.015 255);
+  --surface-dark:        oklch(0.22 0.02  255);
+
+  /* Ochre muted — warm dark tint instead of cream */
+  --ochre-muted: oklch(0.22 0.05 72);
+
+  /* Severity backgrounds stay subtle in dark mode */
+  --critical-bg: oklch(0.155 0.015 255);
+  --medium-bg:   oklch(0.155 0.015 255);
+  --normal-bg:   oklch(0.155 0.015 255);
 }
 
 @layer base {
@@ -134,7 +156,7 @@
     border-color: var(--color-border);
   }
   html, body {
-    background-color: var(--color-grey-50);
+    background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;

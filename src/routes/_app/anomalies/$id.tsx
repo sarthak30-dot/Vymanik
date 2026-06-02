@@ -92,7 +92,7 @@ Ref: ${anomaly.rgbNote}`
       </section>
 
       {/* Data grid */}
-      <section className="bg-white border border-grey-200 p-5 md:p-6">
+      <section className="bg-card border border-border p-5 md:p-6">
         <h2 className="font-semibold mb-4 text-sm uppercase tracking-widest text-grey-400">Inspection Data</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
           <Detail label="Anomaly Type" value={anomaly.type} tooltip={anomalyTypeDefs[anomaly.type]} />
@@ -106,7 +106,8 @@ Ref: ${anomaly.rgbNote}`
               </a>
             </div>
           } />
-          {anomaly.deltaT && <Detail label="ΔT (Delta T)" value={`+${anomaly.deltaT}°C`} mono critical tooltip="ΔT ≥ 20°C = warranty claim eligible" />}
+          {anomaly.deltaT && <Detail label="ΔT (raw)" value={`+${anomaly.deltaT}°C`} mono critical tooltip="Measured temperature rise above reference panel" />}
+          {anomaly.deltaTNorm && <Detail label="ΔT normalised @ 1000 W/m²" value={`+${anomaly.deltaTNorm}°C`} mono critical tooltip="IEC 62446-3 §6.3 — adjusted for actual irradiance (847 W/m²). Use this value for warranty claims." />}
           <Detail label="String" value={anomaly.string} />
           {anomaly.peakTemp && <Detail label="Peak Cell Temperature" value={`${anomaly.peakTemp}°C`} mono />}
           <Detail label="Inverter" value={anomaly.inverter} />
@@ -132,7 +133,7 @@ Ref: ${anomaly.rgbNote}`
       )}
 
       {/* Recommendation */}
-      <section className="bg-white border border-grey-200 p-5 md:p-6">
+      <section className="bg-card border border-border p-5 md:p-6">
         <h2 className="font-semibold flex items-center gap-2 text-sm"><Wrench size={15} className="text-ochre" /> Recommended Action</h2>
         <p className="mt-3 text-foreground text-sm leading-relaxed">
           {anomaly.type === "Diode Failure"
@@ -157,16 +158,16 @@ Ref: ${anomaly.rgbNote}`
             ? "Schedule a maintenance visit within 30 days. Verify junction box wiring and bypass diode integrity."
             : "No urgent action required. Schedule during next routine O&M cycle."}
         </p>
-        {anomaly.deltaT && anomaly.deltaT >= 20 && (
+        {anomaly.deltaTNorm && anomaly.deltaTNorm >= 20 && (
           <div className="mt-3 inline-flex items-center gap-2 bg-ochre-muted border border-ochre/30 px-3 py-1.5 text-xs text-foreground">
             <ExternalLink size={11} className="text-ochre shrink-0" />
-            ΔT = +{anomaly.deltaT}°C — warranty claim eligible under IEC 62446-3
+            ΔT<sub>norm</sub> = +{anomaly.deltaTNorm}°C @ 1000 W/m² — warranty claim eligible under IEC 62446-3
           </div>
         )}
       </section>
 
-      {/* Status stepper */}
-      <section className="bg-white border border-grey-200 p-5 md:p-6">
+      {/* Status + Root Cause */}
+      <section className="bg-card border border-border p-5 md:p-6">
         <h2 className="font-semibold mb-5 text-sm">Status Workflow</h2>
         <div className="hidden sm:flex items-center justify-between">
           {STEPS.map((s, i) => {
@@ -193,7 +194,7 @@ Ref: ${anomaly.rgbNote}`
           {STEPS.map((s, i) => {
             const done = i <= currentIdx;
             return (
-              <button key={s} onClick={() => patchAnomaly.mutate({ id: anomaly.id, status: s })} className={`w-full flex items-center gap-3 p-3 border text-sm ${done ? "border-ochre bg-ochre-muted" : "border-grey-200 bg-white"}`}>
+              <button key={s} onClick={() => patchAnomaly.mutate({ id: anomaly.id, status: s })} className={`w-full flex items-center gap-3 p-3 border text-sm ${done ? "border-ochre bg-ochre-muted" : "border-border bg-card"}`}>
                 <div className={`w-8 h-8 flex items-center justify-center ${done ? "bg-ochre text-ochre-fg" : "bg-grey-100 text-muted-foreground"}`}>
                   {done ? <Check size={14} /> : i + 1}
                 </div>
@@ -202,6 +203,32 @@ Ref: ${anomaly.rgbNote}`
             );
           })}
         </div>
+
+        {/* Root Cause — filled by field engineer after site visit */}
+        <div className="mt-6 pt-5 border-t border-grey-200">
+          <p className="text-xs font-semibold uppercase tracking-widest text-grey-400 mb-2">Root Cause Identified</p>
+          <div className="flex flex-wrap gap-2">
+            {(["Manufacturing defect", "Wiring / connector fault", "Soiling / dust", "Shading / vegetation", "Physical damage", "Unknown"] as const).map(cause => (
+              <button
+                key={cause}
+                onClick={() => patchAnomaly.mutate({ id: anomaly.id, rootCause: cause === anomaly.rootCause ? null : cause })}
+                disabled={patchAnomaly.isPending}
+                className={`px-3 py-1.5 text-xs font-medium border transition ${
+                  anomaly.rootCause === cause
+                    ? "bg-primary text-white border-primary"
+                    : "bg-card text-foreground border-border hover:border-primary hover:text-primary"
+                }`}
+              >
+                {cause}
+              </button>
+            ))}
+          </div>
+          {anomaly.rootCause && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Root cause logged: <span className="font-semibold text-foreground">{anomaly.rootCause}</span> — will appear in the IEC report
+            </p>
+          )}
+        </div>
       </section>
 
       {/* Actions */}
@@ -209,10 +236,10 @@ Ref: ${anomaly.rgbNote}`
         <a href={`https://wa.me/?text=${whatsappMsg}`} target="_blank" rel="noreferrer" className="h-10 bg-[#25D366] text-white font-semibold text-sm flex items-center justify-center gap-2 hover:opacity-90">
           <MessageCircle size={16} /> Share on WhatsApp
         </a>
-        <button className="h-10 bg-white border border-grey-200 text-foreground font-semibold text-sm flex items-center justify-center gap-2 hover:bg-grey-50">
+        <button className="h-10 bg-card border border-border text-foreground font-semibold text-sm flex items-center justify-center gap-2 hover:bg-muted">
           <Download size={16} /> Download Fault Card PDF
         </button>
-        <button className="h-10 bg-white border border-grey-200 text-foreground font-semibold text-sm flex items-center justify-center gap-2 hover:bg-grey-50">
+        <button className="h-10 bg-card border border-border text-foreground font-semibold text-sm flex items-center justify-center gap-2 hover:bg-muted">
           <Mail size={16} /> Email to Team
         </button>
       </section>
@@ -246,7 +273,7 @@ function ThermalImage({ note, peak, deltaT }: { note: string; peak: number; delt
   const [errored, setErrored] = useState(false);
 
   return (
-    <div className="bg-white border border-grey-200 overflow-hidden">
+    <div className="bg-card border border-border overflow-hidden">
       <div className="px-4 py-2.5 border-b border-grey-200 flex items-center justify-between">
         <span className="font-semibold text-xs uppercase tracking-widest text-grey-400">Thermal Image (IR)</span>
         <div className="flex items-center gap-3">
@@ -317,9 +344,16 @@ function ThermalImage({ note, peak, deltaT }: { note: string; peak: number; delt
 
 function RgbImage({ note }: { note: string }) {
   const { filename, pos } = parseImageRef(note);
+  // Try to load the per-panel RGB image; fall back to the block orthomosaic
+  const src = filename ? `/rgbimages/${filename}` : null;
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
+
+  // Use the full RGB orthomosaic as fallback — always available
+  const showOrtho = !src || errored;
 
   return (
-    <div className="bg-white border border-grey-200 overflow-hidden">
+    <div className="bg-card border border-border overflow-hidden">
       <div className="px-4 py-2.5 border-b border-grey-200 flex items-center justify-between">
         <span className="font-semibold text-xs uppercase tracking-widest text-grey-400">Visual Image (RGB)</span>
         {filename && (
@@ -328,18 +362,53 @@ function RgbImage({ note }: { note: string }) {
           </span>
         )}
       </div>
-      <div className="relative aspect-video bg-gradient-to-br from-slate-700 to-slate-900 flex flex-col items-center justify-center gap-2">
-        <div className="absolute inset-4 grid grid-cols-6 grid-rows-4 gap-[2px] opacity-20">
-          {Array.from({ length: 24 }).map((_, i) => (
-            <div key={i} className="bg-slate-400 border border-slate-500/40" style={{ borderRadius: 1 }} />
-          ))}
-        </div>
-        <div className="relative z-10 text-center px-6">
-          <p className="mono text-white/80 text-sm font-semibold">{filename?.toUpperCase() ?? "—"}</p>
-          <p className="text-white/40 text-xs mt-1.5 leading-relaxed">
-            RGB visual photo available in the original inspection dataset.
-            {pos && <><br />Anomaly is in the <strong className="text-white/60">pos {pos}</strong> ({pos === "a" ? "top" : "bottom"}) panel of this frame.</>}
-          </p>
+      <div className="relative aspect-video bg-black overflow-hidden">
+
+        {/* Per-panel RGB image (when available) */}
+        {src && !errored && (
+          <>
+            <img
+              src={src}
+              alt={`RGB visual ${filename}`}
+              className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${loaded ? "opacity-100" : "opacity-0"}`}
+              onLoad={() => setLoaded(true)}
+              onError={() => setErrored(true)}
+            />
+            {!loaded && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              </div>
+            )}
+            {pos && loaded && (
+              <div className={`absolute ${pos === "a" ? "top-2" : "bottom-2"} left-2 bg-black/70 text-white text-[10px] mono px-2 py-0.5 flex items-center gap-1`}>
+                <span className="w-1.5 h-1.5 rounded-full bg-ochre inline-block" />
+                Panel: pos {pos} ({pos === "a" ? "top" : "bottom"})
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Block-level RGB orthomosaic fallback — Day1_V1.tif thumbnail */}
+        {showOrtho && (
+          <>
+            <img
+              src="/rgb_block20.png"
+              alt="Block 20 RGB visual orthomosaic"
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+            <div className="absolute bottom-2 left-2 bg-black/60 text-white text-[10px] mono px-2 py-0.5">
+              Block 20 visual orthomosaic · 28 May 2026
+            </div>
+            {filename && (
+              <div className="absolute top-2 left-2 bg-black/70 text-white/70 text-[10px] mono px-2 py-0.5">
+                Per-panel: {filename.toUpperCase()} (pending upload)
+              </div>
+            )}
+          </>
+        )}
+
+        <div className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] mono px-2 py-0.5">
+          IEC 62446-3
         </div>
       </div>
     </div>

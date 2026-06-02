@@ -74,7 +74,7 @@ function AssignModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white border border-grey-200 w-full max-w-sm mx-4">
+      <div className="bg-card border border-border w-full max-w-sm mx-4">
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-grey-200">
           <p className="font-semibold text-sm">Assign Inspector</p>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none">×</button>
@@ -85,7 +85,7 @@ function AssignModal({
           </p>
           <div className="space-y-2">
             {available.map(m => (
-              <label key={m.id} className={`flex items-center gap-3 p-3 border cursor-pointer transition ${selected === m.id ? "border-ochre bg-ochre-muted" : "border-grey-200 hover:bg-grey-50"}`}>
+              <label key={m.id} className={`flex items-center gap-3 p-3 border cursor-pointer transition ${selected === m.id ? "border-ochre bg-ochre-muted" : "border-grey-200 hover:bg-muted"}`}>
                 <input
                   type="radio"
                   name="inspector"
@@ -192,7 +192,7 @@ function ControlCenter() {
       )}
 
       {/* ── Team assignments ── */}
-      <section className="bg-white border border-grey-200 overflow-hidden">
+      <section className="bg-card border border-border overflow-hidden">
         <header className="px-5 py-4 border-b border-grey-200 flex items-center justify-between">
           <div>
             <h2 className="font-semibold text-sm flex items-center gap-2">
@@ -207,7 +207,7 @@ function ControlCenter() {
         {/* Desktop table */}
         <div className="overflow-x-auto hidden md:block">
           <table className="w-full text-sm">
-            <thead className="bg-grey-50 text-[11px] uppercase tracking-widest text-grey-400 border-b border-grey-200">
+            <thead className="bg-muted text-[11px] uppercase tracking-widest text-grey-400 border-b border-border">
               <tr>
                 <th className="text-left px-5 py-3 font-semibold">Inspector</th>
                 <th className="text-left px-4 py-3 font-semibold">Status</th>
@@ -259,7 +259,7 @@ function ControlCenter() {
                           const plant = allPlants.find(p => p.assignedInspectorId === m.id) ?? allPlants[0];
                           setAssignPlant(plant);
                         }}
-                        className="h-7 px-3 border border-grey-200 text-xs font-medium hover:bg-grey-50"
+                        className="h-7 px-3 border border-grey-200 text-xs font-medium hover:bg-muted"
                       >
                         Reassign
                       </button>
@@ -272,7 +272,7 @@ function ControlCenter() {
         </div>
 
         {/* Mobile cards */}
-        <div className="md:hidden divide-y divide-grey-200">
+        <div className="md:hidden divide-y divide-border">
           {teamMembers.map(m => {
             const plant = m.assignedPlantId ? allPlants.find(p => p.id === m.assignedPlantId) : null;
             return (
@@ -302,7 +302,7 @@ function ControlCenter() {
       </section>
 
       {/* ── Plant fleet overview ── */}
-      <section className="bg-white border border-grey-200 overflow-hidden">
+      <section className="bg-card border border-border overflow-hidden">
         <header className="px-5 py-4 border-b border-grey-200">
           <h2 className="font-semibold text-sm flex items-center gap-2">
             <Building2 size={14} className="text-ochre" /> Plant Fleet — {allPlants.length} Sites · {totalPanels.toLocaleString()} Panels
@@ -315,7 +315,7 @@ function ControlCenter() {
         {/* Desktop table */}
         <div className="overflow-x-auto hidden md:block">
           <table className="w-full text-sm">
-            <thead className="bg-grey-50 text-[11px] uppercase tracking-widest text-grey-400 border-b border-grey-200">
+            <thead className="bg-muted text-[11px] uppercase tracking-widest text-grey-400 border-b border-border">
               <tr>
                 <th className="text-left px-5 py-3 font-semibold">Plant / Client</th>
                 <th className="text-left px-4 py-3 font-semibold">Status</th>
@@ -373,7 +373,7 @@ function ControlCenter() {
         </div>
 
         {/* Mobile cards */}
-        <div className="md:hidden divide-y divide-grey-200">
+        <div className="md:hidden divide-y divide-border">
           {allPlants.map(p => {
             const inspector = p.assignedInspectorId
               ? teamMembers.find(m => m.id === p.assignedInspectorId)
@@ -412,7 +412,7 @@ function ControlCenter() {
       </section>
 
       {/* ── Processing queue summary ── */}
-      <section className="bg-white border border-grey-200 overflow-hidden">
+      <section className="bg-card border border-border overflow-hidden">
         <header className="px-5 py-4 border-b border-grey-200 flex items-center justify-between">
           <div>
             <h2 className="font-semibold text-sm flex items-center gap-2">
@@ -424,7 +424,7 @@ function ControlCenter() {
             Full Inspector Portal <ChevronRight size={12} />
           </Link>
         </header>
-        <div className="divide-y divide-grey-200">
+        <div className="divide-y divide-border">
           {reviewQueue.map(j => (
             <div key={j.uploadId} className="px-5 py-4 flex items-center gap-4">
               <div className="flex-1">

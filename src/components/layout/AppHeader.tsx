@@ -1,11 +1,13 @@
 import { Link, useNavigate, useLocation } from "@tanstack/react-router";
-import { Bell, X, ChevronDown } from "lucide-react";
+import { Bell, X, ChevronDown, Sun, Moon, Monitor } from "lucide-react";
 import { useState } from "react";
 import { UrjaScanLogo } from "@/components/UrjaScanLogo";
 import { useI18n } from "@/lib/i18n";
 import { plant, allPlants } from "@/lib/mock-data";
 import { getUser, clearAuth } from "@/lib/auth";
 import { usePlantContext } from "@/lib/plant-context";
+import { useTheme } from "@/hooks/use-theme";
+import type { Theme } from "@/hooks/use-theme";
 
 const MOCK_NOTIFICATIONS = [
   { id: "1", title: "Critical: R14-M07 Multi Hotspot", body: "ΔT +47°C · Immediate action required", time: "2h ago", unread: true },
@@ -41,6 +43,7 @@ export function AppHeader() {
   const loc = useLocation();
   const user = getUser();
   const { selectedPlant, setSelectedPlantId } = usePlantContext();
+  const { theme, setTheme } = useTheme();
   const isAdmin = user?.role === "admin";
   const isTeam = user?.role === "team";
   const onControlCenter = loc.pathname === "/admin";
@@ -61,7 +64,7 @@ export function AppHeader() {
   }
 
   return (
-    <header className="sticky top-0 z-30 bg-white border-b border-grey-200">
+    <header className="sticky top-0 z-30 bg-card border-b border-border">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 h-12 flex items-center justify-between gap-4">
         <Link to="/dashboard" className="flex items-center">
           <UrjaScanLogo size="sm" />
@@ -117,6 +120,9 @@ export function AppHeader() {
             {lang === "en" ? "EN | हिं" : "हिं | EN"}
           </button>
 
+          {/* Theme toggle — cycles: light → dark → system */}
+          <ThemeToggle theme={theme} setTheme={setTheme} />
+
           {/* Notification bell */}
           <div className="relative">
             <button
@@ -128,14 +134,14 @@ export function AppHeader() {
             </button>
 
             {showNotifications && (
-              <div className="absolute right-0 mt-1 w-80 bg-white border border-grey-200 shadow-lg z-50">
-                <div className="flex items-center justify-between px-4 py-2.5 border-b border-grey-200">
+              <div className="absolute right-0 mt-1 w-80 bg-card border border-border shadow-lg z-50">
+                <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
                   <p className="font-semibold text-sm">Notifications</p>
                   <button onClick={() => setShowNotifications(false)} className="text-muted-foreground hover:text-foreground">
                     <X size={14} />
                   </button>
                 </div>
-                <div className="divide-y divide-grey-200 max-h-72 overflow-y-auto">
+                <div className="divide-y divide-border max-h-72 overflow-y-auto">
                   {MOCK_NOTIFICATIONS.map(n => (
                     <div key={n.id} className={`px-4 py-3 ${n.unread ? "bg-ochre-muted" : ""}`}>
                       <div className="flex items-start justify-between gap-2">
@@ -161,26 +167,26 @@ export function AppHeader() {
             </button>
 
             {showUserMenu && (
-              <div className="absolute right-0 mt-1 w-48 bg-white border border-grey-200 shadow-lg z-50">
-                <div className="px-4 py-3 border-b border-grey-200">
+              <div className="absolute right-0 mt-1 w-48 bg-card border border-border shadow-lg z-50">
+                <div className="px-4 py-3 border-b border-border">
                   <p className="text-xs font-semibold text-foreground">{roleLabel}</p>
                   <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{user?.userId ?? ""}</p>
                 </div>
                 <div className="py-1">
-                  <Link to="/settings" onClick={() => setShowUserMenu(false)} className="block px-4 py-2 text-xs text-foreground hover:bg-grey-50">
+                  <Link to="/settings" onClick={() => setShowUserMenu(false)} className="block px-4 py-2 text-xs text-foreground hover:bg-muted">
                     Settings
                   </Link>
                   {user?.role === "admin" && (
-                    <Link to="/admin" onClick={() => setShowUserMenu(false)} className="block px-4 py-2 text-xs text-foreground hover:bg-grey-50">
+                    <Link to="/admin" onClick={() => setShowUserMenu(false)} className="block px-4 py-2 text-xs text-foreground hover:bg-muted">
                       Control Center
                     </Link>
                   )}
                   {(user?.role === "team" || user?.role === "admin") && (
-                    <Link to="/team" onClick={() => setShowUserMenu(false)} className="block px-4 py-2 text-xs text-foreground hover:bg-grey-50">
+                    <Link to="/team" onClick={() => setShowUserMenu(false)} className="block px-4 py-2 text-xs text-foreground hover:bg-muted">
                       Inspector Portal
                     </Link>
                   )}
-                  <button onClick={handleSignOut} className="w-full text-left px-4 py-2 text-xs text-critical hover:bg-grey-50">
+                  <button onClick={handleSignOut} className="w-full text-left px-4 py-2 text-xs text-critical hover:bg-muted">
                     Sign Out
                   </button>
                 </div>
@@ -190,5 +196,22 @@ export function AppHeader() {
         </div>
       </div>
     </header>
+  );
+}
+
+const CYCLE: Record<Theme, Theme> = { light: "dark", dark: "system", system: "light" };
+const THEME_ICON: Record<Theme, typeof Sun> = { light: Sun, dark: Moon, system: Monitor };
+const THEME_LABEL: Record<Theme, string> = { light: "Light", dark: "Dark", system: "System" };
+
+function ThemeToggle({ theme, setTheme }: { theme: Theme; setTheme: (t: Theme) => void }) {
+  const Icon = THEME_ICON[theme];
+  return (
+    <button
+      onClick={() => setTheme(CYCLE[theme])}
+      title={`Theme: ${THEME_LABEL[theme]} (click to cycle)`}
+      className="p-2 hover:bg-muted min-w-[36px] min-h-[36px] flex items-center justify-center text-muted-foreground hover:text-foreground transition"
+    >
+      <Icon size={16} />
+    </button>
   );
 }

@@ -98,7 +98,7 @@ function AnomalyList() {
       </header>
 
       {/* Filter bar */}
-      <div className="bg-white border border-grey-200 p-4 flex flex-col lg:flex-row gap-3 lg:items-center">
+      <div className="bg-card border border-border p-4 flex flex-col lg:flex-row gap-3 lg:items-center">
         <div className="flex gap-2 flex-wrap">
           {(["all", "critical", "medium", "normal"] as const).map(s => (
             <button
@@ -107,7 +107,7 @@ function AnomalyList() {
               className={`inline-flex items-center gap-1.5 px-3 h-8 text-xs font-semibold border transition ${
                 sevFilter === s
                   ? "bg-grey-900 text-white border-grey-900"
-                  : "bg-white text-grey-400 border-grey-200 hover:bg-grey-25"
+                  : "bg-card text-grey-400 border-border hover:bg-muted"
               }`}
             >
               <span aria-hidden style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", backgroundColor: SEV_DOT[s], flexShrink: 0 }} />
@@ -118,7 +118,7 @@ function AnomalyList() {
         <select
           value={statusFilter}
           onChange={e => setStatusFilter(e.target.value as Status | "all")}
-          className="h-8 px-3 border border-grey-200 bg-white text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ochre"
+          className="h-8 px-3 border border-border bg-card text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ochre"
         >
           <option value="all">All statuses</option>
           <option>New</option>
@@ -132,20 +132,20 @@ function AnomalyList() {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search by panel ID or anomaly type..."
-            className="w-full h-8 pl-9 pr-3 border border-grey-200 bg-white text-xs focus:outline-none focus:ring-1 focus:ring-ochre"
+            className="w-full h-8 pl-9 pr-3 border border-border bg-card text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ochre"
           />
         </div>
         <div className="flex gap-2">
           <button
             onClick={() => exportCSV(rows, plantName)}
-            className="h-8 px-3 border border-grey-200 bg-white text-xs font-medium inline-flex items-center gap-1.5 hover:bg-grey-50"
+            className="h-8 px-3 border border-border bg-card text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted"
             title={`Export ${rows.length} filtered anomalies as CSV`}
           >
             <Download size={12} /> CSV
           </button>
           <button
             onClick={() => exportCSV(anomalies, plantName)}
-            className="h-8 px-3 border border-grey-200 bg-white text-xs font-medium inline-flex items-center gap-1.5 hover:bg-grey-50"
+            className="h-8 px-3 border border-border bg-card text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted"
             title="Export all 347 anomalies"
           >
             <FileText size={12} /> Export All
@@ -154,14 +154,14 @@ function AnomalyList() {
       </div>
 
       {/* Table — desktop */}
-      <div className="bg-white border border-grey-200 overflow-hidden hidden md:block">
+      <div className="bg-card border border-border overflow-hidden hidden md:block">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-grey-50 text-[11px] uppercase tracking-widest text-grey-400 border-b border-grey-200">
+            <thead className="bg-muted text-[11px] uppercase tracking-widest text-grey-400 border-b border-border">
               <tr>
                 <th className="text-left px-4 py-3 font-semibold">Panel ID</th>
                 <th className="text-left px-4 py-3 font-semibold">Anomaly Type</th>
-                <th className="text-left px-4 py-3 font-semibold">ΔT</th>
+                <th className="text-left px-4 py-3 font-semibold">ΔT (norm.)</th>
                 <th className="text-left px-4 py-3 font-semibold">Severity</th>
                 <th className="text-left px-4 py-3 font-semibold">String</th>
                 <th className="text-left px-4 py-3 font-semibold">Status</th>
@@ -169,19 +169,25 @@ function AnomalyList() {
                 <th className="text-right px-4 py-3 font-semibold">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-grey-200">
+            <tbody className="divide-y divide-border">
               {rows.map(a => (
                 <tr key={a.id} className="hover:bg-grey-25 transition">
                   <td className="px-4 py-3 mono font-semibold text-sm">{a.panelId}</td>
                   <td className="px-4 py-3 text-sm">{a.type}</td>
-                  <td className="px-4 py-3 mono font-semibold text-sm">{a.deltaT ? `+${a.deltaT}°C` : "—"}</td>
+                  <td className="px-4 py-3 mono font-semibold text-sm">
+                    {a.deltaTNorm ? (
+                      <span className="text-critical">+{a.deltaTNorm}°C</span>
+                    ) : a.deltaT ? (
+                      <span className="text-critical">+{a.deltaT}°C</span>
+                    ) : "—"}
+                  </td>
                   <td className="px-4 py-3"><SeverityBadge severity={a.severity} /></td>
                   <td className="px-4 py-3 text-muted-foreground text-sm">{a.string}</td>
                   <td className="px-4 py-3">
                     <select
                       value={a.status}
                       onChange={e => patchAnomaly.mutate({ id: a.id, status: e.target.value as AnomalyDTO["status"] })}
-                      className="text-xs border border-grey-200 px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-ochre"
+                      className="text-xs border border-border px-2 py-1 bg-card text-foreground focus:outline-none focus:ring-1 focus:ring-ochre"
                     >
                       <option>New</option>
                       <option>Acknowledged</option>
@@ -200,7 +206,7 @@ function AnomalyList() {
             </tbody>
           </table>
         </div>
-        <div className="px-4 py-3 text-xs text-muted-foreground border-t border-grey-200">
+        <div className="px-4 py-3 text-xs text-muted-foreground border-t border-border">
           Showing 1–{rows.length} of {rows.length} anomalies
         </div>
       </div>
@@ -209,7 +215,7 @@ function AnomalyList() {
       <div className="md:hidden space-y-2">
         {rows.map(a => (
           <Link key={a.id} to="/anomalies/$id" params={{ id: a.id }}
-            className="block bg-white border border-grey-200 p-4 hover:bg-grey-25 transition">
+            className="block bg-card border border-border p-4 hover:bg-grey-25 transition">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="mono font-bold text-sm">{a.panelId}</p>

@@ -75,7 +75,7 @@ function EquipmentAuditCard() {
   const lastInspection = inspectionHistory[inspectionHistory.length - 1];
 
   return (
-    <div className="bg-white border border-grey-200">
+    <div className="bg-card border border-border">
       <div className="p-5 flex items-start gap-4">
         <div className="w-10 h-10 flex items-center justify-center bg-normal/10 shrink-0">
           <ClipboardCheck size={18} className="text-normal" />
@@ -109,7 +109,7 @@ function EquipmentAuditCard() {
       {open && (
         <div className="border-t border-grey-200 overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-grey-50 text-[11px] uppercase tracking-widest text-grey-400 border-b border-grey-200">
+            <thead className="bg-muted text-[11px] uppercase tracking-widest text-grey-400 border-b border-border">
               <tr>
                 <th className="text-left px-4 py-2.5 font-semibold">Audit Name</th>
                 <th className="text-left px-4 py-2.5 font-semibold">Type</th>
@@ -120,7 +120,7 @@ function EquipmentAuditCard() {
                 <th className="text-left px-4 py-2.5 font-semibold">Findings</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-grey-200">
+            <tbody className="divide-y divide-border">
               {equipmentAudits.map(a => (
                 <tr key={a.id} className="hover:bg-grey-25 transition">
                   <td className="px-4 py-3 font-medium">{a.name}</td>
@@ -152,7 +152,7 @@ function ThermalAnomalyCard() {
   const medium   = anomalies.filter(a => a.severity === "medium").length;
 
   return (
-    <div className="bg-white border border-grey-200 p-5 flex items-start gap-4">
+    <div className="bg-card border border-border p-5 flex items-start gap-4">
       <div className="w-10 h-10 flex items-center justify-center bg-ochre-muted shrink-0">
         <Thermometer size={18} className="text-ochre" />
       </div>
@@ -183,13 +183,13 @@ function ThermalAnomalyCard() {
           </Link>
           <Link
             to="/map"
-            className="inline-flex items-center gap-1.5 h-8 px-4 bg-white border border-grey-200 text-foreground font-medium text-xs hover:bg-grey-50"
+            className="inline-flex items-center gap-1.5 h-8 px-4 bg-card border border-border text-foreground font-medium text-xs hover:bg-muted"
           >
             <MapPin size={13} /> Site Map
           </Link>
           <Link
             to="/reports"
-            className="inline-flex items-center gap-1.5 h-8 px-4 bg-white border border-grey-200 text-foreground font-medium text-xs hover:bg-grey-50"
+            className="inline-flex items-center gap-1.5 h-8 px-4 bg-card border border-border text-foreground font-medium text-xs hover:bg-muted"
           >
             Download Report
           </Link>
@@ -216,7 +216,7 @@ function DigitizationCard() {
   const [open, setOpen] = useState(true);
 
   return (
-    <div className="bg-white border border-grey-200">
+    <div className="bg-card border border-border">
       <div className="p-5 flex items-start gap-4">
         <div className="w-10 h-10 flex items-center justify-center bg-medium/10 shrink-0">
           <Database size={18} className="text-medium" />
@@ -247,7 +247,7 @@ function DigitizationCard() {
       {open && (
         <div className="border-t border-grey-200 overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-grey-50 text-[11px] uppercase tracking-widest text-grey-400 border-b border-grey-200">
+            <thead className="bg-muted text-[11px] uppercase tracking-widest text-grey-400 border-b border-border">
               <tr>
                 <th className="text-left px-4 py-2.5 font-semibold">Document</th>
                 <th className="text-left px-4 py-2.5 font-semibold">Type</th>
@@ -257,7 +257,7 @@ function DigitizationCard() {
                 <th className="text-right px-4 py-2.5 font-semibold">Download</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-grey-200">
+            <tbody className="divide-y divide-border">
               {digitizationRecords.map(r => (
                 <tr key={r.id} className="hover:bg-grey-25 transition">
                   <td className="px-4 py-3 font-medium">{r.name}</td>
@@ -290,7 +290,7 @@ function DigitizationCard() {
 function ComingSoonCard({ svc }: { svc: typeof COMING_SOON[number] }) {
   const Icon = svc.icon;
   return (
-    <div className="bg-white border border-grey-200 p-5 flex flex-col gap-3 opacity-75">
+    <div className="bg-card border border-border p-5 flex flex-col gap-3 opacity-75">
       <div className="flex items-center gap-3">
         <div className="w-9 h-9 flex items-center justify-center bg-grey-50 border border-grey-200 shrink-0">
           <Icon size={16} className="text-grey-400" />

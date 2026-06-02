@@ -1,20 +1,41 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useMemo, useRef, useCallback } from "react";
-import { X, ZoomIn, ZoomOut, Maximize2, MessageCircle, ArrowRight, Layers, Grid3x3, Map as MapIcon, Thermometer, Navigation } from "lucide-react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+import { X, ZoomIn, ZoomOut, Maximize2, MessageCircle, ArrowRight, Layers, Grid3x3, Map as MapIcon, Thermometer, Navigation, SplitSquareHorizontal } from "lucide-react";
 import { anomalies, anomalyTypes, plant, severityCounts, type Anomaly, type Severity } from "@/lib/mock-data";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { usePlantContext } from "@/lib/plant-context";
-import Map, { Marker, Popup, NavigationControl, Source, Layer, type MapRef } from "react-map-gl/mapbox";
+import Map, { Marker, Popup, NavigationControl, Source, Layer, type MapRef, type ViewState } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 
-// Geographic bounds of the Block 20 thermal orthomosaic (from GeoTIFF metadata)
+// Geographic bounds — Block 20 thermal orthomosaic (Day1_T_modified.tif)
 const THERMAL_BOUNDS = {
-  // [lng, lat] order — Mapbox image source: [NW, NE, SE, SW]
   coordinates: [
     [73.033843, 28.261343], // NW
     [73.043200, 28.261343], // NE
     [73.043200, 28.254336], // SE
     [73.033843, 28.254336], // SW
+  ] as [[number,number],[number,number],[number,number],[number,number]],
+};
+
+// Geographic bounds — Block 20 RGB visual orthomosaic V1 (Day1_V1.tif)
+// 56155×40722 px, eastern zone of Block 20
+const RGB_BOUNDS = {
+  coordinates: [
+    [73.037842, 28.257479], // NW
+    [73.042711, 28.257479], // NE
+    [73.042711, 28.254353], // SE
+    [73.037842, 28.254353], // SW
+  ] as [[number,number],[number,number],[number,number],[number,number]],
+};
+
+// Geographic bounds — Block 20 RGB visual orthomosaic V2 (Day1_V2.tif)
+// 68854×39765 px, western zone of Block 20
+const RGB2_BOUNDS = {
+  coordinates: [
+    [73.035136, 28.259860], // NW
+    [73.041713, 28.259860], // NE
+    [73.041713, 28.256497], // SE
+    [73.035136, 28.256497], // SW
   ] as [[number,number],[number,number],[number,number],[number,number]],
 };
 
@@ -82,6 +103,18 @@ function SiteMap() {
   const [popupAnomaly, setPopupAnomaly] = useState<Anomaly | null>(null);
   const [thermalVisible, setThermalVisible] = useState(false);
   const [thermalOpacity, setThermalOpacity] = useState(0.65);
+  const [rgbVisible, setRgbVisible] = useState(false);
+  const [rgbOpacity, setRgbOpacity] = useState(0.80);
+  const [rgb2Visible, setRgb2Visible] = useState(false);
+  const [rgb2Opacity, setRgb2Opacity] = useState(0.80);
+  const [compareMode, setCompareMode] = useState(false);
+  const [splitPct, setSplitPct] = useState(50);
+  const [viewState, setViewState] = useState<Omit<ViewState, "width" | "height">>({
+    longitude: 73.0392, latitude: 28.2569, zoom: 17,
+    bearing: 0, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 },
+  });
+  const dragging = useRef(false);
+  const pinchRef = useRef<number | null>(null);
 
   // Unique filter options derived from real data
   const uniqueInverters = useMemo(() => ["all", ...Array.from(new Set(anomalies.map(a => a.inverter))).sort()], []);
@@ -103,7 +136,8 @@ function SiteMap() {
 
   const mapRef = useRef<MapRef>(null);
 
-  const tile = useMemo(() => Math.max(10, Math.round(18 * zoom)), [zoom]);
+  // 16px minimum so cells are reliably tappable on mobile
+  const tile = useMemo(() => Math.max(16, Math.round(20 * zoom)), [zoom]);
 
   const handleMarkerClick = useCallback((anomaly: Anomaly) => {
     setSelected(anomaly);
@@ -121,7 +155,7 @@ function SiteMap() {
       <aside
         className={`${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
-        } md:translate-x-0 fixed md:static z-20 top-12 bottom-14 md:bottom-0 left-0 w-72 bg-white border-r border-grey-200 p-5 overflow-y-auto transition-transform`}
+        } md:translate-x-0 fixed md:static z-20 top-12 bottom-14 md:bottom-0 left-0 w-72 bg-card border-r border-border p-5 overflow-y-auto transition-transform`}
       >
         <h2 className="font-bold text-foreground mb-4">Filter Panels</h2>
 
@@ -183,7 +217,7 @@ function SiteMap() {
 
       {/* Map */}
       <div className="flex-1 flex flex-col bg-grey-100 min-w-0">
-        <div className="px-4 md:px-6 py-3 bg-white border-b border-grey-200 flex items-center justify-between flex-wrap gap-2">
+        <div className="px-4 md:px-6 py-3 bg-card border-b border-border flex items-center justify-between flex-wrap gap-2">
           <div>
             <h1 className="font-bold text-foreground">{selectedPlant.name} — Site Map</h1>
             <p className="text-xs text-muted-foreground mono">
@@ -193,49 +227,152 @@ function SiteMap() {
           </div>
           <div className="flex items-center gap-2">
             {/* Mode toggle */}
-            <div className="flex items-center border border-grey-200 bg-grey-50 p-0.5 gap-0.5">
+            <div className="flex items-center border border-border bg-muted p-0.5 gap-0.5">
               <button
                 onClick={() => setMapMode("grid")}
                 title="Panel grid view"
-                className={`w-8 h-8 flex items-center justify-center transition ${mapMode === "grid" ? "bg-white text-ochre border border-grey-200" : "text-muted-foreground hover:text-foreground"}`}
+                className={`w-8 h-8 flex items-center justify-center transition ${mapMode === "grid" ? "bg-card text-ochre border border-border" : "text-muted-foreground hover:text-foreground"}`}
               >
                 <Grid3x3 size={14} />
               </button>
               <button
                 onClick={() => setMapMode("satellite")}
                 title="Satellite map with anomaly pins"
-                className={`w-8 h-8 flex items-center justify-center transition ${mapMode === "satellite" ? "bg-white text-ochre border border-grey-200" : "text-muted-foreground hover:text-foreground"}`}
+                className={`w-8 h-8 flex items-center justify-center transition ${mapMode === "satellite" ? "bg-card text-ochre border border-border" : "text-muted-foreground hover:text-foreground"}`}
               >
                 <MapIcon size={14} />
               </button>
             </div>
-            {/* Thermal overlay toggle — only for plants with thermal data */}
+            {/* Compare mode toggle */}
             {isRajpur && mapMode === "satellite" && (
               <button
-                onClick={() => setThermalVisible(v => !v)}
-                title="Toggle thermal overlay"
+                onClick={() => setCompareMode(v => !v)}
+                title="Swipe compare: drag divider to compare thermal vs RGB"
                 className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium border transition ${
-                  thermalVisible
-                    ? "bg-red-600 text-white border-red-600"
-                    : "bg-white text-muted-foreground border-grey-200 hover:bg-grey-50"
+                  compareMode ? "bg-primary text-white border-primary" : "bg-card text-muted-foreground border-border hover:bg-muted"
                 }`}
               >
-                <Thermometer size={13} />
-                Thermal
+                <SplitSquareHorizontal size={13} /> Compare
               </button>
             )}
-            <button onClick={() => setSidebarOpen(true)} className="md:hidden px-3 py-1.5 text-xs border border-grey-200 bg-white">Filters</button>
+
+            {/* Overlay toggles — Block 20 satellite view */}
+            {isRajpur && mapMode === "satellite" && !compareMode && (
+              <div className="flex items-center border border-border divide-x divide-border overflow-hidden">
+                <span className="px-2 text-[10px] uppercase tracking-widest text-grey-400 bg-grey-50 h-8 flex items-center">Overlay</span>
+                <button
+                  onClick={() => setThermalVisible(v => !v)}
+                  title="Thermal IR orthomosaic (Day1_T_modified.tif)"
+                  className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium transition ${
+                    thermalVisible ? "bg-red-600 text-white" : "bg-card text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  <Thermometer size={13} /> IR
+                </button>
+                <button
+                  onClick={() => setRgbVisible(v => !v)}
+                  title="RGB visual orthomosaic V1 — eastern zone (Day1_V1.tif)"
+                  className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium transition ${
+                    rgbVisible ? "bg-emerald-600 text-white" : "bg-card text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  <Layers size={13} /> V1
+                </button>
+                <button
+                  onClick={() => setRgb2Visible(v => !v)}
+                  title="RGB visual orthomosaic V2 — western zone (Day1_V2.tif)"
+                  className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium transition ${
+                    rgb2Visible ? "bg-blue-600 text-white" : "bg-card text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  <Layers size={13} /> V2
+                </button>
+              </div>
+            )}
+            <button onClick={() => setSidebarOpen(true)} className="md:hidden px-3 py-1.5 text-xs border border-border bg-card">Filters</button>
             {mapMode === "grid" && <>
-              <button onClick={() => setZoom(Math.max(0.6, zoom - 0.2))} className="w-8 h-8 bg-white border border-grey-200 flex items-center justify-center hover:bg-grey-50"><ZoomOut size={14} /></button>
-              <button onClick={() => setZoom(Math.min(2, zoom + 0.2))} className="w-8 h-8 bg-white border border-grey-200 flex items-center justify-center hover:bg-grey-50"><ZoomIn size={14} /></button>
-              <button onClick={() => setZoom(1)} className="w-8 h-8 bg-white border border-grey-200 flex items-center justify-center hover:bg-grey-50"><Maximize2 size={14} /></button>
+              <button onClick={() => setZoom(Math.max(0.6, zoom - 0.2))} className="w-8 h-8 bg-card border border-border flex items-center justify-center hover:bg-muted"><ZoomOut size={14} /></button>
+              <button onClick={() => setZoom(Math.min(2, zoom + 0.2))} className="w-8 h-8 bg-card border border-border flex items-center justify-center hover:bg-muted"><ZoomIn size={14} /></button>
+              <button onClick={() => setZoom(1)} className="w-8 h-8 bg-card border border-border flex items-center justify-center hover:bg-muted"><Maximize2 size={14} /></button>
             </>}
           </div>
         </div>
 
         <div className="flex-1 overflow-auto relative">
+          {/* ── Compare (Curtain) View ── */}
+          {mapMode === "satellite" && compareMode && (
+            <div
+              className="absolute inset-0 flex select-none"
+              onMouseMove={e => {
+                if (!dragging.current) return;
+                const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                const pct = Math.min(90, Math.max(10, ((e.clientX - rect.left) / rect.width) * 100));
+                setSplitPct(pct);
+              }}
+              onMouseUp={() => { dragging.current = false; }}
+              onMouseLeave={() => { dragging.current = false; }}
+            >
+              {/* Left pane — Thermal IR */}
+              <div className="relative overflow-hidden flex-shrink-0" style={{ width: `${splitPct}%` }}>
+                <Map
+                  mapboxAccessToken={MAPBOX_TOKEN}
+                  longitude={viewState.longitude}
+                  latitude={viewState.latitude}
+                  zoom={viewState.zoom}
+                  bearing={viewState.bearing}
+                  pitch={viewState.pitch}
+                  onMove={e => setViewState({ longitude: e.viewState.longitude, latitude: e.viewState.latitude, zoom: e.viewState.zoom, bearing: e.viewState.bearing ?? 0, pitch: e.viewState.pitch ?? 0, padding: { top: 0, bottom: 0, left: 0, right: 0 } })}
+                  style={{ width: "100%", height: "100%" }}
+                  mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
+                >
+                  <Source id="cmp-thermal" type="image" url="/thermal_block20.png" coordinates={THERMAL_BOUNDS.coordinates}>
+                    <Layer id="cmp-thermal-layer" type="raster" paint={{ "raster-opacity": 0.85 }} />
+                  </Source>
+                </Map>
+                <div className="absolute top-2 left-2 bg-red-600 text-white text-[10px] font-bold mono px-2 py-0.5 flex items-center gap-1">
+                  <Thermometer size={10} /> THERMAL IR
+                </div>
+              </div>
+
+              {/* Draggable divider */}
+              <div
+                className="relative z-10 flex-shrink-0 cursor-col-resize"
+                style={{ width: 4, background: "white", boxShadow: "0 0 0 1px rgba(0,0,0,0.3)" }}
+                onMouseDown={() => { dragging.current = true; }}
+              >
+                <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 left-1/2 w-8 h-8 bg-card rounded-full border border-border shadow-lg flex items-center justify-center cursor-col-resize">
+                  <SplitSquareHorizontal size={14} className="text-primary" />
+                </div>
+              </div>
+
+              {/* Right pane — RGB Visual */}
+              <div className="relative overflow-hidden flex-1">
+                <Map
+                  mapboxAccessToken={MAPBOX_TOKEN}
+                  longitude={viewState.longitude}
+                  latitude={viewState.latitude}
+                  zoom={viewState.zoom}
+                  bearing={viewState.bearing}
+                  pitch={viewState.pitch}
+                  style={{ width: "100%", height: "100%" }}
+                  mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
+                >
+                  <Source id="cmp-rgb" type="image" url="/rgb_block20.png" coordinates={RGB_BOUNDS.coordinates}>
+                    <Layer id="cmp-rgb-layer" type="raster" paint={{ "raster-opacity": 0.90 }} />
+                  </Source>
+                  <Source id="cmp-rgb2" type="image" url="/rgb2_block20.png" coordinates={RGB2_BOUNDS.coordinates}>
+                    <Layer id="cmp-rgb2-layer" type="raster" paint={{ "raster-opacity": 0.90 }} />
+                  </Source>
+                </Map>
+                <div className="absolute top-2 right-2 bg-emerald-600 text-white text-[10px] font-bold mono px-2 py-0.5 flex items-center gap-1">
+                  <Layers size={10} /> VISUAL RGB
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Satellite map view */}
-          {mapMode === "satellite" && (
+          {mapMode === "satellite" && !compareMode && (
             <div className="absolute inset-0">
               <Map
                 ref={mapRef}
@@ -252,7 +389,7 @@ function SiteMap() {
               >
                 <NavigationControl position="top-right" />
 
-                {/* Thermal orthomosaic overlay — Block 20 */}
+                {/* Thermal IR orthomosaic overlay (Day1_T_modified.tif) */}
                 {isRajpur && thermalVisible && (
                   <Source
                     id="thermal-overlay"
@@ -264,6 +401,38 @@ function SiteMap() {
                       id="thermal-raster"
                       type="raster"
                       paint={{ "raster-opacity": thermalOpacity, "raster-fade-duration": 300 }}
+                    />
+                  </Source>
+                )}
+
+                {/* RGB visual orthomosaic V1 — eastern zone (Day1_V1.tif) */}
+                {isRajpur && rgbVisible && (
+                  <Source
+                    id="rgb-overlay"
+                    type="image"
+                    url="/rgb_block20.png"
+                    coordinates={RGB_BOUNDS.coordinates}
+                  >
+                    <Layer
+                      id="rgb-raster"
+                      type="raster"
+                      paint={{ "raster-opacity": rgbOpacity, "raster-fade-duration": 300 }}
+                    />
+                  </Source>
+                )}
+
+                {/* RGB visual orthomosaic V2 — western zone (Day1_V2.tif) */}
+                {isRajpur && rgb2Visible && (
+                  <Source
+                    id="rgb2-overlay"
+                    type="image"
+                    url="/rgb2_block20.png"
+                    coordinates={RGB2_BOUNDS.coordinates}
+                  >
+                    <Layer
+                      id="rgb2-raster"
+                      type="raster"
+                      paint={{ "raster-opacity": rgb2Opacity, "raster-fade-duration": 300 }}
                     />
                   </Source>
                 )}
@@ -329,7 +498,17 @@ function SiteMap() {
                       </div>
                       <p className="text-xs text-muted-foreground mt-1">{popupAnomaly.type}</p>
                       {popupAnomaly.deltaT && (
-                        <p className="text-xs font-semibold text-critical mono mt-1">ΔT +{popupAnomaly.deltaT}°C</p>
+                        <div className="mt-1 space-y-0.5">
+                          <p className="text-xs font-semibold text-critical mono">
+                            ΔT +{popupAnomaly.deltaT}°C
+                            {popupAnomaly.deltaTNorm && popupAnomaly.deltaTNorm !== popupAnomaly.deltaT && (
+                              <span className="text-ochre ml-1.5">(norm. +{popupAnomaly.deltaTNorm}°C)</span>
+                            )}
+                          </p>
+                          {popupAnomaly.dailyLossINR && (
+                            <p className="text-xs font-bold text-medium mono">₹{popupAnomaly.dailyLossINR}/day loss</p>
+                          )}
+                        </div>
                       )}
                       <p className="text-[10px] text-muted-foreground mono mt-1.5">
                         {popupAnomaly.gps.lat.toFixed(5)}°N, {popupAnomaly.gps.lng.toFixed(5)}°E
@@ -367,7 +546,7 @@ function SiteMap() {
               )}
 
               {/* Map legend overlay */}
-              <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur border border-grey-200 px-3 py-2 text-xs space-y-1.5 shadow">
+              <div className="absolute bottom-4 left-4 bg-card/95 backdrop-blur border border-border px-3 py-2 text-xs space-y-1.5 shadow">
                 {[
                   { label: "Critical", color: SEVERITY_COLOR.critical },
                   { label: "Medium",   color: SEVERITY_COLOR.medium },
@@ -380,18 +559,49 @@ function SiteMap() {
                 ))}
                 {isRajpur && thermalVisible && (
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">
-                    <div className="flex items-center gap-1.5 text-red-600 font-medium">
-                      <Thermometer size={11} /> Thermal overlay
+                    <div className="flex items-center gap-1.5 text-red-600 font-medium text-xs">
+                      <Thermometer size={11} /> Thermal IR
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground">Opacity</span>
-                      <input
-                        type="range" min={0.2} max={1} step={0.05}
+                      <span className="text-muted-foreground text-xs">Opacity</span>
+                      <input type="range" min={0.2} max={1} step={0.05}
                         value={thermalOpacity}
                         onChange={e => setThermalOpacity(Number(e.target.value))}
                         className="w-20 accent-red-600"
                       />
-                      <span className="mono text-muted-foreground">{Math.round(thermalOpacity * 100)}%</span>
+                      <span className="mono text-muted-foreground text-xs">{Math.round(thermalOpacity * 100)}%</span>
+                    </div>
+                  </div>
+                )}
+                {isRajpur && rgbVisible && (
+                  <div className="pt-1.5 border-t border-grey-200 space-y-1">
+                    <div className="flex items-center gap-1.5 text-emerald-600 font-medium text-xs">
+                      <Layers size={11} /> Visual V1 (east)
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground text-xs">Opacity</span>
+                      <input type="range" min={0.2} max={1} step={0.05}
+                        value={rgbOpacity}
+                        onChange={e => setRgbOpacity(Number(e.target.value))}
+                        className="w-20 accent-emerald-600"
+                      />
+                      <span className="mono text-muted-foreground text-xs">{Math.round(rgbOpacity * 100)}%</span>
+                    </div>
+                  </div>
+                )}
+                {isRajpur && rgb2Visible && (
+                  <div className="pt-1.5 border-t border-grey-200 space-y-1">
+                    <div className="flex items-center gap-1.5 text-blue-600 font-medium text-xs">
+                      <Layers size={11} /> Visual V2 (west)
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground text-xs">Opacity</span>
+                      <input type="range" min={0.2} max={1} step={0.05}
+                        value={rgb2Opacity}
+                        onChange={e => setRgb2Opacity(Number(e.target.value))}
+                        className="w-20 accent-blue-600"
+                      />
+                      <span className="mono text-muted-foreground text-xs">{Math.round(rgb2Opacity * 100)}%</span>
                     </div>
                   </div>
                 )}
@@ -402,7 +612,7 @@ function SiteMap() {
           {/* Panel grid view */}
           {mapMode === "grid" && !isRajpur && (
             <div className="absolute inset-0 flex items-center justify-center">
-              <div className="bg-white border border-grey-200 p-8 text-center max-w-sm">
+              <div className="bg-card border border-border p-8 text-center max-w-sm">
                 <p className="font-semibold text-foreground">{selectedPlant.name}</p>
                 <p className="text-sm text-muted-foreground mt-2">
                   Panel grid view is available after the first inspection has been processed for this plant.
@@ -414,8 +624,29 @@ function SiteMap() {
             </div>
           )}
           {mapMode === "grid" && isRajpur && (
-            <div className="p-4 md:p-6">
-              <div className="inline-block bg-white border border-grey-200 p-4">
+            <div
+              className="p-4 md:p-6"
+              onTouchStart={e => {
+                if (e.touches.length === 2) {
+                  pinchRef.current = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY,
+                  );
+                }
+              }}
+              onTouchMove={e => {
+                if (e.touches.length !== 2 || pinchRef.current === null) return;
+                const dist = Math.hypot(
+                  e.touches[0].clientX - e.touches[1].clientX,
+                  e.touches[0].clientY - e.touches[1].clientY,
+                );
+                const delta = dist / pinchRef.current;
+                pinchRef.current = dist;
+                setZoom(z => Math.min(2.5, Math.max(0.4, z * delta)));
+              }}
+              onTouchEnd={() => { pinchRef.current = null; }}
+            >
+              <div className="inline-block bg-card border border-border p-4">
                 {/* Column headers */}
                 <div className="flex gap-[2px] pl-10 mb-1">
                   {Array.from({ length: COLS }).map((_, c) => (
@@ -491,7 +722,7 @@ function SiteMap() {
 
         {/* Legend (grid mode only) */}
         {mapMode === "grid" && (
-          <div className="border-t border-grey-200 bg-white px-4 md:px-6 py-2 flex flex-wrap items-center gap-4 text-xs text-foreground">
+          <div className="border-t border-border bg-card px-4 md:px-6 py-2 flex flex-wrap items-center gap-4 text-xs text-foreground">
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 bg-critical" style={{ borderRadius: 1 }} /> Critical</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 bg-medium" style={{ borderRadius: 1 }} /> Medium</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 bg-normal/70" style={{ borderRadius: 1 }} /> Healthy</span>
@@ -506,14 +737,14 @@ function SiteMap() {
           <div className="absolute inset-0 bg-black/30" />
           <aside
             onClick={e => e.stopPropagation()}
-            className="relative w-full sm:w-[400px] bg-white border-l border-grey-200 overflow-y-auto animate-in slide-in-from-right"
+            className="relative w-full sm:w-[400px] bg-card border-l border-border overflow-y-auto animate-in slide-in-from-right"
           >
-            <header className="p-5 border-b border-grey-200 flex items-start justify-between">
+            <header className="p-5 border-b border-border flex items-start justify-between">
               <div>
                 <p className="text-[11px] uppercase tracking-widest text-grey-400">Panel</p>
                 <h3 className="mono text-2xl font-bold">{selected.panelId}</h3>
               </div>
-              <button onClick={() => setSelected(null)} className="w-8 h-8 hover:bg-grey-50 flex items-center justify-center">
+              <button onClick={() => setSelected(null)} className="w-8 h-8 hover:bg-muted flex items-center justify-center">
                 <X size={18} />
               </button>
             </header>
@@ -556,7 +787,7 @@ function FilterSelect({ label, value, onChange, options }: { label: string; valu
       <select
         value={value}
         onChange={e => onChange?.(e.target.value)}
-        className="mt-1.5 w-full h-9 px-3 border border-grey-200 bg-white text-xs focus:outline-none focus:ring-1 focus:ring-ochre"
+        className="mt-1.5 w-full h-9 px-3 border border-border bg-card text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-ochre"
       >
         {options.map(o => (
           <option key={o} value={o}>{o === "all" ? `All ${label}s` : o}</option>

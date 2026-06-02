@@ -132,7 +132,7 @@ function QueueRow({ entry }: { entry: QueueEntry }) {
 function PipelineDiagram() {
   const [active, setActive] = useState<number | null>(null);
   return (
-    <section className="bg-white border border-grey-200 p-5 md:p-6">
+    <section className="bg-card border border-border p-5 md:p-6">
       <h2 className="font-semibold flex items-center gap-2 mb-1 text-sm">
         <Cpu size={15} className="text-ochre" /> TGIS Processing Pipeline
       </h2>
@@ -227,7 +227,7 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
   }
 
   return (
-    <section className="bg-white border border-grey-200 p-5 md:p-6">
+    <section className="bg-card border border-border p-5 md:p-6">
       <h2 className="font-semibold flex items-center gap-2 text-sm mb-1">
         <AlertTriangle size={15} className="text-critical" /> Report New Anomaly to Plant Owner
       </h2>
@@ -240,7 +240,7 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
               required
               value={plantId}
               onChange={e => { setPlantId(e.target.value); setSelectedPlantId(e.target.value); }}
-              className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+              className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
             >
               {allPlants.map(p => (
                 <option key={p.id} value={p.id}>{p.name} — {p.client}</option>
@@ -253,7 +253,7 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
               value={panelId}
               onChange={e => setPanelId(e.target.value)}
               placeholder="e.g. R14-M07"
-              className="w-full h-9 px-3 border border-grey-200 bg-white text-sm mono focus:outline-none focus:ring-1 focus:ring-ochre"
+              className="w-full h-9 px-3 border border-border bg-card text-sm mono focus:outline-none focus:ring-1 focus:ring-ochre"
             />
           </Field>
           <Field label="Anomaly Type">
@@ -261,7 +261,7 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
               required
               value={type}
               onChange={e => setType(e.target.value)}
-              className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+              className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
             >
               <option value="">Select type…</option>
               {anomalyTypes.map(t => <option key={t}>{t}</option>)}
@@ -274,7 +274,7 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
               value={deltaT}
               onChange={e => setDeltaT(e.target.value)}
               placeholder="e.g. 47"
-              className="w-full h-9 px-3 border border-grey-200 bg-white text-sm mono focus:outline-none focus:ring-1 focus:ring-ochre"
+              className="w-full h-9 px-3 border border-border bg-card text-sm mono focus:outline-none focus:ring-1 focus:ring-ochre"
             />
           </Field>
           <div className="md:col-span-2">
@@ -284,7 +284,7 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
                 value={notes}
                 onChange={e => setNotes(e.target.value)}
                 placeholder="Describe what you observed in the RGB and thermal imagery…"
-                className="w-full px-3 py-2 border border-grey-200 bg-white text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ochre"
+                className="w-full px-3 py-2 border border-border bg-card text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ochre"
               />
             </Field>
           </div>
@@ -419,7 +419,7 @@ function TeamDashboard() {
 
       {/* ── Assigned plant ── */}
       {assignedPlant ? (
-        <section className="bg-white border border-grey-200 p-5 flex flex-col md:flex-row md:items-center gap-4">
+        <section className="bg-card border border-border p-5 flex flex-col md:flex-row md:items-center gap-4">
           <div className="w-9 h-9 bg-grey-50 border border-grey-200 flex items-center justify-center shrink-0">
             <MapPin size={16} className="text-ochre" />
           </div>
@@ -448,14 +448,14 @@ function TeamDashboard() {
           </div>
         </section>
       ) : (
-        <section className="bg-white border border-grey-200 p-5 flex items-center gap-4">
+        <section className="bg-card border border-border p-5 flex items-center gap-4">
           <User2 size={16} className="text-muted-foreground shrink-0" />
           <p className="text-sm text-muted-foreground">No plant currently assigned. Contact your Control Center admin.</p>
         </section>
       )}
 
       {/* ── Pipeline stats ── */}
-      <section className="bg-white border border-grey-200 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-grey-200">
+      <section className="bg-card border border-border grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-grey-200">
         <TeamStat label="Jobs processing now" value={processingCount} icon={Plane} />
         <TeamStat label="Ready for analyst review" value={pendingCount} icon={ClipboardCheck} />
         <TeamStat label="Published to clients this month" value={3} icon={Send} />
@@ -468,11 +468,11 @@ function TeamDashboard() {
       <PipelineDiagram />
 
       {/* Upload */}
-      <section className="bg-white border border-grey-200 p-5 md:p-6">
+      <section className="bg-card border border-border p-5 md:p-6">
         <h2 className="font-semibold flex items-center gap-2 text-sm"><Upload size={15} className="text-ochre" /> Upload New Inspection</h2>
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
           <Field label="Plant">
-            <select className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre">
+            <select className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre">
               {allPlants.map(p => (
                 <option key={p.id} value={p.id}>{p.name} — {p.location}</option>
               ))}
@@ -481,21 +481,21 @@ function TeamDashboard() {
           <Field label="Block / Zone">
             <input
               placeholder="e.g. Block 20, Zone A"
-              className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+              className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
             />
           </Field>
           <Field label="Inspection Date">
-            <input type="date" className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre" />
+            <input type="date" className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre" />
           </Field>
           <Field label="Pilot">
             <input
               defaultValue={displayName}
               placeholder="Pilot name"
-              className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+              className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
             />
           </Field>
           <Field label="Drone Model">
-            <select className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre">
+            <select className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre">
               <option value="">Select drone model...</option>
               <option>DJI Matrice 350 RTK + FLIR Zenmuse XT2</option>
               <option>DJI Matrice 30T</option>
@@ -504,13 +504,13 @@ function TeamDashboard() {
             </select>
           </Field>
           <Field label="Irradiance (W/m²)">
-            <input placeholder="e.g. 850" className="w-full h-9 px-3 border border-grey-200 bg-white text-sm mono focus:outline-none focus:ring-1 focus:ring-ochre" />
+            <input placeholder="e.g. 850" className="w-full h-9 px-3 border border-border bg-card text-sm mono focus:outline-none focus:ring-1 focus:ring-ochre" />
           </Field>
           <Field label="Wind Speed (m/s)">
-            <input placeholder="e.g. 3.5" className="w-full h-9 px-3 border border-grey-200 bg-white text-sm mono focus:outline-none focus:ring-1 focus:ring-ochre" />
+            <input placeholder="e.g. 3.5" className="w-full h-9 px-3 border border-border bg-card text-sm mono focus:outline-none focus:ring-1 focus:ring-ochre" />
           </Field>
           <Field label="Cloud Cover">
-            <input placeholder="e.g. Clear (< 10%)" className="w-full h-9 px-3 border border-grey-200 bg-white text-sm focus:outline-none focus:ring-1 focus:ring-ochre" />
+            <input placeholder="e.g. Clear (< 10%)" className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre" />
           </Field>
         </div>
 
@@ -528,7 +528,7 @@ function TeamDashboard() {
           <p className="text-xs text-muted-foreground mt-0.5">
             Files stream directly to Cloudflare R2 — upload is non-blocking
           </p>
-          <button className="mt-4 h-8 px-4 bg-white border border-grey-200 text-xs font-medium hover:bg-grey-50">Browse Files</button>
+          <button className="mt-4 h-8 px-4 bg-card border border-border text-xs font-medium hover:bg-muted">Browse Files</button>
         </div>
 
         <button className="mt-5 h-10 px-5 bg-ochre hover:bg-ochre-light text-ochre-fg font-semibold text-sm">
@@ -537,7 +537,7 @@ function TeamDashboard() {
       </section>
 
       {/* Review queue — desktop table */}
-      <section className="bg-white border border-grey-200 overflow-hidden">
+      <section className="bg-card border border-border overflow-hidden">
         <header className="px-5 py-4 border-b border-grey-200">
           <h2 className="font-semibold text-sm">Processing Queue</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -547,7 +547,7 @@ function TeamDashboard() {
 
         <div className="overflow-x-auto hidden md:block">
           <table className="w-full text-sm">
-            <thead className="bg-grey-50 text-[11px] uppercase tracking-widest text-grey-400 border-b border-grey-200">
+            <thead className="bg-muted text-[11px] uppercase tracking-widest text-grey-400 border-b border-border">
               <tr>
                 <th className="text-left px-4 py-3 font-semibold">Client / Plant</th>
                 <th className="text-left px-4 py-3 font-semibold">Uploaded</th>
@@ -566,7 +566,7 @@ function TeamDashboard() {
         </div>
 
         {/* Mobile cards */}
-        <div className="md:hidden divide-y divide-grey-200">
+        <div className="md:hidden divide-y divide-border">
           {reviewQueue.map(entry => (
             <div key={entry.uploadId} className="p-4 space-y-3">
               <div className="flex items-start justify-between gap-2">

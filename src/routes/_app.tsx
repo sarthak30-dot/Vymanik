@@ -14,7 +14,7 @@ function AppLayout() {
   return (
     <I18nProvider>
       <PlantProvider>
-        <div className="min-h-screen bg-grey-50 flex flex-col">
+        <div className="min-h-screen bg-background flex flex-col">
           <AppHeader />
           <main className="flex-1 pb-20 md:pb-0">
             <Outlet />
