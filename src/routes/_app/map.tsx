@@ -1,10 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
-import { X, ZoomIn, ZoomOut, Maximize2, MessageCircle, ArrowRight, Layers, Grid3x3, Map as MapIcon, Thermometer, Navigation, SplitSquareHorizontal } from "lucide-react";
+import { X, ZoomIn, ZoomOut, Maximize2, MessageCircle, ArrowRight, Layers, Grid3x3, Map as MapIcon, Thermometer, Navigation, SplitSquareHorizontal, LayoutGrid } from "lucide-react";
 import { anomalies, anomalyTypes, plant, severityCounts, type Anomaly, type Severity } from "@/lib/mock-data";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { usePlantContext } from "@/lib/plant-context";
-import Map, { Marker, Popup, NavigationControl, Source, Layer, type MapRef, type ViewState } from "react-map-gl/mapbox";
+import Map, { Marker, Popup, NavigationControl, Source, Layer, type MapRef, type ViewState, type MapMouseEvent } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 
 // Geographic bounds — Block 20 thermal orthomosaic (Day1_T_modified.tif)
@@ -85,6 +85,92 @@ const SEVERITY_COLOR: Record<string, string> = {
   nodata:   "#9ca3af",
 };
 
+// Geographic extent of the Block 20 panel grid (matches THERMAL_BOUNDS)
+const GRID_NW: [number, number] = [73.033843, 28.261343];
+const GRID_SE: [number, number] = [73.043200, 28.254336];
+
+interface PanelPopupInfo {
+  lng: number;
+  lat: number;
+  panelId: string;
+  severity: Severity;
+  type: string;
+  deltaT: number | null;
+  deltaTNorm: number | null;
+  dailyLossINR: number | null;
+  anomalyId: string | null;
+}
+
+/**
+ * Builds a GeoJSON FeatureCollection of panel rectangles tiled across the
+ * plant's geographic bounds. Each polygon is one physical solar panel,
+ * with a `color` property set by severity so Mapbox can drive fill-color
+ * purely from data without any per-feature JavaScript.
+ */
+function buildPanelGeoJSON(
+  filters: Record<string, boolean>,
+  typeFilter: string,
+  stringFilter: string,
+  inverterFilter: string,
+) {
+  const [nwLng, nwLat] = GRID_NW;
+  const [seLng, seLat] = GRID_SE;
+  const panelW = (seLng - nwLng) / COLS;
+  const panelH = (nwLat - seLat) / ROWS;
+  const gap = 0.000006; // tiny inset so panel borders are visible
+
+  const features: object[] = [];
+
+  for (let r = 1; r <= ROWS; r++) {
+    for (let c = 1; c <= COLS; c++) {
+      const { severity, anomaly } = severityFor(r, c);
+      if (!filters[severity]) continue;
+      if (anomaly) {
+        if (typeFilter !== "all" && anomaly.type !== typeFilter) continue;
+        if (stringFilter !== "all" && anomaly.string !== stringFilter) continue;
+        if (inverterFilter !== "all" && anomaly.inverter !== inverterFilter) continue;
+      }
+
+      const west  = nwLng + (c - 1) * panelW + gap;
+      const east  = nwLng +  c      * panelW - gap;
+      const north = nwLat - (r - 1) * panelH - gap;
+      const south = nwLat -  r      * panelH + gap;
+      // Panel centre point used for popup anchor
+      const cLng  = nwLng + (c - 0.5) * panelW;
+      const cLat  = nwLat - (r - 0.5) * panelH;
+
+      features.push({
+        type: "Feature",
+        id: r * 1000 + c,
+        properties: {
+          panelId:      anomaly?.panelId ?? `R${String(r).padStart(2, "0")}-M${String(c).padStart(2, "0")}`,
+          severity,
+          anomalyId:    anomaly?.id ?? null,
+          type:         anomaly?.type ?? (severity === "nodata" ? "No data captured" : "Healthy panel"),
+          deltaT:       anomaly?.deltaT ?? null,
+          deltaTNorm:   anomaly?.deltaTNorm ?? null,
+          dailyLossINR: anomaly?.dailyLossINR ?? null,
+          gpsLng:       anomaly?.gps.lng ?? cLng,
+          gpsLat:       anomaly?.gps.lat ?? cLat,
+          color:        SEVERITY_COLOR[severity],
+        },
+        geometry: {
+          type: "Polygon",
+          coordinates: [[
+            [west,  north],
+            [east,  north],
+            [east,  south],
+            [west,  south],
+            [west,  north],
+          ]],
+        },
+      });
+    }
+  }
+
+  return { type: "FeatureCollection", features };
+}
+
 function SiteMap() {
   const { selectedPlant } = usePlantContext();
   const PLANT_CENTER = { lng: selectedPlant.gps.lng, lat: selectedPlant.gps.lat };
@@ -113,8 +199,11 @@ function SiteMap() {
     longitude: 73.0392, latitude: 28.2569, zoom: 17,
     bearing: 0, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 },
   });
+  const [panelGridVisible, setPanelGridVisible] = useState(true);
+  const [panelPopup, setPanelPopup] = useState<PanelPopupInfo | null>(null);
   const dragging = useRef(false);
   const pinchRef = useRef<number | null>(null);
+  const hoveredPanelId = useRef<number | null>(null);
 
   // Unique filter options derived from real data
   const uniqueInverters = useMemo(() => ["all", ...Array.from(new Set(anomalies.map(a => a.inverter))).sort()], []);
@@ -139,6 +228,12 @@ function SiteMap() {
   // 16px minimum so cells are reliably tappable on mobile
   const tile = useMemo(() => Math.max(16, Math.round(20 * zoom)), [zoom]);
 
+  // GeoJSON for the panel grid overlay — regenerated when filters change
+  const panelGeoJSON = useMemo(
+    () => isRajpur ? buildPanelGeoJSON(filters, typeFilter, stringFilter, inverterFilter) : null,
+    [isRajpur, filters, typeFilter, stringFilter, inverterFilter],
+  );
+
   const handleMarkerClick = useCallback((anomaly: Anomaly) => {
     setSelected(anomaly);
     setPopupAnomaly(anomaly);
@@ -147,6 +242,56 @@ function SiteMap() {
       zoom: 19,
       duration: 800,
     });
+  }, []);
+
+  // Hover — use Mapbox feature-state (GPU-side) so 863 panels hover at 60fps
+  const onMapHover = useCallback((e: MapMouseEvent) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const features = e.features;
+    const canvas = map.getCanvas();
+
+    if (features && features.length > 0) {
+      const id = features[0].id as number;
+      if (hoveredPanelId.current !== null && hoveredPanelId.current !== id) {
+        map.setFeatureState({ source: "panels", id: hoveredPanelId.current }, { hover: false });
+      }
+      hoveredPanelId.current = id;
+      map.setFeatureState({ source: "panels", id }, { hover: true });
+      canvas.style.cursor = "pointer";
+    } else {
+      if (hoveredPanelId.current !== null) {
+        map.setFeatureState({ source: "panels", id: hoveredPanelId.current }, { hover: false });
+        hoveredPanelId.current = null;
+      }
+      canvas.style.cursor = "";
+    }
+  }, []);
+
+  // Click — show popup for any panel; open detail drawer for anomaly panels
+  const onPanelClick = useCallback((e: MapMouseEvent) => {
+    const features = e.features;
+    if (!features || features.length === 0) return;
+    const p = features[0].properties as {
+      panelId: string; severity: Severity; anomalyId: string | null;
+      type: string; deltaT: number | null; deltaTNorm: number | null;
+      dailyLossINR: number | null; gpsLng: number; gpsLat: number;
+    };
+
+    setPanelPopup({
+      lng: p.gpsLng, lat: p.gpsLat,
+      panelId: p.panelId, severity: p.severity,
+      type: p.type, deltaT: p.deltaT, deltaTNorm: p.deltaTNorm,
+      dailyLossINR: p.dailyLossINR, anomalyId: p.anomalyId,
+    });
+
+    if (p.anomalyId) {
+      const anomaly = anomalies.find(a => a.id === p.anomalyId);
+      if (anomaly) {
+        setSelected(anomaly);
+        mapRef.current?.flyTo({ center: [p.gpsLng, p.gpsLat], zoom: 20, duration: 600 });
+      }
+    }
   }, []);
 
   return (
@@ -260,6 +405,16 @@ function SiteMap() {
             {isRajpur && mapMode === "satellite" && !compareMode && (
               <div className="flex items-center border border-border divide-x divide-border overflow-hidden">
                 <span className="px-2 text-[10px] uppercase tracking-widest text-grey-400 bg-grey-50 h-8 flex items-center">Overlay</span>
+                {/* Panel grid toggle — on by default */}
+                <button
+                  onClick={() => setPanelGridVisible(v => !v)}
+                  title="Panel health grid — coloured tiles on each physical panel"
+                  className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium transition ${
+                    panelGridVisible ? "bg-ochre text-ochre-fg" : "bg-card text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  <LayoutGrid size={13} /> Panels
+                </button>
                 <button
                   onClick={() => setThermalVisible(v => !v)}
                   title="Thermal IR orthomosaic (Day1_T_modified.tif)"
@@ -385,7 +540,9 @@ function SiteMap() {
                 key={selectedPlant.id}
                 style={{ width: "100%", height: "100%" }}
                 mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
-                onClick={() => setPopupAnomaly(null)}
+                interactiveLayerIds={isRajpur && panelGridVisible ? ["panel-fill"] : []}
+                onMouseMove={isRajpur && panelGridVisible ? onMapHover : undefined}
+                onClick={isRajpur && panelGridVisible ? onPanelClick : () => { setPopupAnomaly(null); setPanelPopup(null); }}
               >
                 <NavigationControl position="top-right" />
 
@@ -448,88 +605,97 @@ function SiteMap() {
                   </Marker>
                 )}
 
-                {/* Anomaly markers — filtered via visibleAnomalies (severity + type + inverter + string) */}
-                {visibleAnomalies
-                  .map(a => (
-                    <Marker
-                      key={a.id}
-                      longitude={a.gps.lng}
-                      latitude={a.gps.lat}
-                      anchor="center"
-                      onClick={e => { e.originalEvent.stopPropagation(); handleMarkerClick(a); }}
-                    >
-                      <div
-                        title={`${a.panelId} — ${a.type}`}
-                        style={{
-                          width: a.severity === "critical" ? 18 : 14,
-                          height: a.severity === "critical" ? 18 : 14,
-                          borderRadius: "50%",
-                          backgroundColor: SEVERITY_COLOR[a.severity],
-                          border: "2.5px solid white",
-                          boxShadow: "0 1px 4px rgba(0,0,0,0.5)",
-                          cursor: "pointer",
-                          animation: a.severity === "critical" ? "pulse 2s infinite" : undefined,
-                        }}
-                      />
-                    </Marker>
-                  ))}
+                {/* ── Panel grid overlay ── coloured polygon per physical panel */}
+                {isRajpur && panelGridVisible && panelGeoJSON && (
+                  <Source id="panels" type="geojson" data={panelGeoJSON as never} generateId={false}>
+                    {/* Fill — severity colour, dims when thermal overlay is on */}
+                    <Layer
+                      id="panel-fill"
+                      type="fill"
+                      paint={{
+                        "fill-color": ["get", "color"],
+                        "fill-opacity": [
+                          "case",
+                          ["boolean", ["feature-state", "hover"], false],
+                          0.95,
+                          thermalVisible ? 0.40 : 0.72,
+                        ] as never,
+                      }}
+                    />
+                    {/* Outline — thin white grid lines separating panels */}
+                    <Layer
+                      id="panel-outline"
+                      type="line"
+                      paint={{
+                        "line-color": "#ffffff",
+                        "line-width": 0.8,
+                        "line-opacity": thermalVisible ? 0.3 : 0.55,
+                      }}
+                    />
+                  </Source>
+                )}
 
-                {/* Popup on selected anomaly */}
-                {popupAnomaly && (
+                {/* Panel popup — shown on any panel click (anomaly or healthy) */}
+                {panelPopup && (
                   <Popup
-                    longitude={popupAnomaly.gps.lng}
-                    latitude={popupAnomaly.gps.lat}
+                    longitude={panelPopup.lng}
+                    latitude={panelPopup.lat}
                     anchor="bottom"
-                    offset={14}
+                    offset={8}
                     closeOnClick={false}
-                    onClose={() => setPopupAnomaly(null)}
+                    onClose={() => { setPanelPopup(null); }}
                     style={{ padding: 0 }}
                   >
-                    <div className="p-3 min-w-[200px] text-sm font-sans">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="font-bold mono">{popupAnomaly.panelId}</p>
+                    <div className="p-3 min-w-[210px] text-sm font-sans">
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <p className="font-bold mono text-sm">{panelPopup.panelId}</p>
                         <span style={{
                           fontSize: 10, fontWeight: 700, padding: "1px 6px",
-                          backgroundColor: SEVERITY_COLOR[popupAnomaly.severity] + "22",
-                          color: SEVERITY_COLOR[popupAnomaly.severity],
-                          border: `1px solid ${SEVERITY_COLOR[popupAnomaly.severity]}44`,
-                          textTransform: "uppercase",
-                        }}>{popupAnomaly.severity}</span>
+                          backgroundColor: SEVERITY_COLOR[panelPopup.severity] + "22",
+                          color: SEVERITY_COLOR[panelPopup.severity],
+                          border: `1px solid ${SEVERITY_COLOR[panelPopup.severity]}44`,
+                          textTransform: "uppercase", borderRadius: 2,
+                        }}>{panelPopup.severity}</span>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-1">{popupAnomaly.type}</p>
-                      {popupAnomaly.deltaT && (
-                        <div className="mt-1 space-y-0.5">
-                          <p className="text-xs font-semibold text-critical mono">
-                            ΔT +{popupAnomaly.deltaT}°C
-                            {popupAnomaly.deltaTNorm && popupAnomaly.deltaTNorm !== popupAnomaly.deltaT && (
-                              <span className="text-ochre ml-1.5">(norm. +{popupAnomaly.deltaTNorm}°C)</span>
+                      <p className="text-xs text-muted-foreground">{panelPopup.type}</p>
+                      {panelPopup.deltaT && (
+                        <div className="mt-1.5 space-y-0.5">
+                          <p className="text-xs font-semibold mono" style={{ color: SEVERITY_COLOR.critical }}>
+                            ΔT +{panelPopup.deltaT}°C
+                            {panelPopup.deltaTNorm && panelPopup.deltaTNorm !== panelPopup.deltaT && (
+                              <span className="ml-1.5" style={{ color: "var(--ochre)" }}>
+                                (norm. +{panelPopup.deltaTNorm}°C)
+                              </span>
                             )}
                           </p>
-                          {popupAnomaly.dailyLossINR && (
-                            <p className="text-xs font-bold text-medium mono">₹{popupAnomaly.dailyLossINR}/day loss</p>
+                          {panelPopup.dailyLossINR && (
+                            <p className="text-xs font-bold mono" style={{ color: SEVERITY_COLOR.medium }}>
+                              ₹{panelPopup.dailyLossINR}/day loss
+                            </p>
                           )}
                         </div>
                       )}
                       <p className="text-[10px] text-muted-foreground mono mt-1.5">
-                        {popupAnomaly.gps.lat.toFixed(5)}°N, {popupAnomaly.gps.lng.toFixed(5)}°E
+                        {panelPopup.lat.toFixed(5)}°N, {panelPopup.lng.toFixed(5)}°E
                       </p>
-                      <div className="flex items-center gap-3 mt-2 pt-2 border-t border-grey-100">
-                        <a
-                          href={`https://maps.google.com/maps?daddr=${popupAnomaly.gps.lat},${popupAnomaly.gps.lng}&dirflg=d`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-[11px] text-ochre hover:underline font-medium inline-flex items-center gap-1"
-                        >
-                          <Navigation size={10} /> Navigate
-                        </a>
-                        <Link
-                          to="/anomalies/$id"
-                          params={{ id: popupAnomaly.id }}
-                          className="text-[11px] text-primary hover:underline font-medium"
-                        >
-                          Full detail →
-                        </Link>
-                      </div>
+                      {panelPopup.anomalyId && (
+                        <div className="flex items-center gap-3 mt-2 pt-2 border-t border-grey-100">
+                          <a
+                            href={`https://maps.google.com/maps?daddr=${panelPopup.lat},${panelPopup.lng}&dirflg=d`}
+                            target="_blank" rel="noreferrer"
+                            className="text-[11px] text-ochre hover:underline font-medium inline-flex items-center gap-1"
+                          >
+                            <Navigation size={10} /> Navigate
+                          </a>
+                          <Link
+                            to="/anomalies/$id"
+                            params={{ id: panelPopup.anomalyId }}
+                            className="text-[11px] text-primary hover:underline font-medium"
+                          >
+                            Full detail →
+                          </Link>
+                        </div>
+                      )}
                     </div>
                   </Popup>
                 )}
