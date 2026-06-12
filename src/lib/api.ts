@@ -124,10 +124,12 @@ export interface AnomalyDTO {
   col: number;
   type: string;
   deltaT: number | null;
+  deltaTNorm: number | null;  // IEC 62446-3 normalised to 1000 W/m²
   severity: "critical" | "medium" | "normal" | "nodata";
   string: string;
   inverter: string;
   status: "New" | "Acknowledged" | "In Repair" | "Closed";
+  rootCause: string | null;
   date: string;
   inspectionTime: string;
   rgbNote: string;
@@ -142,7 +144,8 @@ export interface AnomalyDTO {
 }
 
 export interface AnomalyStatusPatch {
-  status: "New" | "Acknowledged" | "In Repair" | "Closed";
+  status?: "New" | "Acknowledged" | "In Repair" | "Closed";
+  rootCause?: string | null;
 }
 
 // ─── Tiles ─────────────────────────────────────────────────────────────────

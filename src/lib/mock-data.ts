@@ -1,6 +1,15 @@
 export type Severity = "critical" | "medium" | "normal" | "nodata";
 export type Status = "New" | "Acknowledged" | "In Repair" | "Closed";
 
+export type RootCause =
+  | "Manufacturing defect"
+  | "Wiring / connector fault"
+  | "Soiling / dust"
+  | "Shading / vegetation"
+  | "Physical damage"
+  | "Unknown"
+  | null;
+
 export interface Anomaly {
   id: string;
   panelId: string;
@@ -8,10 +17,12 @@ export interface Anomaly {
   col: number;
   type: string;
   deltaT: number | null;
+  deltaTNorm: number | null;  // IEC 62446-3 normalised to 1000 W/m²
   severity: Severity;
   string: string;
   inverter: string;
   status: Status;
+  rootCause: RootCause;
   date: string;
   inspectionTime: string;
   rgbNote: string;
@@ -41,7 +52,8 @@ export const plant = {
 
 // ─── Anomalies — Block 20 (347 panels, sorted: critical → medium → normal) ───
 
-const _rawAnomalies: Anomaly[] = [
+// Raw entries omit deltaTNorm/rootCause — _enrich() fills them in
+const _rawAnomalies: Omit<Anomaly, "deltaTNorm" | "rootCause">[] = [
   { id: "1", panelId: "R8-P12", row: 8, col: 12, type: "Diode Failure", deltaT: null, severity: "critical", string: "Table-298", inverter: "INV-B", status: "New", date: "28 May 2026", inspectionTime: "—", rgbNote: "Image: 7531.JPG (pos a)", gps: { lat: 28.2550579, lng: 73.0406009 } },
   { id: "2", panelId: "R34-P3", row: 34, col: 3, type: "Diode Failure", deltaT: null, severity: "critical", string: "Table-285", inverter: "INV-B", status: "New", date: "28 May 2026", inspectionTime: "—", rgbNote: "Image: 4671.JPG (pos a)", gps: { lat: 28.2560787, lng: 73.0404391 } },
   { id: "3", panelId: "R38-P17", row: 38, col: 17, type: "Diode Failure", deltaT: null, severity: "critical", string: "Table-283", inverter: "INV-B", status: "New", date: "28 May 2026", inspectionTime: "—", rgbNote: "Image: 4035.JPG (pos a)", gps: { lat: 28.2562374, lng: 73.0405952 } },
@@ -415,27 +427,34 @@ const _TYPE_LOSS_INR: Record<string, number> = {
   "Cell Hotspot":                   65,
 };
 
-const _REF_TEMP = 45; // °C — reference panel temp at 850 W/m² in Rajasthan May
+const _REF_TEMP   = 45;   // °C — reference panel temp at 850 W/m² in Rajasthan May
+const _IRRADIANCE = 847;  // W/m² — actual irradiance at time of Block 20 inspection
 
-function _enrich(a: Anomaly): Anomaly {
-  // Soiling and Shading don't produce ΔT in standard IEC reporting
-  if (a.severity === "normal") return a;
+function _enrich(a: Omit<Anomaly, "deltaTNorm" | "rootCause">): Anomaly {
+  if (a.severity === "normal") {
+    return { ...a, deltaTNorm: null, rootCause: null };
+  }
   const base = _TYPE_DELTA[a.type];
-  if (!base) return a;
-  // Deterministic ±4°C spread so panels of the same type have varied values
+  if (!base) return { ...a, deltaTNorm: null, rootCause: null };
+
   const v = (Number(a.id) * 13 + 7) % 9 - 4;
-  const deltaT = base + v;
-  const peakTemp = _REF_TEMP + deltaT;
-  const lossBase = _TYPE_LOSS_INR[a.type] ?? 160;
+  const deltaT     = base + v;
+  // IEC 62446-3 §6.3 — normalise to 1000 W/m² reference irradiance
+  const deltaTNorm = Math.round(deltaT * (1000 / _IRRADIANCE));
+  const peakTemp   = _REF_TEMP + deltaT;
+  const lossBase   = _TYPE_LOSS_INR[a.type] ?? 160;
   const dailyLossINR = Math.max(50, lossBase + v * 5);
+
   return {
     ...a,
     deltaT,
+    deltaTNorm,
     peakTemp,
     refTemp: _REF_TEMP,
-    irradiance: 847,
+    irradiance: _IRRADIANCE,
     dailyLossINR,
     dailyLossKWh: Math.round(dailyLossINR / 4.5),
+    rootCause: null,   // field engineer fills this in after site visit
   };
 }
 

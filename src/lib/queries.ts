@@ -95,9 +95,9 @@ export function useAnomaly(id: string) {
 export function usePatchAnomaly() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: AnomalyStatusPatch["status"] }) => {
+    mutationFn: async ({ id, status, rootCause }: { id: string; status?: AnomalyStatusPatch["status"]; rootCause?: string | null }) => {
       try {
-        return await api.anomalies.patch(id, { status }, getToken()!);
+        return await api.anomalies.patch(id, { status, rootCause }, getToken()!);
       } catch {
         // API unavailable — apply change locally using cached data
         const cached = queryClient.getQueryData<AnomalyDTO[]>(
@@ -105,7 +105,7 @@ export function usePatchAnomaly() {
         ) ?? (mockAnomalies as AnomalyDTO[]);
         const found = cached.find(a => a.id === id);
         if (!found) throw new Error("Anomaly not found");
-        return { ...found, status } as AnomalyDTO;
+        return { ...found, ...(status !== undefined ? { status } : {}), ...(rootCause !== undefined ? { rootCause } : {}) } as AnomalyDTO;
       }
     },
     onSuccess: (updated) => {
@@ -168,10 +168,12 @@ export function useAddAnomaly() {
         col,
         type: input.type,
         deltaT: input.deltaT,
+        deltaTNorm: input.deltaT ? Math.round(input.deltaT * (1000 / 847)) : null,
         severity,
         string: "Inspector Report",
         inverter: "—",
         status: "New",
+        rootCause: null,
         date: dateStr,
         inspectionTime: timeStr,
         rgbNote: input.notes.trim()

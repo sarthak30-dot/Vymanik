@@ -188,7 +188,7 @@ function SiteMap() {
   const [mapMode, setMapMode] = useState<"grid" | "satellite">("satellite");
   const [popupAnomaly, setPopupAnomaly] = useState<Anomaly | null>(null);
   const [thermalVisible, setThermalVisible] = useState(false);
-  const [thermalOpacity, setThermalOpacity] = useState(0.65);
+  const [thermalOpacity, setThermalOpacity] = useState(0.75);
   const [rgbVisible, setRgbVisible] = useState(false);
   const [rgbOpacity, setRgbOpacity] = useState(0.80);
   const [rgb2Visible, setRgb2Visible] = useState(false);
@@ -608,7 +608,7 @@ function SiteMap() {
                 {/* ── Panel grid overlay ── coloured polygon per physical panel */}
                 {isRajpur && panelGridVisible && panelGeoJSON && (
                   <Source id="panels" type="geojson" data={panelGeoJSON as never} generateId={false}>
-                    {/* Fill — severity colour, dims when thermal overlay is on */}
+                    {/* Fill — anomaly panels only; normal/nodata are transparent so satellite/orthomosaic shows through */}
                     <Layer
                       id="panel-fill"
                       type="fill"
@@ -616,20 +616,30 @@ function SiteMap() {
                         "fill-color": ["get", "color"],
                         "fill-opacity": [
                           "case",
-                          ["boolean", ["feature-state", "hover"], false],
-                          0.95,
-                          thermalVisible ? 0.40 : 0.72,
+                          ["in", ["get", "severity"], ["literal", ["normal", "nodata"]]], 0,
+                          ["boolean", ["feature-state", "hover"], false], 0.90,
+                          thermalVisible ? 0.40 : 0.65,
                         ] as never,
                       }}
                     />
-                    {/* Outline — thin white grid lines separating panels */}
+                    {/* Outline — severity-colored borders for anomalies; near-invisible for healthy panels */}
                     <Layer
                       id="panel-outline"
                       type="line"
                       paint={{
-                        "line-color": "#ffffff",
-                        "line-width": 0.8,
-                        "line-opacity": thermalVisible ? 0.3 : 0.55,
+                        "line-color": [
+                          "case",
+                          ["==", ["get", "severity"], "critical"], "#ef4444",
+                          ["==", ["get", "severity"], "medium"], "#f59e0b",
+                          "rgba(255,255,255,0.10)",
+                        ] as never,
+                        "line-width": [
+                          "case",
+                          ["==", ["get", "severity"], "critical"], 2.0,
+                          ["==", ["get", "severity"], "medium"], 1.5,
+                          0.3,
+                        ] as never,
+                        "line-opacity": thermalVisible ? 0.90 : 1,
                       }}
                     />
                   </Source>
@@ -716,13 +726,16 @@ function SiteMap() {
                 {[
                   { label: "Critical", color: SEVERITY_COLOR.critical },
                   { label: "Medium",   color: SEVERITY_COLOR.medium },
-                  { label: "Normal",   color: SEVERITY_COLOR.normal },
                 ].map(l => (
                   <div key={l.label} className="flex items-center gap-2">
                     <span style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: l.color, display: "inline-block", border: "1.5px solid white", boxShadow: "0 0 0 1px rgba(0,0,0,0.2)" }} />
                     <span>{l.label}</span>
                   </div>
                 ))}
+                <div className="flex items-center gap-2 opacity-50">
+                  <span style={{ width: 10, height: 10, borderRadius: "50%", display: "inline-block", border: "1.5px solid rgba(255,255,255,0.5)", backgroundColor: "transparent" }} />
+                  <span>Normal (satellite)</span>
+                </div>
                 {isRajpur && thermalVisible && (
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">
                     <div className="flex items-center gap-1.5 text-red-600 font-medium text-xs">
