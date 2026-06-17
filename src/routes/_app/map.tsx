@@ -189,10 +189,10 @@ function SiteMap() {
   const [popupAnomaly, setPopupAnomaly] = useState<Anomaly | null>(null);
   const [thermalVisible, setThermalVisible] = useState(false);
   const [thermalOpacity, setThermalOpacity] = useState(0.75);
-  const [rgbVisible, setRgbVisible] = useState(false);
-  const [rgbOpacity, setRgbOpacity] = useState(0.80);
-  const [rgb2Visible, setRgb2Visible] = useState(false);
-  const [rgb2Opacity, setRgb2Opacity] = useState(0.80);
+  const [rgbVisible, setRgbVisible] = useState(true);
+  const [rgbOpacity, setRgbOpacity] = useState(0.90);
+  const [rgb2Visible, setRgb2Visible] = useState(true);
+  const [rgb2Opacity, setRgb2Opacity] = useState(0.90);
   const [compareMode, setCompareMode] = useState(false);
   const [splitPct, setSplitPct] = useState(50);
   const [viewState, setViewState] = useState<Omit<ViewState, "width" | "height">>({
@@ -535,7 +535,7 @@ function SiteMap() {
                 initialViewState={{
                   longitude: PLANT_CENTER.lng,
                   latitude: PLANT_CENTER.lat,
-                  zoom: isRajpur ? 17 : 14,
+                  zoom: isRajpur ? 18 : 14,
                 }}
                 key={selectedPlant.id}
                 style={{ width: "100%", height: "100%" }}
