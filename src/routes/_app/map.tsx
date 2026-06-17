@@ -253,10 +253,10 @@ function SiteMap() {
   });
   const [panelGridVisible, setPanelGridVisible] = useState(true);
   const [panelPopup, setPanelPopup] = useState<PanelPopupInfo | null>(null);
+  const [mapZoom, setMapZoom] = useState(18); // tracked for HTML marker sizing
   const dragging = useRef(false);
   const pinchRef = useRef<number | null>(null);
   const hoveredPanelId = useRef<number | null>(null);
-  const hoveredSource = useRef<string>("panels");
 
   // Unique filter options derived from real data
   const uniqueInverters = useMemo(() => ["all", ...Array.from(new Set(anomalies.map(a => a.inverter))).sort()], []);
@@ -303,31 +303,15 @@ function SiteMap() {
     });
   }, []);
 
-  // Hover — use Mapbox feature-state (GPU-side) for 60fps; handles both the
-  // invisible panel-fill polygon layer and the anomaly-circle dot layer.
+  // Hover — updates cursor when over the invisible panel-fill hit-area
   const onMapHover = useCallback((e: MapMouseEvent) => {
     const map = mapRef.current;
     if (!map) return;
-    const features = e.features;
     const canvas = map.getCanvas();
-
+    const features = e.features;
     if (features && features.length > 0) {
-      const feature = features[0];
-      const id = feature.id as number;
-      const source = feature.layer?.id === "anomaly-circle" ? "anomaly-dots" : "panels";
-
-      if (hoveredPanelId.current !== null) {
-        try { map.setFeatureState({ source: hoveredSource.current, id: hoveredPanelId.current }, { hover: false }); } catch {}
-      }
-      hoveredPanelId.current = id;
-      hoveredSource.current = source;
-      map.setFeatureState({ source, id }, { hover: true });
       canvas.style.cursor = "pointer";
     } else {
-      if (hoveredPanelId.current !== null) {
-        try { map.setFeatureState({ source: hoveredSource.current, id: hoveredPanelId.current }, { hover: false }); } catch {}
-        hoveredPanelId.current = null;
-      }
       canvas.style.cursor = "";
     }
   }, []);
@@ -604,9 +588,10 @@ function SiteMap() {
                 key={selectedPlant.id}
                 style={{ width: "100%", height: "100%" }}
                 mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
-                interactiveLayerIds={isRajpur && panelGridVisible ? ["panel-fill", "anomaly-circle"] : []}
+                interactiveLayerIds={isRajpur && panelGridVisible ? ["panel-fill"] : []}
                 onMouseMove={isRajpur && panelGridVisible ? onMapHover : undefined}
                 onClick={isRajpur && panelGridVisible ? onPanelClick : () => { setPopupAnomaly(null); setPanelPopup(null); }}
+                onZoom={e => setMapZoom(e.viewState.zoom)}
               >
                 <NavigationControl position="top-right" />
 
@@ -677,50 +662,49 @@ function SiteMap() {
                   </Source>
                 )}
 
-                {/* Panel dots — green (normal), yellow (medium), red (critical).
-                    Renders on top of satellite + all orthomosaics including future RGB images.
-                    Normal panels use a smaller radius so anomaly dots stand out clearly. */}
-                {isRajpur && panelGridVisible && panelDotsGeoJSON && (
-                  <Source id="anomaly-dots" type="geojson" data={panelDotsGeoJSON as never} generateId={false}>
-                    <Layer
-                      id="anomaly-circle"
-                      type="circle"
-                      paint={{
-                        "circle-color": ["get", "color"],
-                        // Normal panels: small dot.  Anomaly panels: larger dot.
-                        // case wraps two interpolates — Mapbox requires literal stop values,
-                        // so severity-based sizing must be the outer expression.
-                        // Radius: normal panels smaller so anomaly dots stand out immediately.
-                        // Values chosen so dots fill ~35-45% of a panel cell at each zoom level.
-                        "circle-radius": [
-                          "case",
-                          ["boolean", ["feature-state", "hover"], false],
-                          // Hover — all panels grow noticeably
-                          ["interpolate", ["linear"], ["zoom"], 14, 7, 16, 12, 17, 18, 18, 24, 20, 32] as never,
-                          // Normal resting state — green dots smaller, red/yellow larger
-                          ["case",
-                            ["==", ["get", "severity"], "normal"],
-                            ["interpolate", ["linear"], ["zoom"], 14, 2, 16, 5, 17, 8,  18, 11, 20, 16] as never,
-                            ["interpolate", ["linear"], ["zoom"], 14, 4, 16, 8, 17, 14, 18, 18, 20, 26] as never,
-                          ] as never,
-                        ] as never,
-                        "circle-opacity": [
-                          "case",
-                          ["boolean", ["feature-state", "hover"], false], 1.0,
-                          ["==", ["get", "severity"], "normal"], 0.82,
-                          0.97,
-                        ] as never,
-                        "circle-stroke-width": [
-                          "case",
-                          ["==", ["get", "severity"], "normal"], 1.5,
-                          2.5,
-                        ] as never,
-                        "circle-stroke-color": "#ffffff",
-                        "circle-stroke-opacity": 1,
+                {/* Panel dots — HTML Markers guaranteed to render above all raster layers.
+                    Mapbox GL JS v3 circle layers can fall below raster tiles in the Standard
+                    style layer stack; <Marker> components are DOM overlays and always on top.
+                    Size scales with mapZoom so dots stay proportional to panel cells. */}
+                {isRajpur && panelGridVisible && panelDotsGeoJSON?.features.map((f: any) => {
+                  const [lng, lat] = f.geometry.coordinates as [number, number];
+                  const { severity, color, panelId, type, anomalyId,
+                          deltaT, deltaTNorm, dailyLossINR, gpsLng, gpsLat } = f.properties;
+                  const isNormal = severity === "normal";
+                  // Diameter in px: normal dots smaller so anomaly dots stand out
+                  const px = isNormal
+                    ? Math.max(6,  Math.min(14, (mapZoom - 13) * 2))
+                    : Math.max(12, Math.min(26, (mapZoom - 13) * 4));
+                  return (
+                    <Marker
+                      key={`dot-${f.id}`}
+                      longitude={lng}
+                      latitude={lat}
+                      anchor="center"
+                      onClick={e => {
+                        e.originalEvent.stopPropagation();
+                        setPanelPopup({ lng: gpsLng, lat: gpsLat, panelId, severity,
+                          type, deltaT, deltaTNorm, dailyLossINR, anomalyId });
+                        if (anomalyId) {
+                          const a = anomalies.find(x => x.id === anomalyId);
+                          if (a) { setSelected(a); mapRef.current?.flyTo({ center: [gpsLng, gpsLat], zoom: 20, duration: 600 }); }
+                        }
                       }}
-                    />
-                  </Source>
-                )}
+                    >
+                      <div style={{
+                        width: px, height: px, borderRadius: "50%",
+                        backgroundColor: color,
+                        border: `${isNormal ? 1.5 : 2.5}px solid #ffffff`,
+                        boxShadow: isNormal
+                          ? "0 1px 3px rgba(0,0,0,0.35)"
+                          : "0 1px 6px rgba(0,0,0,0.55)",
+                        cursor: "pointer",
+                        opacity: isNormal ? 0.85 : 0.97,
+                        transition: "transform 0.1s",
+                      }} />
+                    </Marker>
+                  );
+                })}
 
                 {/* Panel popup — shown on any panel click (anomaly or healthy) */}
                 {panelPopup && (
