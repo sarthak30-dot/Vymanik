@@ -690,31 +690,33 @@ function SiteMap() {
                         // Normal panels: small dot.  Anomaly panels: larger dot.
                         // case wraps two interpolates — Mapbox requires literal stop values,
                         // so severity-based sizing must be the outer expression.
+                        // Radius: normal panels smaller so anomaly dots stand out immediately.
+                        // Values chosen so dots fill ~35-45% of a panel cell at each zoom level.
                         "circle-radius": [
                           "case",
                           ["boolean", ["feature-state", "hover"], false],
-                          // Hover — all panels grow
-                          ["interpolate", ["linear"], ["zoom"], 14, 5, 16, 8, 17, 11, 18, 15, 20, 24] as never,
-                          // Normal state — severity-dependent size
+                          // Hover — all panels grow noticeably
+                          ["interpolate", ["linear"], ["zoom"], 14, 7, 16, 12, 17, 18, 18, 24, 20, 32] as never,
+                          // Normal resting state — green dots smaller, red/yellow larger
                           ["case",
                             ["==", ["get", "severity"], "normal"],
-                            ["interpolate", ["linear"], ["zoom"], 14, 1.5, 16, 3, 17, 4, 18, 5, 20, 8] as never,
-                            ["interpolate", ["linear"], ["zoom"], 14, 3,   16, 6, 17, 9, 18, 12, 20, 18] as never,
+                            ["interpolate", ["linear"], ["zoom"], 14, 2, 16, 5, 17, 8,  18, 11, 20, 16] as never,
+                            ["interpolate", ["linear"], ["zoom"], 14, 4, 16, 8, 17, 14, 18, 18, 20, 26] as never,
                           ] as never,
                         ] as never,
                         "circle-opacity": [
                           "case",
                           ["boolean", ["feature-state", "hover"], false], 1.0,
-                          ["==", ["get", "severity"], "normal"], 0.75,
-                          0.95,
+                          ["==", ["get", "severity"], "normal"], 0.82,
+                          0.97,
                         ] as never,
                         "circle-stroke-width": [
                           "case",
-                          ["==", ["get", "severity"], "normal"], 1,
-                          2,
+                          ["==", ["get", "severity"], "normal"], 1.5,
+                          2.5,
                         ] as never,
                         "circle-stroke-color": "#ffffff",
-                        "circle-stroke-opacity": 0.9,
+                        "circle-stroke-opacity": 1,
                       }}
                     />
                   </Source>
