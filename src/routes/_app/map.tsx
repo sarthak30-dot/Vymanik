@@ -669,39 +669,17 @@ function SiteMap() {
                   </Marker>
                 )}
 
-                {/* ── Panel grid overlay ── coloured polygon per physical panel */}
+                {/* ── Panel grid overlay ── invisible polygon grid; captures mouse events only */}
                 {isRajpur && panelGridVisible && panelGeoJSON && (
                   <Source id="panels" type="geojson" data={panelGeoJSON as never} generateId={false}>
-                    {/* Fill — fully transparent; exists only to capture mouse events across the panel grid */}
-                    <Layer
-                      id="panel-fill"
-                      type="fill"
-                      paint={{ "fill-opacity": 0 }}
-                    />
-                    {/* Outline — severity-colored borders for anomalies; near-invisible for healthy panels */}
-                    <Layer
-                      id="panel-outline"
-                      type="line"
-                      paint={{
-                        "line-color": [
-                          "case",
-                          ["==", ["get", "severity"], "critical"], "#ef4444",
-                          ["==", ["get", "severity"], "medium"], "#f59e0b",
-                          "rgba(255,255,255,0.10)",
-                        ] as never,
-                        "line-width": [
-                          "case",
-                          ["==", ["get", "severity"], "critical"], 2.0,
-                          ["==", ["get", "severity"], "medium"], 1.5,
-                          0.3,
-                        ] as never,
-                        "line-opacity": thermalVisible ? 0.90 : 1,
-                      }}
-                    />
+                    {/* Fully transparent fill — exists only so clicks anywhere in the grid fire onPanelClick */}
+                    <Layer id="panel-fill" type="fill" paint={{ "fill-opacity": 0 }} />
                   </Source>
                 )}
 
-                {/* Anomaly dots — one circle per defective panel; scales with zoom */}
+                {/* Anomaly dots — one circle per defective panel, renders on top of all raster layers
+                    (satellite, thermal, V1, V2, and any future RGB images added as sources).
+                    Radius scales with zoom so dots feel "inside the panel" at every zoom level. */}
                 {isRajpur && panelGridVisible && anomalyDotsGeoJSON && (
                   <Source id="anomaly-dots" type="geojson" data={anomalyDotsGeoJSON as never} generateId={false}>
                     <Layer
@@ -712,17 +690,17 @@ function SiteMap() {
                         "circle-radius": [
                           "case",
                           ["boolean", ["feature-state", "hover"], false],
-                          ["interpolate", ["linear"], ["zoom"], 14, 4, 16, 7, 18, 11, 20, 20] as never,
-                          ["interpolate", ["linear"], ["zoom"], 14, 2, 16, 4, 18,  7, 20, 14] as never,
+                          ["interpolate", ["linear"], ["zoom"], 14, 5, 16, 9, 17, 13, 18, 17, 20, 26] as never,
+                          ["interpolate", ["linear"], ["zoom"], 14, 3, 16, 6, 17, 9,  18, 12, 20, 18] as never,
                         ] as never,
                         "circle-opacity": [
                           "case",
                           ["boolean", ["feature-state", "hover"], false], 1.0,
-                          0.88,
+                          0.92,
                         ] as never,
-                        "circle-stroke-width": 1.5,
+                        "circle-stroke-width": 2,
                         "circle-stroke-color": "#ffffff",
-                        "circle-stroke-opacity": 0.9,
+                        "circle-stroke-opacity": 1,
                       }}
                     />
                   </Source>
