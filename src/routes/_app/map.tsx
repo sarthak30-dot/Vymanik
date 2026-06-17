@@ -201,6 +201,21 @@ function buildPanelDotsGeoJSON(
       }
       const cLng = nwLng + (c - 0.5) * panelW;
       const cLat = nwLat - (r - 0.5) * panelH;
+
+      // Only emit dots inside the actual RGB drone imagery footprints.
+      // Anomalies can only exist where the drone captured data; dots outside
+      // V1/V2 bounds would float on bare terrain and mislead clients.
+      const pad = 0.00015; // ~15 m tolerance for edge panels
+      const inV1 = cLng >= RGB_BOUNDS.coordinates[0][0]  - pad &&
+                   cLng <= RGB_BOUNDS.coordinates[1][0]  + pad &&
+                   cLat >= RGB_BOUNDS.coordinates[2][1]  - pad &&
+                   cLat <= RGB_BOUNDS.coordinates[0][1]  + pad;
+      const inV2 = cLng >= RGB2_BOUNDS.coordinates[0][0] - pad &&
+                   cLng <= RGB2_BOUNDS.coordinates[1][0] + pad &&
+                   cLat >= RGB2_BOUNDS.coordinates[2][1] - pad &&
+                   cLat <= RGB2_BOUNDS.coordinates[0][1] + pad;
+      if (!inV1 && !inV2) continue;
+
       features.push({
         type: "Feature",
         id: r * 1000 + c,
@@ -671,10 +686,11 @@ function SiteMap() {
                   const { severity, color, panelId, type, anomalyId,
                           deltaT, deltaTNorm, dailyLossINR, gpsLng, gpsLat } = f.properties;
                   const isNormal = severity === "normal";
-                  // Diameter in px: normal dots smaller so anomaly dots stand out
+                  // Small but legible: normal dots quieter, anomaly dots prominent.
+                  // Clamped so they never grow too large or shrink to invisibility.
                   const px = isNormal
-                    ? Math.max(6,  Math.min(14, (mapZoom - 13) * 2))
-                    : Math.max(12, Math.min(26, (mapZoom - 13) * 4));
+                    ? Math.max(4, Math.min(8,  mapZoom - 14))
+                    : Math.max(7, Math.min(14, (mapZoom - 14) * 1.8));
                   return (
                     <Marker
                       key={`dot-${f.id}`}
