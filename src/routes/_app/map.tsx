@@ -171,6 +171,58 @@ function buildPanelGeoJSON(
   return { type: "FeatureCollection", features };
 }
 
+/**
+ * Builds a GeoJSON FeatureCollection of center-point dots for anomalous panels.
+ * Uses Point geometry so Mapbox renders them as circle layers — one dot per
+ * defective panel, positioned at the panel's geographic center. Normal panels
+ * are excluded entirely; the drone RGB imagery represents healthy panels.
+ */
+function buildAnomalyDotsGeoJSON(
+  filters: Record<string, boolean>,
+  typeFilter: string,
+  stringFilter: string,
+  inverterFilter: string,
+) {
+  const [nwLng, nwLat] = GRID_NW;
+  const [seLng, seLat] = GRID_SE;
+  const panelW = (seLng - nwLng) / COLS;
+  const panelH = (nwLat - seLat) / ROWS;
+  const features: object[] = [];
+
+  for (let r = 1; r <= ROWS; r++) {
+    for (let c = 1; c <= COLS; c++) {
+      const { severity, anomaly } = severityFor(r, c);
+      if (severity === "normal" || severity === "nodata") continue;
+      if (!filters[severity]) continue;
+      if (anomaly) {
+        if (typeFilter !== "all" && anomaly.type !== typeFilter) continue;
+        if (stringFilter !== "all" && anomaly.string !== stringFilter) continue;
+        if (inverterFilter !== "all" && anomaly.inverter !== inverterFilter) continue;
+      }
+      const cLng = nwLng + (c - 0.5) * panelW;
+      const cLat = nwLat - (r - 0.5) * panelH;
+      features.push({
+        type: "Feature",
+        id: r * 1000 + c,
+        properties: {
+          panelId:      anomaly?.panelId ?? `R${String(r).padStart(2, "0")}-M${String(c).padStart(2, "0")}`,
+          severity,
+          anomalyId:    anomaly?.id ?? null,
+          type:         anomaly?.type ?? "Unknown",
+          deltaT:       anomaly?.deltaT ?? null,
+          deltaTNorm:   anomaly?.deltaTNorm ?? null,
+          dailyLossINR: anomaly?.dailyLossINR ?? null,
+          gpsLng:       anomaly?.gps.lng ?? cLng,
+          gpsLat:       anomaly?.gps.lat ?? cLat,
+          color:        SEVERITY_COLOR[severity],
+        },
+        geometry: { type: "Point", coordinates: [cLng, cLat] },
+      });
+    }
+  }
+  return { type: "FeatureCollection", features };
+}
+
 function SiteMap() {
   const { selectedPlant } = usePlantContext();
   const PLANT_CENTER = { lng: selectedPlant.gps.lng, lat: selectedPlant.gps.lat };
@@ -204,6 +256,7 @@ function SiteMap() {
   const dragging = useRef(false);
   const pinchRef = useRef<number | null>(null);
   const hoveredPanelId = useRef<number | null>(null);
+  const hoveredSource = useRef<string>("panels");
 
   // Unique filter options derived from real data
   const uniqueInverters = useMemo(() => ["all", ...Array.from(new Set(anomalies.map(a => a.inverter))).sort()], []);
@@ -234,6 +287,12 @@ function SiteMap() {
     [isRajpur, filters, typeFilter, stringFilter, inverterFilter],
   );
 
+  // GeoJSON point dots — one per anomalous panel, used for circle layer
+  const anomalyDotsGeoJSON = useMemo(
+    () => isRajpur ? buildAnomalyDotsGeoJSON(filters, typeFilter, stringFilter, inverterFilter) : null,
+    [isRajpur, filters, typeFilter, stringFilter, inverterFilter],
+  );
+
   const handleMarkerClick = useCallback((anomaly: Anomaly) => {
     setSelected(anomaly);
     setPopupAnomaly(anomaly);
@@ -244,7 +303,8 @@ function SiteMap() {
     });
   }, []);
 
-  // Hover — use Mapbox feature-state (GPU-side) so 863 panels hover at 60fps
+  // Hover — use Mapbox feature-state (GPU-side) for 60fps; handles both the
+  // invisible panel-fill polygon layer and the anomaly-circle dot layer.
   const onMapHover = useCallback((e: MapMouseEvent) => {
     const map = mapRef.current;
     if (!map) return;
@@ -252,16 +312,20 @@ function SiteMap() {
     const canvas = map.getCanvas();
 
     if (features && features.length > 0) {
-      const id = features[0].id as number;
-      if (hoveredPanelId.current !== null && hoveredPanelId.current !== id) {
-        map.setFeatureState({ source: "panels", id: hoveredPanelId.current }, { hover: false });
+      const feature = features[0];
+      const id = feature.id as number;
+      const source = feature.layer?.id === "anomaly-circle" ? "anomaly-dots" : "panels";
+
+      if (hoveredPanelId.current !== null) {
+        try { map.setFeatureState({ source: hoveredSource.current, id: hoveredPanelId.current }, { hover: false }); } catch {}
       }
       hoveredPanelId.current = id;
-      map.setFeatureState({ source: "panels", id }, { hover: true });
+      hoveredSource.current = source;
+      map.setFeatureState({ source, id }, { hover: true });
       canvas.style.cursor = "pointer";
     } else {
       if (hoveredPanelId.current !== null) {
-        map.setFeatureState({ source: "panels", id: hoveredPanelId.current }, { hover: false });
+        try { map.setFeatureState({ source: hoveredSource.current, id: hoveredPanelId.current }, { hover: false }); } catch {}
         hoveredPanelId.current = null;
       }
       canvas.style.cursor = "";
@@ -540,7 +604,7 @@ function SiteMap() {
                 key={selectedPlant.id}
                 style={{ width: "100%", height: "100%" }}
                 mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
-                interactiveLayerIds={isRajpur && panelGridVisible ? ["panel-fill"] : []}
+                interactiveLayerIds={isRajpur && panelGridVisible ? ["panel-fill", "anomaly-circle"] : []}
                 onMouseMove={isRajpur && panelGridVisible ? onMapHover : undefined}
                 onClick={isRajpur && panelGridVisible ? onPanelClick : () => { setPopupAnomaly(null); setPanelPopup(null); }}
               >
@@ -608,19 +672,11 @@ function SiteMap() {
                 {/* ── Panel grid overlay ── coloured polygon per physical panel */}
                 {isRajpur && panelGridVisible && panelGeoJSON && (
                   <Source id="panels" type="geojson" data={panelGeoJSON as never} generateId={false}>
-                    {/* Fill — anomaly panels only; normal/nodata are transparent so satellite/orthomosaic shows through */}
+                    {/* Fill — fully transparent; exists only to capture mouse events across the panel grid */}
                     <Layer
                       id="panel-fill"
                       type="fill"
-                      paint={{
-                        "fill-color": ["get", "color"],
-                        "fill-opacity": [
-                          "case",
-                          ["in", ["get", "severity"], ["literal", ["normal", "nodata"]]], 0,
-                          ["boolean", ["feature-state", "hover"], false], 0.90,
-                          thermalVisible ? 0.40 : 0.65,
-                        ] as never,
-                      }}
+                      paint={{ "fill-opacity": 0 }}
                     />
                     {/* Outline — severity-colored borders for anomalies; near-invisible for healthy panels */}
                     <Layer
@@ -640,6 +696,33 @@ function SiteMap() {
                           0.3,
                         ] as never,
                         "line-opacity": thermalVisible ? 0.90 : 1,
+                      }}
+                    />
+                  </Source>
+                )}
+
+                {/* Anomaly dots — one circle per defective panel; scales with zoom */}
+                {isRajpur && panelGridVisible && anomalyDotsGeoJSON && (
+                  <Source id="anomaly-dots" type="geojson" data={anomalyDotsGeoJSON as never} generateId={false}>
+                    <Layer
+                      id="anomaly-circle"
+                      type="circle"
+                      paint={{
+                        "circle-color": ["get", "color"],
+                        "circle-radius": [
+                          "case",
+                          ["boolean", ["feature-state", "hover"], false],
+                          ["interpolate", ["linear"], ["zoom"], 14, 4, 16, 7, 18, 11, 20, 20] as never,
+                          ["interpolate", ["linear"], ["zoom"], 14, 2, 16, 4, 18,  7, 20, 14] as never,
+                        ] as never,
+                        "circle-opacity": [
+                          "case",
+                          ["boolean", ["feature-state", "hover"], false], 1.0,
+                          0.88,
+                        ] as never,
+                        "circle-stroke-width": 1.5,
+                        "circle-stroke-color": "#ffffff",
+                        "circle-stroke-opacity": 0.9,
                       }}
                     />
                   </Source>
