@@ -79,10 +79,10 @@ function severityFor(row: number, col: number): { severity: Severity; anomaly?: 
 }
 
 const SEVERITY_COLOR: Record<string, string> = {
-  critical: "#dc2626",
-  medium:   "#f59e0b",
-  normal:   "#16a34a",
-  nodata:   "#9ca3af",
+  critical: "#dc2626",  // Red
+  medium:   "#eab308",  // Yellow
+  normal:   "#16a34a",  // Green
+  nodata:   "#9ca3af",  // Grey
 };
 
 // Geographic extent of the Block 20 panel grid (matches THERMAL_BOUNDS)
@@ -172,12 +172,12 @@ function buildPanelGeoJSON(
 }
 
 /**
- * Builds a GeoJSON FeatureCollection of center-point dots for anomalous panels.
- * Uses Point geometry so Mapbox renders them as circle layers — one dot per
- * defective panel, positioned at the panel's geographic center. Normal panels
- * are excluded entirely; the drone RGB imagery represents healthy panels.
+ * Builds a GeoJSON FeatureCollection of center-point dots for every panel:
+ * green = normal/healthy, yellow = medium, red = critical.
+ * NoData panels are excluded. Uses Point geometry so Mapbox renders them as
+ * a circle layer that always sits on top of all raster sources.
  */
-function buildAnomalyDotsGeoJSON(
+function buildPanelDotsGeoJSON(
   filters: Record<string, boolean>,
   typeFilter: string,
   stringFilter: string,
@@ -192,7 +192,7 @@ function buildAnomalyDotsGeoJSON(
   for (let r = 1; r <= ROWS; r++) {
     for (let c = 1; c <= COLS; c++) {
       const { severity, anomaly } = severityFor(r, c);
-      if (severity === "normal" || severity === "nodata") continue;
+      if (severity === "nodata") continue;  // no captured imagery → no dot
       if (!filters[severity]) continue;
       if (anomaly) {
         if (typeFilter !== "all" && anomaly.type !== typeFilter) continue;
@@ -208,7 +208,7 @@ function buildAnomalyDotsGeoJSON(
           panelId:      anomaly?.panelId ?? `R${String(r).padStart(2, "0")}-M${String(c).padStart(2, "0")}`,
           severity,
           anomalyId:    anomaly?.id ?? null,
-          type:         anomaly?.type ?? "Unknown",
+          type:         anomaly?.type ?? "Healthy panel",
           deltaT:       anomaly?.deltaT ?? null,
           deltaTNorm:   anomaly?.deltaTNorm ?? null,
           dailyLossINR: anomaly?.dailyLossINR ?? null,
@@ -287,9 +287,9 @@ function SiteMap() {
     [isRajpur, filters, typeFilter, stringFilter, inverterFilter],
   );
 
-  // GeoJSON point dots — one per anomalous panel, used for circle layer
-  const anomalyDotsGeoJSON = useMemo(
-    () => isRajpur ? buildAnomalyDotsGeoJSON(filters, typeFilter, stringFilter, inverterFilter) : null,
+  // GeoJSON point dots — one per panel (green/yellow/red), used for circle layer
+  const panelDotsGeoJSON = useMemo(
+    () => isRajpur ? buildPanelDotsGeoJSON(filters, typeFilter, stringFilter, inverterFilter) : null,
     [isRajpur, filters, typeFilter, stringFilter, inverterFilter],
   );
 
@@ -677,30 +677,44 @@ function SiteMap() {
                   </Source>
                 )}
 
-                {/* Anomaly dots — one circle per defective panel, renders on top of all raster layers
-                    (satellite, thermal, V1, V2, and any future RGB images added as sources).
-                    Radius scales with zoom so dots feel "inside the panel" at every zoom level. */}
-                {isRajpur && panelGridVisible && anomalyDotsGeoJSON && (
-                  <Source id="anomaly-dots" type="geojson" data={anomalyDotsGeoJSON as never} generateId={false}>
+                {/* Panel dots — green (normal), yellow (medium), red (critical).
+                    Renders on top of satellite + all orthomosaics including future RGB images.
+                    Normal panels use a smaller radius so anomaly dots stand out clearly. */}
+                {isRajpur && panelGridVisible && panelDotsGeoJSON && (
+                  <Source id="anomaly-dots" type="geojson" data={panelDotsGeoJSON as never} generateId={false}>
                     <Layer
                       id="anomaly-circle"
                       type="circle"
                       paint={{
                         "circle-color": ["get", "color"],
+                        // Normal panels: small dot.  Anomaly panels: larger dot.
+                        // case wraps two interpolates — Mapbox requires literal stop values,
+                        // so severity-based sizing must be the outer expression.
                         "circle-radius": [
                           "case",
                           ["boolean", ["feature-state", "hover"], false],
-                          ["interpolate", ["linear"], ["zoom"], 14, 5, 16, 9, 17, 13, 18, 17, 20, 26] as never,
-                          ["interpolate", ["linear"], ["zoom"], 14, 3, 16, 6, 17, 9,  18, 12, 20, 18] as never,
+                          // Hover — all panels grow
+                          ["interpolate", ["linear"], ["zoom"], 14, 5, 16, 8, 17, 11, 18, 15, 20, 24] as never,
+                          // Normal state — severity-dependent size
+                          ["case",
+                            ["==", ["get", "severity"], "normal"],
+                            ["interpolate", ["linear"], ["zoom"], 14, 1.5, 16, 3, 17, 4, 18, 5, 20, 8] as never,
+                            ["interpolate", ["linear"], ["zoom"], 14, 3,   16, 6, 17, 9, 18, 12, 20, 18] as never,
+                          ] as never,
                         ] as never,
                         "circle-opacity": [
                           "case",
                           ["boolean", ["feature-state", "hover"], false], 1.0,
-                          0.92,
+                          ["==", ["get", "severity"], "normal"], 0.75,
+                          0.95,
                         ] as never,
-                        "circle-stroke-width": 2,
+                        "circle-stroke-width": [
+                          "case",
+                          ["==", ["get", "severity"], "normal"], 1,
+                          2,
+                        ] as never,
                         "circle-stroke-color": "#ffffff",
-                        "circle-stroke-opacity": 1,
+                        "circle-stroke-opacity": 0.9,
                       }}
                     />
                   </Source>
@@ -787,16 +801,13 @@ function SiteMap() {
                 {[
                   { label: "Critical", color: SEVERITY_COLOR.critical },
                   { label: "Medium",   color: SEVERITY_COLOR.medium },
+                  { label: "Normal",   color: SEVERITY_COLOR.normal },
                 ].map(l => (
                   <div key={l.label} className="flex items-center gap-2">
                     <span style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: l.color, display: "inline-block", border: "1.5px solid white", boxShadow: "0 0 0 1px rgba(0,0,0,0.2)" }} />
                     <span>{l.label}</span>
                   </div>
                 ))}
-                <div className="flex items-center gap-2 opacity-50">
-                  <span style={{ width: 10, height: 10, borderRadius: "50%", display: "inline-block", border: "1.5px solid rgba(255,255,255,0.5)", backgroundColor: "transparent" }} />
-                  <span>Normal (satellite)</span>
-                </div>
                 {isRajpur && thermalVisible && (
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">
                     <div className="flex items-center gap-1.5 text-red-600 font-medium text-xs">
