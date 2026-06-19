@@ -67,11 +67,16 @@ export const Route = createFileRoute("/_app/map")({
   component: SiteMap,
 });
 
-const ROWS = 24;
-const COLS = 36;
+// Derive grid dimensions from actual anomaly data so severityFor() correctly
+// matches every real anomaly regardless of row/col range.
+const ROWS = anomalies.reduce((m, a) => Math.max(m, a.row), 1);
+const COLS = anomalies.reduce((m, a) => Math.max(m, a.col), 1);
+
+// O(1) lookup map: "row-col" → Anomaly  (previously O(n) linear scan)
+const _ANOMALY_MAP = new Map(anomalies.map(a => [`${a.row}-${a.col}`, a]));
 
 function severityFor(row: number, col: number): { severity: Severity; anomaly?: Anomaly } {
-  const found = anomalies.find(a => a.row === row && a.col === col);
+  const found = _ANOMALY_MAP.get(`${row}-${col}`);
   if (found) return { severity: found.severity, anomaly: found };
   const hash = (row * 31 + col * 17) % 100;
   if (hash < 3) return { severity: "nodata" };
@@ -194,6 +199,9 @@ function buildPanelDotsGeoJSON(
       const { severity, anomaly } = severityFor(r, c);
       if (severity === "nodata") continue;  // no captured imagery → no dot
       if (!filters[severity]) continue;
+      // Thin normal dots to every 3rd cell so we don't render ~8k Markers.
+      // Anomaly panels (critical/medium) are always shown regardless of thinning.
+      if (severity === "normal" && (r + c) % 3 !== 0) continue;
       if (anomaly) {
         if (typeFilter !== "all" && anomaly.type !== typeFilter) continue;
         if (stringFilter !== "all" && anomaly.string !== stringFilter) continue;

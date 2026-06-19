@@ -414,7 +414,7 @@ const _TYPE_DELTA: Record<string, number> = {
   "Diode Failure":                  38,
   "Module Open Circuit":            44,
   "Multi-Cell Hotspot":             28,
-  "Vegetation/Multi-Cell Hotspot":  23,
+  "Vegetation / Multi-Cell Hotspot":  23,
   "Cell Hotspot":                   19,
 };
 
@@ -423,7 +423,7 @@ const _TYPE_LOSS_INR: Record<string, number> = {
   "Diode Failure":                 180,
   "Module Open Circuit":           195,
   "Multi-Cell Hotspot":             90,
-  "Vegetation/Multi-Cell Hotspot":  75,
+  "Vegetation / Multi-Cell Hotspot":  75,
   "Cell Hotspot":                   65,
 };
 

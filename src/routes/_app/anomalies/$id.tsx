@@ -7,7 +7,7 @@ import { anomalyTypeDefs, plant } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 
 export const Route = createFileRoute("/_app/anomalies/$id")({
-  head: ({ params }) => ({ meta: [{ title: `Panel ${params.id} — Anomaly Detail — UrjaScan` }] }),
+  head: () => ({ meta: [{ title: "Anomaly Detail — UrjaScan" }] }),
   component: AnomalyDetail,
 });
 
@@ -17,7 +17,7 @@ const STEPS: Status[] = ["New", "Acknowledged", "In Repair", "Closed"];
 function AnomalyDetail() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
-  const { data: anomaly, isLoading } = useAnomaly(id);
+  const { data: anomaly, isLoading, isError } = useAnomaly(id);
   const patchAnomaly = usePatchAnomaly();
 
   if (isLoading) {
@@ -28,10 +28,12 @@ function AnomalyDetail() {
     );
   }
 
-  if (!anomaly) {
+  if (isError || !anomaly) {
     return (
       <div className="mx-auto max-w-3xl px-6 py-12 text-center">
-        <p className="text-muted-foreground">Anomaly not found.</p>
+        <p className="text-muted-foreground">
+          {isError ? "Failed to load anomaly data. Please try again." : "Anomaly not found."}
+        </p>
         <Link to="/anomalies" className="text-ochre hover:underline mt-3 inline-block">← Back to list</Link>
       </div>
     );

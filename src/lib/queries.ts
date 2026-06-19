@@ -4,7 +4,7 @@ import { getToken } from "./auth";
 import type { AnomalyStatusPatch, PlantDTO, AnomalyDTO } from "./api";
 import { plant as mockPlant, anomalies as mockAnomalies, inspectionHistory as mockHistory } from "./mock-data";
 
-const DEFAULT_PLANT_ID = "plant-rajpur-1";
+const DEFAULT_PLANT_ID = "plant-001"; // matches allPlants[0].id in mock-data.ts
 const DEFAULT_INSPECTION_ID = "insp-may-2026";
 
 function mockPlantDTO(id = DEFAULT_PLANT_ID): PlantDTO {
@@ -78,17 +78,17 @@ export function useAnomalies(
 export function useAnomaly(id: string) {
   return useQuery({
     queryKey: ["anomaly", id],
-    queryFn: async () => {
+    queryFn: async (): Promise<AnomalyDTO | null> => {
       try {
         return await api.anomalies.get(id, getToken()!);
       } catch {
-        const found = mockAnomalies.find(a => a.id === id);
-        if (!found) throw new Error("Anomaly not found");
-        return found as AnomalyDTO;
+        // Return null instead of throwing so the component can show a
+        // friendly "not found" state without triggering React Query's error path.
+        return (mockAnomalies.find(a => a.id === id) as AnomalyDTO) ?? null;
       }
     },
     enabled: !!id && !!getToken(),
-    retry: 1,
+    retry: 0, // no retries — null result is definitive
   });
 }
 
