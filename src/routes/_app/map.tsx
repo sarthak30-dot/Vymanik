@@ -4,7 +4,7 @@ import { X, ZoomIn, ZoomOut, Maximize2, MessageCircle, ArrowRight, Layers, Grid3
 import { anomalies, anomalyTypes, plant, severityCounts, type Anomaly, type Severity } from "@/lib/mock-data";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { usePlantContext } from "@/lib/plant-context";
-import Map, { Marker, Popup, NavigationControl, Source, Layer, type MapRef, type ViewState, type MapMouseEvent } from "react-map-gl/mapbox";
+import MapGL, { Marker, Popup, NavigationControl, Source, Layer, type MapRef, type ViewState, type MapMouseEvent } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 
 // Geographic bounds — Block 20 thermal orthomosaic (Day1_T_modified.tif)
@@ -540,7 +540,7 @@ function SiteMap() {
             >
               {/* Left pane — Thermal IR */}
               <div className="relative overflow-hidden flex-shrink-0" style={{ width: `${splitPct}%` }}>
-                <Map
+                <MapGL
                   mapboxAccessToken={MAPBOX_TOKEN}
                   longitude={viewState.longitude}
                   latitude={viewState.latitude}
@@ -554,7 +554,7 @@ function SiteMap() {
                   <Source id="cmp-thermal" type="image" url="/thermal_block20.png" coordinates={THERMAL_BOUNDS.coordinates}>
                     <Layer id="cmp-thermal-layer" type="raster" paint={{ "raster-opacity": 0.85 }} />
                   </Source>
-                </Map>
+                </MapGL>
                 <div className="absolute top-2 left-2 bg-red-600 text-white text-[10px] font-bold mono px-2 py-0.5 flex items-center gap-1">
                   <Thermometer size={10} /> THERMAL IR
                 </div>
@@ -573,7 +573,7 @@ function SiteMap() {
 
               {/* Right pane — RGB Visual */}
               <div className="relative overflow-hidden flex-1">
-                <Map
+                <MapGL
                   mapboxAccessToken={MAPBOX_TOKEN}
                   longitude={viewState.longitude}
                   latitude={viewState.latitude}
@@ -589,7 +589,7 @@ function SiteMap() {
                   <Source id="cmp-rgb2" type="image" url="/rgb2_block20.png" coordinates={RGB2_BOUNDS.coordinates}>
                     <Layer id="cmp-rgb2-layer" type="raster" paint={{ "raster-opacity": 0.90 }} />
                   </Source>
-                </Map>
+                </MapGL>
                 <div className="absolute top-2 right-2 bg-emerald-600 text-white text-[10px] font-bold mono px-2 py-0.5 flex items-center gap-1">
                   <Layers size={10} /> VISUAL RGB
                 </div>
@@ -600,7 +600,7 @@ function SiteMap() {
           {/* Satellite map view */}
           {mapMode === "satellite" && !compareMode && (
             <div className="absolute inset-0">
-              <Map
+              <MapGL
                 ref={mapRef}
                 mapboxAccessToken={MAPBOX_TOKEN}
                 initialViewState={{
@@ -794,7 +794,7 @@ function SiteMap() {
                     </div>
                   </Popup>
                 )}
-              </Map>
+              </MapGL>
 
               {/* Info overlay for plants without panel-level GPS data */}
               {!isRajpur && (
