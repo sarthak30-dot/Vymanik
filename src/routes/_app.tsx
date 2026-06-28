@@ -1,12 +1,18 @@
-import { createFileRoute, Outlet } from "@tanstack/react-router";
+import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
 import { AppFooter } from "@/components/layout/AppFooter";
 import { I18nProvider } from "@/lib/i18n";
 import { PlantProvider } from "@/lib/plant-context";
 import { Toaster } from "@/components/ui/sonner";
+import { isAuthenticated } from "@/lib/auth";
 
 export const Route = createFileRoute("/_app")({
+  beforeLoad: () => {
+    if (!isAuthenticated()) {
+      throw redirect({ to: "/" });
+    }
+  },
   component: AppLayout,
 });
 

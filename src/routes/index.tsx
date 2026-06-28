@@ -56,8 +56,9 @@ function LoginPage() {
       });
       const dest = auth.role === "admin" ? "/admin" : auth.role === "team" ? "/team" : "/dashboard";
       await navigate({ to: dest });
-    } catch {
-      setError(lang === "en" ? "Login failed. Please check your credentials and try again." : "लॉगिन विफल। कृपया अपनी जानकारी जांचें।");
+    } catch (err: any) {
+      const msg = err?.message || (lang === "en" ? "Login failed. Please check your credentials and try again." : "लॉगिन विफल। कृपया अपनी जानकारी जांचें।");
+      setError(msg);
     } finally {
       setLoading(false);
     }

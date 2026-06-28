@@ -19,17 +19,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // Call Supabase Auth — only users created in the Supabase Dashboard can sign in
-  const authRes = await fetch(
-    `${process.env.SUPABASE_URL}/auth/v1/token?grant_type=password`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "apikey": process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  let authRes: Response;
+  try {
+    authRes = await fetch(
+      `${process.env.SUPABASE_URL}/auth/v1/token?grant_type=password`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        },
+        body: JSON.stringify({ email, password }),
       },
-      body: JSON.stringify({ email, password }),
-    },
-  );
+    );
+  } catch (error) {
+    console.error("Supabase connection error:", error);
+    return res.status(500).json({
+      error: "Authentication service is currently unreachable. Please ensure the database is active.",
+    });
+  }
 
   if (!authRes.ok) {
     // Return a generic message — don't reveal whether the email exists

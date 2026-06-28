@@ -184,14 +184,30 @@ async function req<T>(
 
   // If the server says our token is invalid/expired, clear the session and
   // send the user back to the login page instead of leaving them on a blank screen.
+  // Only redirect when there was an active session — a login attempt that fails
+  // with 401 (wrong credentials) should fall through to normal error handling.
   if (res.status === 401) {
-    const { clearAuth } = await import("./auth");
-    clearAuth();
-    window.location.href = "/";
-    throw new Error("Session expired. Please log in again.");
+    const { clearAuth, getToken } = await import("./auth");
+    if (getToken()) {
+      clearAuth();
+      window.location.href = "/";
+      throw new Error("Session expired. Please log in again.");
+    }
   }
 
-  if (!res.ok) throw new Error(`API ${method} ${path} → ${res.status}`);
+  if (!res.ok) {
+    let errMsg = `API ${method} ${path} → ${res.status}`;
+    try {
+      const data = await res.json() as { error?: string };
+      if (data && data.error) errMsg = data.error;
+    } catch {
+      try {
+        const text = await res.clone().text();
+        if (text) errMsg = text;
+      } catch {}
+    }
+    throw new Error(errMsg);
+  }
   return res.json() as Promise<T>;
 }
 
