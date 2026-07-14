@@ -1,4 +1,4 @@
-import type { PlantDTO, AnomalyDTO } from "../../packages/types/src/index";
+import type { PlantDTO, AnomalyDTO, TeamMemberDTO } from "../../packages/types/src/index";
 
 export function toPlantDTO(row: Record<string, unknown>): PlantDTO {
   return {
@@ -29,6 +29,8 @@ export function toAnomalyDTO(row: Record<string, unknown>): AnomalyDTO {
     type:           row.type as string,
     deltaT:         row.delta_t != null ? Number(row.delta_t) : null,
     severity:       row.severity as AnomalyDTO["severity"],
+    categoryCode:   (row.category_code as string | null) ?? null,
+    defectType:     (row.defect_type as string | null) ?? null,
     string:         row.string as string,
     inverter:       row.inverter as string,
     status:         row.status as AnomalyDTO["status"],
@@ -45,5 +47,30 @@ export function toAnomalyDTO(row: Record<string, unknown>): AnomalyDTO {
     moduleSerial:   row.module_serial != null ? String(row.module_serial) : undefined,
     dailyLossINR:   row.daily_loss_inr != null ? Number(row.daily_loss_inr) : undefined,
     dailyLossKWh:   row.daily_loss_kwh != null ? Number(row.daily_loss_kwh) : undefined,
+  };
+}
+
+export function toTeamMemberDTO(row: Record<string, unknown>): TeamMemberDTO {
+  const name = row.name as string;
+  const initials = name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(w => w[0]?.toUpperCase())
+    .join("") || "NA";
+
+  return {
+    id:                    row.id as string,
+    name,
+    initials,
+    email:                 row.email as string,
+    phone:                 (row.phone as string) ?? "",
+    droneModel:            (row.drone_model as string) ?? "",
+    certifications:        (row.certifications as string[]) ?? [],
+    assignedPlantId:       (row.assigned_plant_id as string | null) ?? null,
+    status:                row.status as TeamMemberDTO["status"],
+    inspectionsCompleted:  Number(row.inspections_completed ?? 0),
+    anomaliesFound:        Number(row.anomalies_found ?? 0),
+    lastActive:            (row.last_active as string) ?? "",
   };
 }

@@ -4,12 +4,14 @@ import { Search, Download, FileText, Loader2 } from "lucide-react";
 import { SeverityBadge, StatusBadge } from "@/components/SeverityBadge";
 import { useAnomalies, usePatchAnomaly } from "@/lib/queries";
 import { usePlantContext } from "@/lib/plant-context";
+import { getUser } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import type { AnomalyDTO } from "@/lib/api";
 
 function exportCSV(rows: AnomalyDTO[], plantName: string) {
-  const header = ["ID","Panel ID","Row","Col","Anomaly Type","ΔT (°C)","Severity","Table/String","Inverter","Status","Date","GPS Lat","GPS Lng","Image Ref"];
+  const header = ["ID","Panel ID","Row","Col","Anomaly Type","Category Code","Defect Type","ΔT (°C)","Severity","Table/String","Inverter","Status","Date","GPS Lat","GPS Lng","Image Ref"];
   const lines = rows.map(a => [
-    a.id, a.panelId, a.row, a.col, a.type,
+    a.id, a.panelId, a.row, a.col, a.type, a.categoryCode ?? "", a.defectType ?? "",
     a.deltaT ?? "", a.severity, a.string, a.inverter, a.status, a.date,
     a.gps.lat, a.gps.lng, a.rgbNote ?? "",
   ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(","));
@@ -43,6 +45,7 @@ function AnomalyList() {
   const { data: allAnomalies = [], isLoading } = useAnomalies();
   const { selectedPlant } = usePlantContext();
   const patchAnomaly = usePatchAnomaly();
+  const canEdit = can(getUser()?.role, "editAnomaly");
 
   // Filter anomalies by selected plant.
   // Mock anomalies have no plantId (they belong to Rajpur/plant-001).
@@ -184,16 +187,20 @@ function AnomalyList() {
                   <td className="px-4 py-3"><SeverityBadge severity={a.severity} /></td>
                   <td className="px-4 py-3 text-muted-foreground text-sm">{a.string}</td>
                   <td className="px-4 py-3">
-                    <select
-                      value={a.status}
-                      onChange={e => patchAnomaly.mutate({ id: a.id, status: e.target.value as AnomalyDTO["status"] })}
-                      className="text-xs border border-border px-2 py-1 bg-card text-foreground focus:outline-none focus:ring-1 focus:ring-ochre"
-                    >
-                      <option>New</option>
-                      <option>Acknowledged</option>
-                      <option>In Repair</option>
-                      <option>Closed</option>
-                    </select>
+                    {canEdit ? (
+                      <select
+                        value={a.status}
+                        onChange={e => patchAnomaly.mutate({ id: a.id, status: e.target.value as AnomalyDTO["status"] })}
+                        className="text-xs border border-border px-2 py-1 bg-card text-foreground focus:outline-none focus:ring-1 focus:ring-ochre"
+                      >
+                        <option>New</option>
+                        <option>Acknowledged</option>
+                        <option>In Repair</option>
+                        <option>Closed</option>
+                      </select>
+                    ) : (
+                      <StatusBadge status={a.status} />
+                    )}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground text-sm">{a.date}</td>
                   <td className="px-4 py-3 text-right">

@@ -1,7 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { supabase } from "../_lib/supabase";
 import { setCors } from "../_lib/cors";
-import { verifyAuth } from "../_lib/auth";
+import { getAuthUser } from "../_lib/auth";
+import { can } from "../_lib/permissions";
 import { toAnomalyDTO } from "../_lib/mappers";
 import type { AnomalyStatus } from "../../packages/types/src/index";
 
@@ -10,7 +11,8 @@ const VALID_STATUSES: AnomalyStatus[] = ["New", "Acknowledged", "In Repair", "Cl
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   setCors(res);
   if (req.method === "OPTIONS") return res.status(204).end();
-  if (!await verifyAuth(req.headers.authorization)) return res.status(401).json({ error: "Unauthorized" });
+  const user = await getAuthUser(req.headers.authorization);
+  if (!user) return res.status(401).json({ error: "Unauthorized" });
 
   const { id } = req.query as { id: string };
 
@@ -26,6 +28,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (req.method === "PATCH") {
+    if (!can(user.role, "editAnomaly")) {
+      return res.status(403).json({ error: "Client Access accounts are read-only — cannot edit anomalies" });
+    }
+
     const { status } = (req.body ?? {}) as { status?: AnomalyStatus };
     if (!status || !VALID_STATUSES.includes(status)) {
       return res.status(400).json({ error: "Invalid status" });

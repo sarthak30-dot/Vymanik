@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { getToken } from "./auth";
-import type { AnomalyStatusPatch, PlantDTO, AnomalyDTO } from "./api";
+import type { AnomalyStatusPatch, PlantDTO, AnomalyDTO, PlantLayout, NewPlantLayoutInput } from "./api";
 import { plant as mockPlant, anomalies as mockAnomalies, inspectionHistory as mockHistory } from "./mock-data";
 
 const DEFAULT_PLANT_ID = "plant-001"; // matches allPlants[0].id in mock-data.ts
@@ -124,16 +124,23 @@ export interface NewAnomalyInput {
   plantId: string;
   panelId: string;
   type: string;
+  defectType?: string;
+  categoryCode?: string;
   deltaT: number | null;
   notes: string;
   inspectorName: string;
   gps: { lat: number; lng: number };
+  string?: string;
+  inverter?: string;
+  stringId?: string;
 }
 
 /**
  * Adds a new anomaly to the React Query cache so every subscriber
  * (dashboard, anomalies list, map) sees it immediately without a refetch.
- * When the real API is available, it will POST there first.
+ * Tries the real API first (persists to Supabase + validates the defect
+ * taxonomy server-side); falls back to a locally-shaped record if the API
+ * is unavailable, same degrade pattern as useCreatePlant/useCreateTeamMember.
  */
 export function useAddAnomaly() {
   const queryClient = useQueryClient();
@@ -159,6 +166,33 @@ export function useAddAnomaly() {
         hour: "2-digit", minute: "2-digit",
       });
 
+      const rgbNote = input.notes.trim()
+        || `Reported by ${input.inspectorName} during field inspection.`;
+
+      try {
+        return await api.anomalies.create(
+          {
+            plantId: input.plantId,
+            inspectionId: DEFAULT_INSPECTION_ID,
+            panelId: input.panelId,
+            row, col,
+            type: input.type,
+            defectType: input.defectType,
+            categoryCode: input.categoryCode,
+            deltaT: input.deltaT,
+            rgbNote,
+            gps: input.gps,
+            string: input.string,
+            inverter: input.inverter,
+            stringId: input.stringId,
+          },
+          getToken()!,
+        );
+      } catch {
+        // Supabase not reachable/configured — anomaly still appears in this
+        // session's caches so the inspector isn't blocked mid-field-visit.
+      }
+
       const newAnomaly: AnomalyDTO = {
         id: `insp-${Date.now()}`,
         inspectionId: DEFAULT_INSPECTION_ID,
@@ -170,14 +204,15 @@ export function useAddAnomaly() {
         deltaT: input.deltaT,
         deltaTNorm: input.deltaT ? Math.round(input.deltaT * (1000 / 847)) : null,
         severity,
-        string: "Inspector Report",
-        inverter: "—",
+        categoryCode: input.categoryCode ?? null,
+        defectType: input.defectType ?? null,
+        string: input.string ?? "Inspector Report",
+        inverter: input.inverter ?? "—",
         status: "New",
         rootCause: null,
         date: dateStr,
         inspectionTime: timeStr,
-        rgbNote: input.notes.trim()
-          || `Reported by ${input.inspectorName} during field inspection.`,
+        rgbNote,
         gps: input.gps,
         ...(input.deltaT !== null
           ? { peakTemp: 42 + input.deltaT, refTemp: 42 }
@@ -195,6 +230,158 @@ export function useAddAnomaly() {
         { queryKey: ["anomalies"], exact: false },
         (old) => (old ? [newAnomaly, ...old] : [newAnomaly]),
       );
+    },
+  });
+}
+
+/** Fields collected from the "Add Plant" form in the Control Center */
+export interface NewPlantFormInput {
+  name: string;
+  client: string;
+  location: string;
+  capacityMW: number;
+  totalPanels: number;
+  lat: number;
+  lng: number;
+}
+
+/**
+ * Creates a plant via the real API when Supabase is configured; either way,
+ * returns a fully-shaped fleet-view row (Control Center needs fields like
+ * `client` and `status` that don't live in the plants table) so it can be
+ * added to the on-screen list immediately.
+ */
+export function useCreatePlant() {
+  return useMutation({
+    mutationFn: async (input: NewPlantFormInput) => {
+      let id = `plant-${Date.now()}`;
+      try {
+        const dto = await api.plants.create(
+          {
+            name: input.name,
+            location: input.location,
+            capacityMW: input.capacityMW,
+            totalPanels: input.totalPanels,
+            lat: input.lat,
+            lng: input.lng,
+          },
+          getToken()!,
+        );
+        id = dto.id;
+      } catch {
+        // Supabase not reachable/configured in this environment — the plant
+        // still appears in this session's Control Center view.
+      }
+
+      return {
+        id,
+        name: input.name,
+        client: input.client,
+        location: input.location,
+        capacityMW: input.capacityMW,
+        totalPanels: input.totalPanels,
+        healthScore: 100,
+        lastInspection: "—",
+        nextInspection: "Not scheduled",
+        assignedInspectorId: null,
+        criticalCount: 0,
+        mediumCount: 0,
+        status: "Operational" as const,
+        gps: { lat: input.lat, lng: input.lng },
+      };
+    },
+  });
+}
+
+/** Fields collected from the "Add Team Member" form in the Control Center */
+export interface NewTeamMemberFormInput {
+  name: string;
+  email: string;
+  phone: string;
+  droneModel: string;
+}
+
+export function useCreateTeamMember() {
+  return useMutation({
+    mutationFn: async (input: NewTeamMemberFormInput) => {
+      let id = `tm-${Date.now()}`;
+      try {
+        const dto = await api.teamMembers.create(
+          { name: input.name, email: input.email, phone: input.phone, droneModel: input.droneModel },
+          getToken()!,
+        );
+        id = dto.id;
+      } catch {
+        // Supabase not reachable/configured — member still shows up locally.
+      }
+
+      const initials = input.name
+        .split(" ")
+        .filter(Boolean)
+        .slice(0, 2)
+        .map(w => w[0].toUpperCase())
+        .join("") || "NA";
+
+      return {
+        id,
+        name: input.name,
+        initials,
+        email: input.email,
+        phone: input.phone,
+        droneModel: input.droneModel || "Not specified",
+        certifications: [] as string[],
+        assignedPlantId: null,
+        status: "Off Duty" as const,
+        inspectionsCompleted: 0,
+        anomaliesFound: 0,
+        lastActive: "Just added",
+      };
+    },
+  });
+}
+
+/**
+ * Provisions a real Supabase Auth login for a client, scoped to the plants
+ * the admin selects. No local fallback here on purpose — faking a "success"
+ * for a real credential would be actively misleading.
+ */
+export function useInviteClient() {
+  return useMutation({
+    mutationFn: (input: { name: string; email: string; plantIds: string[] }) =>
+      api.admin.inviteClient(input, getToken()!),
+  });
+}
+
+const EMPTY_LAYOUT: PlantLayout = { blocks: [], inverters: [], strings: [] };
+
+/**
+ * Block/Inverter/String hierarchy for cascading dropdowns. Falls back to an
+ * empty layout (not mock data) when the API is unavailable or the plant has
+ * no layout defined yet — the anomaly form treats an empty layout as "fall
+ * back to free-text Panel ID entry" rather than erroring.
+ */
+export function usePlantLayout(plantId: string) {
+  return useQuery({
+    queryKey: ["plantLayout", plantId],
+    queryFn: async () => {
+      try {
+        return await api.plantLayout.get(plantId, getToken()!);
+      } catch {
+        return EMPTY_LAYOUT;
+      }
+    },
+    enabled: !!plantId && !!getToken(),
+    staleTime: 5 * 60 * 1000,
+    retry: 0,
+  });
+}
+
+export function useGeneratePlantLayout() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: NewPlantLayoutInput) => api.plantLayout.generate(input, getToken()!),
+    onSuccess: (_result, input) => {
+      queryClient.invalidateQueries({ queryKey: ["plantLayout", input.plantId] });
     },
   });
 }

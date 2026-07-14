@@ -68,6 +68,53 @@ export interface PlantDTO {
   lng: number;
 }
 
+export interface NewPlantInput {
+  name: string;
+  location: string;
+  capacityMW: number;
+  totalPanels: number;
+  lat: number;
+  lng: number;
+}
+
+// ─── Team members ──────────────────────────────────────────────────────────
+
+export interface TeamMemberDTO {
+  id: string;
+  name: string;
+  initials: string;
+  email: string;
+  phone: string;
+  droneModel: string;
+  certifications: string[];
+  assignedPlantId: string | null;
+  status: "On Mission" | "Active" | "Off Duty";
+  inspectionsCompleted: number;
+  anomaliesFound: number;
+  lastActive: string;
+}
+
+export interface NewTeamMemberInput {
+  name: string;
+  email: string;
+  phone?: string;
+  droneModel?: string;
+}
+
+// ─── Client accounts ───────────────────────────────────────────────────────
+
+export interface InviteClientInput {
+  name: string;
+  email: string;
+  plantIds: string[];
+}
+
+export interface InviteClientResult {
+  userId: string;
+  email: string;
+  tempPassword: string;
+}
+
 // ─── Inspections ───────────────────────────────────────────────────────────
 
 export type ProcessingStage =
@@ -126,6 +173,8 @@ export interface AnomalyDTO {
   deltaT: number | null;
   deltaTNorm: number | null;  // IEC 62446-3 normalised to 1000 W/m²
   severity: "critical" | "medium" | "normal" | "nodata";
+  categoryCode?: string | null;
+  defectType?: string | null;
   string: string;
   inverter: string;
   status: "New" | "Acknowledged" | "In Repair" | "Closed";
@@ -143,9 +192,43 @@ export interface AnomalyDTO {
   tileBbox?: [number, number, number, number]; // [west, south, east, north] in WGS84
 }
 
+// ─── Plant layout (asset hierarchy) ────────────────────────────────────────
+
+export interface PlantLayout {
+  blocks: { id: string; code: string }[];
+  inverters: { id: string; blockId: string; code: string }[];
+  strings: { id: string; inverterId: string; code: string; moduleCount: number }[];
+}
+
+export interface NewPlantLayoutInput {
+  plantId: string;
+  blockCount: number;
+  invertersPerBlock: number;
+  stringsPerInverter: number;
+  modulesPerString: number;
+}
+
 export interface AnomalyStatusPatch {
   status?: "New" | "Acknowledged" | "In Repair" | "Closed";
   rootCause?: string | null;
+}
+
+export interface NewAnomalyPayload {
+  plantId: string;
+  inspectionId?: string;
+  panelId: string;
+  row?: number;
+  col?: number;
+  type?: string;
+  defectType?: string;
+  categoryCode?: string;
+  deltaT: number | null;
+  severity?: "critical" | "medium" | "normal" | "nodata";
+  string?: string;
+  inverter?: string;
+  stringId?: string;
+  rgbNote?: string;
+  gps: { lat: number; lng: number };
 }
 
 // ─── Tiles ─────────────────────────────────────────────────────────────────
@@ -221,6 +304,27 @@ export const api = {
   plants: {
     list: (token: string) => req<PlantDTO[]>("GET", "/plants", undefined, token),
     get: (id: string, token: string) => req<PlantDTO>("GET", `/plants/${id}`, undefined, token),
+    create: (body: NewPlantInput, token: string) => req<PlantDTO>("POST", "/plants", body, token),
+  },
+
+  teamMembers: {
+    list: (token: string) => req<TeamMemberDTO[]>("GET", "/team-members", undefined, token),
+    create: (body: NewTeamMemberInput, token: string) =>
+      req<TeamMemberDTO>("POST", "/team-members", body, token),
+  },
+
+  admin: {
+    inviteClient: (body: InviteClientInput, token: string) =>
+      req<InviteClientResult>("POST", "/admin/invite-client", body, token),
+  },
+
+  plantLayout: {
+    get: (plantId: string, token: string) =>
+      req<PlantLayout>("GET", `/plant-layout?plantId=${plantId}`, undefined, token),
+    generate: (body: NewPlantLayoutInput, token: string) =>
+      req<{ blocksCreated: number; invertersCreated: number; stringsCreated: number }>(
+        "POST", "/plant-layout", body, token,
+      ),
   },
 
   inspections: {
@@ -244,6 +348,8 @@ export const api = {
       req<AnomalyDTO>("GET", `/anomalies/${id}`, undefined, token),
     patch: (id: string, body: AnomalyStatusPatch, token: string) =>
       req<AnomalyDTO>("PATCH", `/anomalies/${id}`, body, token),
+    create: (body: NewAnomalyPayload, token: string) =>
+      req<AnomalyDTO>("POST", "/anomalies", body, token),
   },
 
   tiles: {

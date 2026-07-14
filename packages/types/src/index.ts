@@ -36,6 +36,23 @@ export interface PlantDTO {
   lng: number;
 }
 
+export type TeamMemberStatus = "On Mission" | "Active" | "Off Duty";
+
+export interface TeamMemberDTO {
+  id: string;
+  name: string;
+  initials: string;
+  email: string;
+  phone: string;
+  droneModel: string;
+  certifications: string[];
+  assignedPlantId: string | null;
+  status: TeamMemberStatus;
+  inspectionsCompleted: number;
+  anomaliesFound: number;
+  lastActive: string;
+}
+
 export interface AnomalyDTO {
   id: string;
   inspectionId: string;
@@ -46,6 +63,8 @@ export interface AnomalyDTO {
   type: string;
   deltaT: number | null;
   severity: Severity;
+  categoryCode?: string | null;
+  defectType?: string | null;
   string: string;
   inverter: string;
   status: AnomalyStatus;

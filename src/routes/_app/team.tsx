@@ -5,7 +5,9 @@ import { usePlantContext } from "@/lib/plant-context";
 import { Upload, Image as ImageIcon, Plane, ClipboardCheck, Send, Layers, Cpu, AlertTriangle, User2, MapPin, Pencil, Check, X } from "lucide-react";
 import { reviewQueue, teamMembers, allPlants, anomalyTypes, getTeamMemberByEmail, type QueueEntry } from "@/lib/mock-data";
 import type { ProcessingStage } from "@/lib/api";
-import { useAddAnomaly } from "@/lib/queries";
+import { useAddAnomaly, usePlantLayout } from "@/lib/queries";
+import { DEFECT_TYPES, CATEGORY_CODES } from "@/lib/taxonomy";
+import { AnomalyCsvImport } from "@/components/AnomalyCsvImport";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/team")({
@@ -192,27 +194,62 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
   const [plantId, setPlantId] = useState(selectedPlant.id);
   const [panelId, setPanelId] = useState("");
   const [type, setType] = useState("");
+  const [defectType, setDefectType] = useState("");
+  const [categoryCode, setCategoryCode] = useState("");
   const [deltaT, setDeltaT] = useState("");
   const [notes, setNotes] = useState("");
+
+  // Cascading Block/Inverter/String selection (Section 1) — only usable once
+  // an admin has run "Plant Layout" for this plant. Falls back to the free-text
+  // Panel ID field above when no layout exists yet, so inspectors aren't blocked.
+  const { data: layout } = usePlantLayout(plantId);
+  const hasLayout = (layout?.blocks.length ?? 0) > 0;
+  const [blockId, setBlockId] = useState("");
+  const [inverterId, setInverterId] = useState("");
+  const [stringId, setStringId] = useState("");
+  const [row, setRow] = useState("");
+  const [col, setCol] = useState("");
+
+  const invertersInBlock = layout?.inverters.filter(i => i.blockId === blockId) ?? [];
+  const stringsInInverter = layout?.strings.filter(s => s.inverterId === inverterId) ?? [];
+
+  useEffect(() => {
+    if (!hasLayout) return;
+    const block = layout?.blocks.find(b => b.id === blockId);
+    const inverter = layout?.inverters.find(i => i.id === inverterId);
+    const string = layout?.strings.find(s => s.id === stringId);
+    if (block && inverter && string && row && col) {
+      setPanelId(`${block.code}-${inverter.code}-${string.code}-R${row}C${col}`);
+    }
+  }, [hasLayout, layout, blockId, inverterId, stringId, row, col]);
 
   const addAnomaly = useAddAnomaly();
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!plantId || !panelId || !type) return;
+    if (!plantId || !panelId || !type || !defectType || !categoryCode) return;
 
     const plant = allPlants.find(p => p.id === plantId);
     const deltaTNum = deltaT ? parseFloat(deltaT) : null;
+    const selectedString = stringsInInverter.find(s => s.id === stringId);
+    const selectedInverter = invertersInBlock.find(i => i.id === inverterId);
 
     addAnomaly.mutate(
       {
         plantId,
         panelId,
         type,
+        defectType,
+        categoryCode,
         deltaT: deltaTNum,
         notes,
         inspectorName,
         gps: plant?.gps ?? { lat: 26.4521, lng: 73.0192 },
+        ...(hasLayout ? {
+          string: selectedString?.code,
+          inverter: selectedInverter?.code,
+          stringId: stringId || undefined,
+        } : {}),
       },
       {
         onSuccess: () => {
@@ -220,7 +257,8 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
             description: `Panel ${panelId.toUpperCase()} — ${type}${deltaTNum ? ` · ΔT +${deltaTNum}°C` : ""}. Visible to plant owner now.`,
           });
           // Reset form
-          setPlantId(""); setPanelId(""); setType(""); setDeltaT(""); setNotes("");
+          setPlantId(""); setPanelId(""); setType(""); setDefectType(""); setCategoryCode(""); setDeltaT(""); setNotes("");
+          setBlockId(""); setInverterId(""); setStringId(""); setRow(""); setCol("");
         },
       },
     );
@@ -239,7 +277,10 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
             <select
               required
               value={plantId}
-              onChange={e => { setPlantId(e.target.value); setSelectedPlantId(e.target.value); }}
+              onChange={e => {
+                setPlantId(e.target.value); setSelectedPlantId(e.target.value);
+                setBlockId(""); setInverterId(""); setStringId(""); setRow(""); setCol(""); setPanelId("");
+              }}
               className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
             >
               {allPlants.map(p => (
@@ -247,15 +288,63 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
               ))}
             </select>
           </Field>
-          <Field label="Panel ID">
-            <input
-              required
-              value={panelId}
-              onChange={e => setPanelId(e.target.value)}
-              placeholder="e.g. R14-M07"
-              className="w-full h-9 px-3 border border-border bg-card text-sm mono focus:outline-none focus:ring-1 focus:ring-ochre"
-            />
-          </Field>
+          {hasLayout ? (
+            <>
+              <Field label="Block">
+                <select
+                  required
+                  value={blockId}
+                  onChange={e => { setBlockId(e.target.value); setInverterId(""); setStringId(""); }}
+                  className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+                >
+                  <option value="">Select block…</option>
+                  {layout?.blocks.map(b => <option key={b.id} value={b.id}>{b.code}</option>)}
+                </select>
+              </Field>
+              <Field label="Inverter">
+                <select
+                  required
+                  disabled={!blockId}
+                  value={inverterId}
+                  onChange={e => { setInverterId(e.target.value); setStringId(""); }}
+                  className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre disabled:opacity-50"
+                >
+                  <option value="">Select inverter…</option>
+                  {invertersInBlock.map(i => <option key={i.id} value={i.id}>{i.code}</option>)}
+                </select>
+              </Field>
+              <Field label="String / Table">
+                <select
+                  required
+                  disabled={!inverterId}
+                  value={stringId}
+                  onChange={e => setStringId(e.target.value)}
+                  className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre disabled:opacity-50"
+                >
+                  <option value="">Select string…</option>
+                  {stringsInInverter.map(s => <option key={s.id} value={s.id}>{s.code} ({s.moduleCount} modules)</option>)}
+                </select>
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Row">
+                  <input required type="number" min="1" value={row} onChange={e => setRow(e.target.value)} className="w-full h-9 px-3 border border-border bg-card text-sm mono focus:outline-none focus:ring-1 focus:ring-ochre" />
+                </Field>
+                <Field label="Column">
+                  <input required type="number" min="1" value={col} onChange={e => setCol(e.target.value)} className="w-full h-9 px-3 border border-border bg-card text-sm mono focus:outline-none focus:ring-1 focus:ring-ochre" />
+                </Field>
+              </div>
+            </>
+          ) : (
+            <Field label="Panel ID">
+              <input
+                required
+                value={panelId}
+                onChange={e => setPanelId(e.target.value)}
+                placeholder="e.g. R14-M07 — no layout defined for this plant yet, ask an admin to run Plant Layout"
+                className="w-full h-9 px-3 border border-border bg-card text-sm mono focus:outline-none focus:ring-1 focus:ring-ochre"
+              />
+            </Field>
+          )}
           <Field label="Anomaly Type">
             <select
               required
@@ -265,6 +354,28 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
             >
               <option value="">Select type…</option>
               {anomalyTypes.map(t => <option key={t}>{t}</option>)}
+            </select>
+          </Field>
+          <Field label="Defect Type">
+            <select
+              required
+              value={defectType}
+              onChange={e => setDefectType(e.target.value)}
+              className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+            >
+              <option value="">Select defect type…</option>
+              {DEFECT_TYPES.map(t => <option key={t}>{t}</option>)}
+            </select>
+          </Field>
+          <Field label="Category Code">
+            <select
+              required
+              value={categoryCode}
+              onChange={e => setCategoryCode(e.target.value)}
+              className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+            >
+              <option value="">Select category code…</option>
+              {CATEGORY_CODES.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
             </select>
           </Field>
           <Field label="ΔT above reference (°C) — optional">
@@ -463,6 +574,9 @@ function TeamDashboard() {
 
       {/* ── Report new anomaly ── */}
       <ReportAnomalyForm inspectorName={displayName} />
+
+      {/* ── Bulk import anomalies via CSV ── */}
+      <AnomalyCsvImport />
 
       {/* Pipeline diagram */}
       <PipelineDiagram />
