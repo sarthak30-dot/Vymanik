@@ -1,4 +1,4 @@
-import type { Severity, Status } from "@/lib/mock-data";
+import { SEVERITY_LABEL, type Severity, type Status } from "@/lib/mock-data";
 
 const DOT_COLOR: Record<Severity, string> = {
   critical: "var(--critical)",
@@ -12,13 +12,6 @@ const TEXT_COLOR: Record<Severity, string> = {
   medium:   "var(--medium)",
   normal:   "var(--normal)",
   nodata:   "var(--grey-400)",
-};
-
-const LABELS: Record<Severity, string> = {
-  critical: "CRITICAL",
-  medium:   "MEDIUM",
-  normal:   "NORMAL",
-  nodata:   "NO DATA",
 };
 
 export function SeverityBadge({ severity, size = "sm" }: { severity: Severity; size?: "sm" | "lg" }) {
@@ -39,7 +32,7 @@ export function SeverityBadge({ severity, size = "sm" }: { severity: Severity; s
           flexShrink:      0,
         }}
       />
-      {LABELS[severity]}
+      {SEVERITY_LABEL[severity]}
     </span>
   );
 }

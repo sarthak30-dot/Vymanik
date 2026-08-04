@@ -1,4 +1,4 @@
-import type { Anomaly, Severity } from "./mock-data";
+import { SEVERITY_LABEL, type Anomaly, type Severity } from "./mock-data";
 
 const SEVERITY_COLOR: Record<Severity, string> = {
   critical: "#ef4444",
@@ -97,7 +97,7 @@ export function buildAnomaliesKML({ plantName, boundary, plantCenter, anomalies 
         <styleUrl>#sev-${sev}</styleUrl>
         <description><![CDATA[
           <b>${cdataSafe(a.type)}</b><br/>
-          Severity: ${a.severity}<br/>
+          Severity: ${SEVERITY_LABEL[a.severity]}<br/>
           String: ${cdataSafe(a.string)} &middot; Inverter: ${cdataSafe(a.inverter)}<br/>
           Status: ${a.status}<br/>
           ${a.deltaT !== null ? `&Delta;T: +${a.deltaT}&deg;C<br/>` : ""}
@@ -116,10 +116,9 @@ export function buildAnomaliesKML({ plantName, boundary, plantCenter, anomalies 
       </Placemark>`,
         )
         .join("");
-      const label = sev.charAt(0).toUpperCase() + sev.slice(1);
       return `
     <Folder>
-      <name>${esc(label)} (${list.length})</name>${placemarks}
+      <name>${esc(SEVERITY_LABEL[sev])} (${list.length})</name>${placemarks}
     </Folder>`;
     })
     .join("");

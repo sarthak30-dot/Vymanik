@@ -6,14 +6,32 @@ import { useAnomalies, usePatchAnomaly } from "@/lib/queries";
 import { usePlantContext } from "@/lib/plant-context";
 import { getUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
+import { SEVERITY_LABEL } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 
+// Block number as it appears in the inspection report's "Layout Location" column,
+// e.g. "Block 20 Solar Plant" -> "20".
+function blockNumber(plantName: string): string {
+  return plantName.match(/Block\s+(\d+)/i)?.[1] ?? plantName;
+}
+
+// Mirrors the report's "Layout Location" string, e.g.
+// "Block: 20, Inv: A, Table: 3, Panel: R8-P12"
+function layoutLocation(a: AnomalyDTO, plantName: string): string {
+  const inv = a.inverter.replace(/^INV-/i, "");
+  const table = a.string.replace(/^Table-/i, "");
+  return `Block: ${blockNumber(plantName)}, Inv: ${inv}, Table: ${table}, Panel: ${a.panelId}`;
+}
+
+function mapLocation(a: AnomalyDTO): string {
+  return `${a.gps.lat.toFixed(7)}, ${a.gps.lng.toFixed(7)}`;
+}
+
 function exportCSV(rows: AnomalyDTO[], plantName: string) {
-  const header = ["ID","Panel ID","Row","Col","Anomaly Type","Category Code","Defect Type","ΔT (°C)","Severity","Table/String","Inverter","Status","Date","GPS Lat","GPS Lng","Image Ref"];
-  const lines = rows.map(a => [
-    a.id, a.panelId, a.row, a.col, a.type, a.categoryCode ?? "", a.defectType ?? "",
-    a.deltaT ?? "", a.severity, a.string, a.inverter, a.status, a.date,
-    a.gps.lat, a.gps.lng, a.rgbNote ?? "",
+  const header = ["SL No","Block","Layout Location","Map Location","Defect Type","Delta_T","Severity","Status","Date","Image Ref"];
+  const lines = rows.map((a, i) => [
+    i + 1, blockNumber(plantName), layoutLocation(a, plantName), mapLocation(a), a.type,
+    a.deltaTNorm ?? a.deltaT ?? "", SEVERITY_LABEL[a.severity], a.status, a.date, a.rgbNote ?? "",
   ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(","));
   const csv = [header.join(","), ...lines].join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -114,7 +132,7 @@ function AnomalyList() {
               }`}
             >
               <span aria-hidden style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", backgroundColor: SEV_DOT[s], flexShrink: 0 }} />
-              {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
+              {s === "all" ? "All" : SEVERITY_LABEL[s]}
             </button>
           ))}
         </div>
@@ -162,30 +180,33 @@ function AnomalyList() {
           <table className="w-full text-sm">
             <thead className="bg-muted text-[11px] uppercase tracking-widest text-grey-400 border-b border-border">
               <tr>
-                <th className="text-left px-4 py-3 font-semibold">Panel ID</th>
-                <th className="text-left px-4 py-3 font-semibold">Anomaly Type</th>
-                <th className="text-left px-4 py-3 font-semibold">ΔT (norm.)</th>
+                <th className="text-left px-4 py-3 font-semibold">SL No</th>
+                <th className="text-left px-4 py-3 font-semibold">Block</th>
+                <th className="text-left px-4 py-3 font-semibold">Layout Location</th>
+                <th className="text-left px-4 py-3 font-semibold">Map Location</th>
+                <th className="text-left px-4 py-3 font-semibold">Defect Type</th>
+                <th className="text-left px-4 py-3 font-semibold">Delta_T</th>
                 <th className="text-left px-4 py-3 font-semibold">Severity</th>
-                <th className="text-left px-4 py-3 font-semibold">String</th>
                 <th className="text-left px-4 py-3 font-semibold">Status</th>
-                <th className="text-left px-4 py-3 font-semibold">Date</th>
                 <th className="text-right px-4 py-3 font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {rows.map(a => (
+              {rows.map((a, i) => (
                 <tr key={a.id} className="hover:bg-grey-25 transition">
-                  <td className="px-4 py-3 mono font-semibold text-sm">{a.panelId}</td>
+                  <td className="px-4 py-3 mono text-sm text-muted-foreground">{i + 1}</td>
+                  <td className="px-4 py-3 mono text-sm">{blockNumber(plantName)}</td>
+                  <td className="px-4 py-3 mono text-xs">{layoutLocation(a, plantName)}</td>
+                  <td className="px-4 py-3 mono text-xs text-muted-foreground">{mapLocation(a)}</td>
                   <td className="px-4 py-3 text-sm">{a.type}</td>
                   <td className="px-4 py-3 mono font-semibold text-sm">
                     {a.deltaTNorm ? (
-                      <span className="text-critical">+{a.deltaTNorm}°C</span>
+                      <span className="text-critical">{a.deltaTNorm.toFixed(2)}°C</span>
                     ) : a.deltaT ? (
-                      <span className="text-critical">+{a.deltaT}°C</span>
+                      <span className="text-critical">{a.deltaT.toFixed(2)}°C</span>
                     ) : "—"}
                   </td>
                   <td className="px-4 py-3"><SeverityBadge severity={a.severity} /></td>
-                  <td className="px-4 py-3 text-muted-foreground text-sm">{a.string}</td>
                   <td className="px-4 py-3">
                     {canEdit ? (
                       <select
@@ -202,7 +223,6 @@ function AnomalyList() {
                       <StatusBadge status={a.status} />
                     )}
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground text-sm">{a.date}</td>
                   <td className="px-4 py-3 text-right">
                     <Link to="/anomalies/$id" params={{ id: a.id }} className="text-ochre text-xs font-medium hover:underline">
                       View →
@@ -220,19 +240,24 @@ function AnomalyList() {
 
       {/* Mobile cards */}
       <div className="md:hidden space-y-2">
-        {rows.map(a => (
+        {rows.map((a, i) => (
           <Link key={a.id} to="/anomalies/$id" params={{ id: a.id }}
             className="block bg-card border border-border p-4 hover:bg-grey-25 transition">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="mono font-bold text-sm">{a.panelId}</p>
+                <p className="mono text-[11px] text-muted-foreground">SL {i + 1}</p>
+                <p className="mono font-bold text-sm mt-0.5">{layoutLocation(a, plantName)}</p>
                 <p className="text-sm mt-1 text-muted-foreground">{a.type}</p>
               </div>
               <SeverityBadge severity={a.severity} />
             </div>
-            <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
-              {a.deltaT && <span className="mono text-foreground font-semibold">+{a.deltaT}°C</span>}
-              <span>{a.string}</span>
+            <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground flex-wrap">
+              {a.deltaTNorm ? (
+                <span className="mono text-foreground font-semibold">{a.deltaTNorm.toFixed(2)}°C</span>
+              ) : a.deltaT ? (
+                <span className="mono text-foreground font-semibold">{a.deltaT.toFixed(2)}°C</span>
+              ) : null}
+              <span className="mono">{mapLocation(a)}</span>
               <StatusBadge status={a.status} />
             </div>
           </Link>

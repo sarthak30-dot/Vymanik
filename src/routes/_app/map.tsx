@@ -2,9 +2,9 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useMemo, useRef } from "react";
 import {
   X, ArrowRight, MessageCircle, Thermometer, Layers,
-  SplitSquareHorizontal, Navigation, AlertTriangle, Download, Square,
+  SplitSquareHorizontal, Navigation, Download, Map,
 } from "lucide-react";
-import { anomalies, anomalyTypes, plant, severityCounts, type Anomaly, type Severity } from "@/lib/mock-data";
+import { anomalies, anomalyTypes, plant, severityCounts, SEVERITY_LABEL, type Anomaly, type Severity } from "@/lib/mock-data";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { usePlantContext } from "@/lib/plant-context";
 import { buildAnomaliesKML, downloadKML } from "@/lib/kml";
@@ -89,11 +89,14 @@ function SiteMap() {
   const [thermalVisible, setThermalVisible] = useState(false);
   const [rgbVisible, setRgbVisible]         = useState(true);
   const [rgb2Visible, setRgb2Visible]       = useState(true);
-  const [panelsVisible, setPanelsVisible]   = useState(true);
   const [thermalOpacity, setThermalOpacity] = useState(0.75);
   const [rgbOpacity, setRgbOpacity]         = useState(0.90);
   const [rgb2Opacity, setRgb2Opacity]       = useState(0.90);
   const [compareMode, setCompareMode]       = useState(false);
+  // KML View is a standalone mode — surveyed panel outlines on their own,
+  // instead of mixed into the Original/V1/V2 overlay toggles.
+  const [kmlViewMode, setKmlViewMode]       = useState(false);
+  const [kmlOpacity, setKmlOpacity]         = useState(0.45);
   const [splitPct, setSplitPct]             = useState(50);
   const [popup, setPopup]                   = useState<Anomaly | null>(null);
   const [mapError, setMapError]             = useState<string | null>(null);
@@ -116,10 +119,9 @@ function SiteMap() {
     );
   }, [isRajpur, filters, typeFilter, inverterFilter, stringFilter]);
 
-  // Only critical + medium anomalies have reliable per-panel GPS
-  const satelliteMarkers = useMemo(() =>
-    visibleAnomalies.filter(a => a.severity === "critical" || a.severity === "medium"),
-  [visibleAnomalies]);
+  // All anomalies carry surveyed per-panel GPS + footprint data (see mock-data.ts),
+  // so every visible anomaly gets a marker — not just critical/medium.
+  const satelliteMarkers = visibleAnomalies;
 
   // Surveyed panel outlines (Block20_1GV_4.kml) — real footprints, not estimated positions
   const panelOutlinesGeoJSON = useMemo(() => ({
@@ -169,9 +171,9 @@ function SiteMap() {
 
         <div className="space-y-2">
           {([
-            { key: "critical", label: "Critical",  dotColor: SEV_COLOR.critical, count: severityCounts.critical, color: "text-critical" },
-            { key: "medium",   label: "Medium",    dotColor: SEV_COLOR.medium,   count: severityCounts.medium,   color: "text-medium" },
-            { key: "normal",   label: "Normal",    dotColor: SEV_COLOR.normal,   count: severityCounts.normal,   color: "text-normal" },
+            { key: "critical", label: SEVERITY_LABEL.critical, dotColor: SEV_COLOR.critical, count: severityCounts.critical, color: "text-critical" },
+            { key: "medium",   label: SEVERITY_LABEL.medium,   dotColor: SEV_COLOR.medium,   count: severityCounts.medium,   color: "text-medium" },
+            { key: "normal",   label: SEVERITY_LABEL.normal,   dotColor: SEV_COLOR.normal,   count: severityCounts.normal,   color: "text-normal" },
             { key: "nodata",   label: "No Data",   dotColor: "#6b7280",          count: severityCounts.nodata,   color: "text-muted-foreground" },
           ] as const).map(f => (
             <label key={f.key} className="flex items-center gap-3 cursor-pointer py-1.5">
@@ -224,7 +226,7 @@ function SiteMap() {
             {isRajpur && (
               <>
                 <button
-                  onClick={() => setCompareMode(v => !v)}
+                  onClick={() => { setCompareMode(v => !v); setKmlViewMode(false); }}
                   title="Compare thermal vs visual"
                   className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium border transition ${
                     compareMode ? "bg-primary text-white border-primary" : "bg-card text-muted-foreground border-border hover:bg-muted"
@@ -233,7 +235,17 @@ function SiteMap() {
                   <SplitSquareHorizontal size={13} /> Compare
                 </button>
 
-                {!compareMode && (
+                <button
+                  onClick={() => { setKmlViewMode(v => !v); setCompareMode(false); }}
+                  title="View surveyed panel outlines from drone KML on their own, separate from the Original/V1/V2 overlays"
+                  className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium border transition ${
+                    kmlViewMode ? "bg-ochre text-ochre-fg border-ochre" : "bg-card text-muted-foreground border-border hover:bg-muted"
+                  }`}
+                >
+                  <Map size={13} /> KML View
+                </button>
+
+                {!compareMode && !kmlViewMode && (
                   <div className="flex items-center border border-border divide-x divide-border overflow-hidden">
                     <span className="px-2 text-[10px] uppercase tracking-widest text-grey-400 bg-grey-50 h-8 flex items-center">Overlay</span>
                     <button onClick={() => setThermalVisible(v => !v)} className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium transition ${thermalVisible ? "bg-red-600 text-white" : "bg-card text-muted-foreground hover:bg-muted"}`}>
@@ -244,9 +256,6 @@ function SiteMap() {
                     </button>
                     <button onClick={() => setRgb2Visible(v => !v)} className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium transition ${rgb2Visible ? "bg-blue-600 text-white" : "bg-card text-muted-foreground hover:bg-muted"}`}>
                       <Layers size={13} /> V2
-                    </button>
-                    <button onClick={() => setPanelsVisible(v => !v)} title="Surveyed panel outlines from drone KML" className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium transition ${panelsVisible ? "bg-ochre text-ochre-fg" : "bg-card text-muted-foreground hover:bg-muted"}`}>
-                      <Square size={13} /> Panels
                     </button>
                   </div>
                 )}
@@ -377,29 +386,29 @@ function SiteMap() {
                   </Marker>
                 )}
 
-                {/* Drone orthomosaic overlays */}
-                {isRajpur && thermalVisible && (
+                {/* Drone orthomosaic overlays — suppressed in KML View, which shows outlines on their own */}
+                {isRajpur && thermalVisible && !kmlViewMode && (
                   <Source id="thermal" type="image" url="/thermal_block20.png" coordinates={THERMAL_BOUNDS.coordinates}>
                     <Layer id="thermal-layer" type="raster" paint={{ "raster-opacity": thermalOpacity, "raster-fade-duration": 300 }} />
                   </Source>
                 )}
-                {isRajpur && rgbVisible && (
+                {isRajpur && rgbVisible && !kmlViewMode && (
                   <Source id="rgb" type="image" url="/rgb_block20.png" coordinates={RGB_BOUNDS.coordinates}>
                     <Layer id="rgb-layer" type="raster" paint={{ "raster-opacity": rgbOpacity, "raster-fade-duration": 300 }} />
                   </Source>
                 )}
-                {isRajpur && rgb2Visible && (
+                {isRajpur && rgb2Visible && !kmlViewMode && (
                   <Source id="rgb2" type="image" url="/rgb2_block20.png" coordinates={RGB2_BOUNDS.coordinates}>
                     <Layer id="rgb2-layer" type="raster" paint={{ "raster-opacity": rgb2Opacity, "raster-fade-duration": 300 }} />
                   </Source>
                 )}
 
-                {/* Surveyed panel outlines — real footprints from Block20_1GV_4.kml */}
-                {isRajpur && panelsVisible && (
+                {/* Surveyed panel outlines — real footprints from Block20_1GV_4.kml — only in KML View */}
+                {isRajpur && kmlViewMode && (
                   <Source id="panel-outlines" type="geojson" data={panelOutlinesGeoJSON as never}>
                     <Layer id="panel-outlines-fill" type="fill" paint={{
                       "fill-color": ["match", ["get", "severity"], "critical", SEV_COLOR.critical, "medium", SEV_COLOR.medium, "normal", SEV_COLOR.normal, SEV_COLOR.nodata],
-                      "fill-opacity": 0.35,
+                      "fill-opacity": kmlOpacity,
                     }} />
                     <Layer id="panel-outlines-line" type="line" paint={{
                       "line-color": ["match", ["get", "severity"], "critical", SEV_COLOR.critical, "medium", SEV_COLOR.medium, "normal", SEV_COLOR.normal, SEV_COLOR.nodata],
@@ -411,7 +420,8 @@ function SiteMap() {
                 {/* ── Anomaly markers at actual drone-recorded GPS ── */}
                 {isRajpur && satelliteMarkers.map(a => {
                   const isCrit = a.severity === "critical";
-                  const sz = isCrit ? 12 : 9;
+                  const isMed = a.severity === "medium";
+                  const sz = isCrit ? 12 : isMed ? 9 : 7;
                   return (
                     <Marker
                       key={a.id}
@@ -457,7 +467,7 @@ function SiteMap() {
                           color: SEV_COLOR[popup.severity],
                           border: `1px solid ${SEV_COLOR[popup.severity]}44`,
                           textTransform: "uppercase", borderRadius: 2,
-                        }}>{popup.severity}</span>
+                        }}>{SEVERITY_LABEL[popup.severity]}</span>
                       </div>
                       <p className="text-xs text-muted-foreground">{popup.type}</p>
                       <p className="text-[10px] text-muted-foreground mono mt-1.5">
@@ -484,6 +494,13 @@ function SiteMap() {
                 )}
               </MapGL>
 
+              {/* KML View mode badge */}
+              {isRajpur && kmlViewMode && (
+                <div className="absolute top-2 left-2 bg-ochre text-ochre-fg text-[10px] font-bold mono px-2 py-0.5 flex items-center gap-1 z-10">
+                  <Map size={10} /> KML VIEW — SURVEYED PANEL OUTLINES
+                </div>
+              )}
+
               {/* Map load error — surfaces silent Mapbox tile/imagery failures instead of a blank map */}
               {mapError && (
                 <div className="absolute inset-x-3 top-3 z-30 bg-red-50 border border-red-300 text-red-800 px-3 py-2 text-xs shadow max-w-md">
@@ -492,28 +509,19 @@ function SiteMap() {
                 </div>
               )}
 
-              {/* GPS source disclaimer */}
-              <div className="absolute top-3 left-3 bg-card/95 border border-amber-500/40 px-3 py-2 text-xs max-w-[260px] shadow backdrop-blur-sm">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle size={13} className="text-amber-500 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="font-semibold text-foreground">Drone GPS coordinates</p>
-                    <p className="text-muted-foreground mt-0.5">
-                      Markers use recorded flight GPS from the drone flight log, not computed grid math — positions may be a few meters off.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
               {/* Satellite legend */}
               <div className="absolute bottom-4 left-4 bg-card/95 border border-border px-3 py-2 text-xs space-y-1.5 shadow backdrop-blur-sm">
-                {([{ l: "Critical", s: "critical" }, { l: "Medium", s: "medium" }] as const).map(({ l, s }) => (
+                {([
+                  { l: SEVERITY_LABEL.critical, s: "critical" },
+                  { l: SEVERITY_LABEL.medium, s: "medium" },
+                  { l: SEVERITY_LABEL.normal, s: "normal" },
+                ] as const).map(({ l, s }) => (
                   <div key={s} className="flex items-center gap-2">
                     <span style={{ width: 10, height: 10, borderRadius: "50%", display: "inline-block", backgroundColor: SEV_COLOR[s], border: "1.5px solid white", boxShadow: "0 0 0 1px rgba(0,0,0,0.2)" }} />
                     <span>{l}</span>
                   </div>
                 ))}
-                {isRajpur && thermalVisible && (
+                {isRajpur && thermalVisible && !kmlViewMode && (
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">
                     <div className="flex items-center gap-1.5 text-red-500 font-medium"><Thermometer size={11} /> Thermal IR</div>
                     <div className="flex items-center gap-2">
@@ -523,7 +531,7 @@ function SiteMap() {
                     </div>
                   </div>
                 )}
-                {isRajpur && rgbVisible && (
+                {isRajpur && rgbVisible && !kmlViewMode && (
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">
                     <div className="flex items-center gap-1.5 text-emerald-600 font-medium"><Layers size={11} /> Visual V1 (east)</div>
                     <div className="flex items-center gap-2">
@@ -533,13 +541,26 @@ function SiteMap() {
                     </div>
                   </div>
                 )}
-                {isRajpur && rgb2Visible && (
+                {isRajpur && rgb2Visible && !kmlViewMode && (
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">
                     <div className="flex items-center gap-1.5 text-blue-600 font-medium"><Layers size={11} /> Visual V2 (west)</div>
                     <div className="flex items-center gap-2">
                       <span className="text-muted-foreground">Opacity</span>
                       <input type="range" min={0.2} max={1} step={0.05} value={rgb2Opacity} onChange={e => setRgb2Opacity(Number(e.target.value))} className="w-20 accent-blue-600" />
                       <span className="mono text-muted-foreground">{Math.round(rgb2Opacity * 100)}%</span>
+                    </div>
+                  </div>
+                )}
+                {isRajpur && kmlViewMode && (
+                  <div className="pt-1.5 border-t border-grey-200 space-y-1">
+                    <div className="flex items-center gap-1.5 text-ochre font-medium"><Map size={11} /> KML — Surveyed Panels</div>
+                    <p className="text-[10px] text-muted-foreground">
+                      {panelOutlinesGeoJSON.features.length} outlines from Block20_1GV_4.kml
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground">Fill opacity</span>
+                      <input type="range" min={0.1} max={1} step={0.05} value={kmlOpacity} onChange={e => setKmlOpacity(Number(e.target.value))} className="w-20 accent-ochre" />
+                      <span className="mono text-muted-foreground">{Math.round(kmlOpacity * 100)}%</span>
                     </div>
                   </div>
                 )}

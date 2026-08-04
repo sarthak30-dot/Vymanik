@@ -3,7 +3,7 @@ import { useState } from "react";
 import { ArrowLeft, MessageCircle, Download, Mail, MapPin, Check, Wrench, Loader2, ExternalLink, Navigation } from "lucide-react";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { useAnomaly, usePatchAnomaly } from "@/lib/queries";
-import { anomalyTypeDefs, plant } from "@/lib/mock-data";
+import { anomalyTypeDefs, plant, SEVERITY_LABEL } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 
 export const Route = createFileRoute("/_app/anomalies/$id")({
@@ -51,7 +51,7 @@ function AnomalyDetail() {
 Plant: ${plant.name}
 Panel: ${anomaly.panelId} (Row ${anomaly.row}, Module ${anomaly.col})
 Type: ${anomaly.type}${anomaly.deltaT ? ` | ΔT: +${anomaly.deltaT}°C` : ""}
-Severity: ${anomaly.severity.toUpperCase()}
+Severity: ${SEVERITY_LABEL[anomaly.severity]}
 Action: ${actionText}
 GPS: ${anomaly.gps.lat}°N, ${anomaly.gps.lng}°E
 Navigate: https://www.google.com/maps?q=${anomaly.gps.lat},${anomaly.gps.lng}

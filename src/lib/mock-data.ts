@@ -1,6 +1,17 @@
 export type Severity = "critical" | "medium" | "normal" | "nodata";
 export type Status = "New" | "Acknowledged" | "In Repair" | "Closed";
 
+// IEC 62446-3 Category of Anomaly (COA) labels — matches the inspection report's
+// severity taxonomy. Internal rank keys (critical/medium/normal/nodata) are kept
+// unchanged everywhere else so sorting, filtering, colors, and the API contract
+// don't need to change — only the displayed label does.
+export const SEVERITY_LABEL: Record<Severity, string> = {
+  critical: "COA3",
+  medium:   "COA2",
+  normal:   "COA1",
+  nodata:   "—",
+};
+
 export type RootCause =
   | "Manufacturing defect"
   | "Wiring / connector fault"
