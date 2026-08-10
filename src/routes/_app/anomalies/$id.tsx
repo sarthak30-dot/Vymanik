@@ -5,6 +5,7 @@ import { SeverityBadge } from "@/components/SeverityBadge";
 import { useAnomaly, usePatchAnomaly } from "@/lib/queries";
 import { anomalyTypeDefs, plant, SEVERITY_LABEL } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
+import { parseDefectImage } from "@/lib/defect-image";
 
 export const Route = createFileRoute("/_app/anomalies/$id")({
   head: () => ({ meta: [{ title: "Anomaly Detail — UrjaScan" }] }),
@@ -261,16 +262,8 @@ function Detail({ label, value, mono, critical, tooltip, extra }: { label: strin
   );
 }
 
-// Parse "Image: 7531.JPG (pos a)" → { filename: "7531.jpg", pos: "a" }
-function parseImageRef(note: string): { filename: string | null; pos: "a" | "b" | null } {
-  const fname = note.match(/Image:\s*([\w.-]+\.JPG)/i)?.[1] ?? null;
-  const pos   = (note.match(/\(pos ([ab])\)/)?.[1] ?? null) as "a" | "b" | null;
-  return { filename: fname ? fname.toLowerCase() : null, pos };
-}
-
 function ThermalImage({ note, peak, deltaT }: { note: string; peak: number; deltaT: number | null }) {
-  const { filename, pos } = parseImageRef(note);
-  const src = filename ? `/defimages/${filename}` : null;
+  const { filename, pos, src } = parseDefectImage(note);
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
 
@@ -345,8 +338,10 @@ function ThermalImage({ note, peak, deltaT }: { note: string; peak: number; delt
 }
 
 function RgbImage({ note }: { note: string }) {
-  const { filename, pos } = parseImageRef(note);
-  // Try to load the per-panel RGB image; fall back to the block orthomosaic
+  const { filename, pos } = parseDefectImage(note);
+  // Try to load the per-panel RGB image; fall back to the block orthomosaic.
+  // NB: public/rgbimages/ does not exist in this build — only the thermal frames
+  // (public/defimages) were delivered — so this always takes the fallback path.
   const src = filename ? `/rgbimages/${filename}` : null;
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);

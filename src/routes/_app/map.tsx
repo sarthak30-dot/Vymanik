@@ -8,6 +8,7 @@ import { anomalies, anomalyTypes, plant, severityCounts, SEVERITY_LABEL, type An
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { usePlantContext } from "@/lib/plant-context";
 import { buildAnomaliesKML, downloadKML } from "@/lib/kml";
+import { parseDefectImage } from "@/lib/defect-image";
 import MapGL, {
   Marker, Popup, Source, Layer, NavigationControl,
   type MapRef, type ViewState,
@@ -17,10 +18,29 @@ import "mapbox-gl/dist/mapbox-gl.css";
 
 // ─── Drone orthomosaic bounds (correctly georeferenced) ───────────────────────
 
+// Exporting the orthomosaic to PNG discarded its georeferencing — a GeoTIFF holds
+// tie-points in its tags, a PNG has nowhere to put them. The usual fallback of
+// matching the raster against satellite imagery is unavailable too: Maxar's
+// coverage of this site predates construction, so the basemap here is bare scrub
+// with no array to align to.
+//
+// These corners are therefore *solved*, not measured — see
+// scripts/fit_thermal_bounds.py. It registers the raster against the only ground
+// truth available, the 347 surveyed defect coordinates, under two physical
+// constraints: an orthomosaic has square ground pixels, and 347 defects spread
+// over 224 of the 733 racks must span substantially the whole array. The fit puts
+// 87% of defect coordinates on a data pixel at 0.5625 m/px.
+//
+// The previous corners spanned 917 x 775 m against a true footprint of 575 x 431 m
+// — the raster was blown up ~1.6x per axis and offset, which is why the array in
+// the overlay never lined up with the anomaly markers drawn on top of it.
+//
+// Accurate to roughly a panel row. Replace with the GeoTIFF tie-points the moment
+// the .tif surfaces; do not hand-nudge these.
 const THERMAL_BOUNDS = {
   coordinates: [
-    [73.033843, 28.261343], [73.043200, 28.261343],
-    [73.043200, 28.254336], [73.033843, 28.254336],
+    [73.036467, 28.258982], [73.042336, 28.258982],
+    [73.042336, 28.255081], [73.036467, 28.255081],
   ] as [[number,number],[number,number],[number,number],[number,number]],
 };
 const RGB_BOUNDS = {
@@ -66,6 +86,47 @@ const BLANK_BASEMAP_STYLE = {
 const PANEL_DOT_MAX_ZOOM  = 18.5;
 const PANEL_FILL_MIN_ZOOM = 19.5;
 
+// Dot geometry, sized against the module rather than picked by eye.
+//
+// Ground resolution at this latitude is 156543.03 * cos(28.2568°) / 2^zoom, i.e.
+// 137_850 / 2^zoom m/px. A module is 1.19 m across, so the radius that makes a dot
+// exactly fill the tile it marks is 0.5 * 1.19 * 2^zoom / 137_850:
+//
+//     z17 -> 0.57 px    z18 -> 1.13 px    z19 -> 2.26 px    z19.5 -> 3.20 px
+//
+// Below ~z18 that is sub-pixel, so a to-scale dot would simply not render. The
+// ramp below tracks module width at the top of the range — where the dot is about
+// to hand over to the real KML footprint and being to-scale actually matters — and
+// floors at ~1.4 px lower down, where the dot stops claiming to be the panel and
+// is only a locator. Note circle-stroke-width extends *outward* from the radius,
+// so drawn width is 2 * (radius + stroke); the stroke is kept hairline because it
+// was previously adding 3.5 px to a 12 px dot.
+// Critical stays a touch larger so triage still reads at a glance; even at 1.25x
+// this is ~2.7x narrower than the 15.5 px the layer drew before.
+//
+// The severity scale is applied per stop rather than as ["*", scale, ramp]:
+// Mapbox requires a "zoom" expression to be the outermost expression of a paint
+// property, because it evaluates the property once per integer zoom and
+// interpolates between those results — which it cannot do if the zoom curve is
+// nested inside an arithmetic operator. Nesting it throws
+// "zoom expression may only be used as input to a top-level step or interpolate"
+// and drops the whole layer.
+const dotRadius = (px: number): ExpressionSpecification =>
+  ["match", ["get", "severity"], "critical", px * 1.25, "medium", px * 1.1, px];
+
+const DOT_RADIUS_BY_ZOOM: ExpressionSpecification = [
+  "interpolate", ["exponential", 2], ["zoom"],
+  14,   dotRadius(1.4),
+  17,   dotRadius(1.8),
+  18.5, dotRadius(2.2),
+  19.5, dotRadius(2.6),
+];
+const DOT_STROKE_BY_ZOOM: ExpressionSpecification = [
+  "interpolate", ["linear"], ["zoom"],
+  14, 0.5,
+  19, 0.8,
+];
+
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string;
 
 // Approximate plant boundary for the satellite overview polygon
@@ -94,6 +155,25 @@ function buildWhatsAppLink(a: Anomaly, plantName: string) {
   return `https://wa.me/?text=${encodeURIComponent(msg)}`;
 }
 
+/** Defect frame thumbnail for the map popup. Renders nothing when the anomaly has
+ *  no frame, or when the file 404s — a broken-image icon in a popup reads as a bug
+ *  to a client, whereas an absent thumbnail just reads as "no photo for this one".
+ *  229 frames cover 347 anomalies, so a miss is normal rather than exceptional. */
+function PopupDefectImage({ note }: { note: string }) {
+  const { filename, src } = parseDefectImage(note);
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return null;
+  return (
+    <img
+      src={src}
+      alt={`Thermal defect frame ${filename}`}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="w-full aspect-[4/3] object-cover bg-black mb-2 border border-grey-200"
+    />
+  );
+}
+
 // ─── Route ───────────────────────────────────────────────────────────────────
 
 export const Route = createFileRoute("/_app/map")({
@@ -118,8 +198,17 @@ function SiteMap() {
 
   // Satellite state
   const [thermalVisible, setThermalVisible] = useState(false);
-  const [rgbVisible, setRgbVisible]         = useState(true);
-  const [rgb2Visible, setRgb2Visible]       = useState(true);
+  // V1/V2 default to off. Their corner coordinates were never derived from source
+  // georeferencing and do not survive checking: only 26.5% of surveyed defects land
+  // on a panel pixel in V1, against 25.1% expected from random placement — i.e. the
+  // registration carries no information. Re-fitting against the defect coordinates
+  // (scripts/fit_thermal_bounds.py, same method) only reaches ~51%, enough to show
+  // signal but not enough to trust at panel accuracy, so the bounds are left alone
+  // rather than replaced with a different wrong number. The layers stay available
+  // behind their toggles; they just no longer load misaligned on top of a corrected
+  // thermal. Fix properly by re-exporting these as GeoTIFF and reading the tie-points.
+  const [rgbVisible, setRgbVisible]         = useState(false);
+  const [rgb2Visible, setRgb2Visible]       = useState(false);
   const [thermalOpacity, setThermalOpacity] = useState(1);
   const [hideBasemap, setHideBasemap]       = useState(false);
   const [hoveringAnomaly, setHoveringAnomaly] = useState(false);
@@ -491,9 +580,9 @@ function SiteMap() {
                     <Source id="anomaly-points" type="geojson" data={anomalyPointsGeoJSON as never}>
                       <Layer id="anomaly-dot" type="circle" paint={{
                         "circle-color": severityColour,
-                        "circle-radius": ["match", ["get", "severity"], "critical", 6, "medium", 4.5, 3.5],
+                        "circle-radius": DOT_RADIUS_BY_ZOOM,
                         "circle-stroke-color": "#ffffff",
-                        "circle-stroke-width": ["match", ["get", "severity"], "critical", 1.75, 1.25],
+                        "circle-stroke-width": DOT_STROKE_BY_ZOOM,
                         // Hands over to the panel fill rather than stacking on top of it.
                         "circle-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 1, PANEL_FILL_MIN_ZOOM, 0],
                         "circle-stroke-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 1, PANEL_FILL_MIN_ZOOM, 0],
@@ -557,7 +646,12 @@ function SiteMap() {
                     onClose={() => setPopup(null)}
                     style={{ padding: 0 }}
                   >
-                    <div className="p-3 min-w-[210px] text-sm font-sans">
+                    <div className="p-3 min-w-[210px] max-w-[240px] text-sm font-sans">
+                      {/* The radiometric frame the defect was called from. Shown inline
+                          because the map is where a client asks "what's actually wrong
+                          with that panel?", and sending them to the detail route to find
+                          out loses the spatial context they just clicked. */}
+                      <PopupDefectImage note={popup.rgbNote} />
                       <div className="flex items-start justify-between gap-2 mb-1">
                         <p className="mono font-bold">{popup.panelId}</p>
                         <span style={{
