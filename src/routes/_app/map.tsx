@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useMemo, useRef } from "react";
 import {
   X, ArrowRight, MessageCircle, Thermometer, Layers,
-  SplitSquareHorizontal, Navigation, Download, Map,
+  SplitSquareHorizontal, Navigation, Download, Map as MapIcon,
 } from "lucide-react";
 import { anomalies, anomalyTypes, plant, severityCounts, SEVERITY_LABEL, type Anomaly, type Severity } from "@/lib/mock-data";
 import { SeverityBadge } from "@/components/SeverityBadge";
@@ -12,6 +12,7 @@ import MapGL, {
   Marker, Popup, Source, Layer, NavigationControl,
   type MapRef, type ViewState,
 } from "react-map-gl/mapbox";
+import type { ExpressionSpecification } from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 
 // ─── Drone orthomosaic bounds (correctly georeferenced) ───────────────────────
@@ -34,6 +35,36 @@ const RGB2_BOUNDS = {
     [73.041713, 28.256497], [73.035136, 28.256497],
   ] as [[number,number],[number,number],[number,number],[number,number]],
 };
+
+// The raw stitcher output letterboxes the flight footprint onto a white canvas,
+// and a Mapbox image source georeferences that filler right along with the data —
+// which is why the overlay used to sit on the satellite view as an opaque box.
+// scripts/clean_orthomosaic.py alpha-cuts the filler, upscales 2x and sharpens.
+// Canvas proportions are preserved, so THERMAL_BOUNDS still applies unchanged.
+const THERMAL_IMAGE = "/thermal_block20_clean.png";
+
+// Applied to the thermal raster on top of the per-layer opacity. Range is -1..1
+// for both; 0 is untouched source. See the tuning note in the legend panel below.
+const THERMAL_CONTRAST   = 0.15;
+const THERMAL_SATURATION = 0.2;
+
+// Used when "Hide basemap" is on. Declaring a minimal style object instead of a
+// mapbox:// URL means no satellite tiles are requested at all, so the thermal
+// raster and the anomaly markers are the only things drawn.
+const BLANK_BASEMAP_STYLE = {
+  version: 8 as const,
+  sources: {},
+  layers: [{ id: "blank", type: "background" as const, paint: { "background-color": "#07070b" } }],
+};
+
+// A surveyed module is 1.19 m x 2.29 m. Map resolution at this latitude works out
+// to ~1.05 m/px at z17, so on the default overview a panel covers roughly 1x2
+// pixels — far too small to see, which is why anomalies are drawn as fixed-size
+// dots there. By z19.5 a panel is ~9x17 px and can carry its own true outline, so
+// the dots hand over to the real KML footprints across this range. The dot is a
+// locator; the footprint is the measurement.
+const PANEL_DOT_MAX_ZOOM  = 18.5;
+const PANEL_FILL_MIN_ZOOM = 19.5;
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string;
 
@@ -89,7 +120,9 @@ function SiteMap() {
   const [thermalVisible, setThermalVisible] = useState(false);
   const [rgbVisible, setRgbVisible]         = useState(true);
   const [rgb2Visible, setRgb2Visible]       = useState(true);
-  const [thermalOpacity, setThermalOpacity] = useState(0.75);
+  const [thermalOpacity, setThermalOpacity] = useState(1);
+  const [hideBasemap, setHideBasemap]       = useState(false);
+  const [hoveringAnomaly, setHoveringAnomaly] = useState(false);
   const [rgbOpacity, setRgbOpacity]         = useState(0.90);
   const [rgb2Opacity, setRgb2Opacity]       = useState(0.90);
   const [compareMode, setCompareMode]       = useState(false);
@@ -119,11 +152,8 @@ function SiteMap() {
     );
   }, [isRajpur, filters, typeFilter, inverterFilter, stringFilter]);
 
-  // All anomalies carry surveyed per-panel GPS + footprint data (see mock-data.ts),
-  // so every visible anomaly gets a marker — not just critical/medium.
-  const satelliteMarkers = visibleAnomalies;
-
-  // Surveyed panel outlines (Block20_1GV_4.kml) — real footprints, not estimated positions
+  // Surveyed panel outlines (Block20_1GV_4.kml) — real footprints, not estimated positions.
+  // Drives both the zoom-in panel fills on the satellite view and KML View.
   const panelOutlinesGeoJSON = useMemo(() => ({
     type: "FeatureCollection" as const,
     features: visibleAnomalies
@@ -131,9 +161,35 @@ function SiteMap() {
       .map(a => ({
         type: "Feature" as const,
         geometry: { type: "Polygon" as const, coordinates: [a.footprint!] },
-        properties: { severity: a.severity },
+        properties: { severity: a.severity, anomalyId: a.id },
       })),
   }), [visibleAnomalies]);
+
+  // Centroid points for the zoomed-out dots. Kept as a separate collection because
+  // a Mapbox `circle` layer drawn over polygon features would put a circle on every
+  // vertex of the footprint rather than one at its centre.
+  const anomalyPointsGeoJSON = useMemo(() => ({
+    type: "FeatureCollection" as const,
+    features: visibleAnomalies.map(a => ({
+      type: "Feature" as const,
+      geometry: { type: "Point" as const, coordinates: [a.gps.lng, a.gps.lat] },
+      properties: { severity: a.severity, anomalyId: a.id },
+    })),
+  }), [visibleAnomalies]);
+
+  const anomalyById = useMemo(
+    () => new Map(anomalies.map(a => [a.id, a])),
+    [],
+  );
+
+  // Shared by the dot, fill and outline layers so one severity palette drives all three.
+  const severityColour: ExpressionSpecification = [
+    "match", ["get", "severity"],
+    "critical", SEV_COLOR.critical,
+    "medium",   SEV_COLOR.medium,
+    "normal",   SEV_COLOR.normal,
+    SEV_COLOR.nodata,
+  ];
 
   const uniqueInverters = useMemo(() =>
     ["all", ...Array.from(new Set(anomalies.map(a => a.inverter))).sort()], []);
@@ -242,7 +298,7 @@ function SiteMap() {
                     kmlViewMode ? "bg-ochre text-ochre-fg border-ochre" : "bg-card text-muted-foreground border-border hover:bg-muted"
                   }`}
                 >
-                  <Map size={13} /> KML View
+                  <MapIcon size={13} /> KML View
                 </button>
 
                 {!compareMode && !kmlViewMode && (
@@ -301,8 +357,13 @@ function SiteMap() {
                   style={{ width: "100%", height: "100%" }}
                   mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
                 >
-                  <Source id="cmp-thermal" type="image" url="/thermal_block20.png" coordinates={THERMAL_BOUNDS.coordinates}>
-                    <Layer id="cmp-thermal-layer" type="raster" paint={{ "raster-opacity": 0.85 }} />
+                  <Source id="cmp-thermal" type="image" url={THERMAL_IMAGE} coordinates={THERMAL_BOUNDS.coordinates}>
+                    <Layer id="cmp-thermal-layer" type="raster" paint={{
+                      "raster-opacity": 1,
+                      "raster-resampling": "nearest",
+                      "raster-contrast": THERMAL_CONTRAST,
+                      "raster-saturation": THERMAL_SATURATION,
+                    }} />
                   </Source>
                 </MapGL>
                 <div className="absolute top-2 left-2 bg-red-600 text-white text-[10px] font-bold mono px-2 py-0.5 flex items-center gap-1">
@@ -353,8 +414,24 @@ function SiteMap() {
                 initialViewState={{ longitude: 73.0385, latitude: 28.2568, zoom: isRajpur ? 17 : 14 }}
                 key={selectedPlant.id}
                 style={{ width: "100%", height: "100%" }}
-                mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
-                onClick={() => { setPopup(null); }}
+                mapStyle={thermalVisible && hideBasemap && !kmlViewMode
+                  ? BLANK_BASEMAP_STYLE
+                  : "mapbox://styles/mapbox/satellite-streets-v12"}
+                interactiveLayerIds={isRajpur && !kmlViewMode ? ["anomaly-dot", "anomaly-panel-fill"] : undefined}
+                cursor={hoveringAnomaly ? "pointer" : undefined}
+                onMouseEnter={() => setHoveringAnomaly(true)}
+                onMouseLeave={() => setHoveringAnomaly(false)}
+                onClick={e => {
+                  // With interactiveLayerIds set, a click that landed on an anomaly
+                  // arrives with the hit features attached; anything else is a click
+                  // on empty map and should dismiss the popup.
+                  const hit = e.features?.[0];
+                  const anomaly = hit && anomalyById.get(String(hit.properties?.anomalyId));
+                  if (!anomaly) { setPopup(null); return; }
+                  setSelected(anomaly);
+                  setPopup(anomaly);
+                  mapRef.current?.flyTo({ center: [anomaly.gps.lng, anomaly.gps.lat], zoom: 20, duration: 700 });
+                }}
                 onLoad={() => setMapError(null)}
                 onError={e => {
                   console.error("Mapbox load error:", e.error);
@@ -386,20 +463,72 @@ function SiteMap() {
                   </Marker>
                 )}
 
-                {/* Drone orthomosaic overlays — suppressed in KML View, which shows outlines on their own */}
+                {/* ── Anomalies at actual drone-recorded GPS ──
+                    Drawn as map layers rather than <Marker> elements. A Marker is an
+                    HTML div sized in screen pixels, so it never scales with zoom — a
+                    12px dot sits ~11x wider than the 1.19m module it marks and spills
+                    across neighbouring tiles. These layers interpolate on zoom, so the
+                    indicator becomes the panel itself once a panel is big enough to see.
+
+                    Mounted BEFORE the orthomosaic overlays on purpose: Mapbox appends
+                    each new layer to the top of the stack, so an overlay toggled on
+                    later would otherwise bury the anomalies. Declaring these first
+                    gives the rasters below a stable `beforeId` to insert beneath. */}
+                {isRajpur && !kmlViewMode && (
+                  <>
+                    <Source id="anomaly-panels" type="geojson" data={panelOutlinesGeoJSON as never}>
+                      <Layer id="anomaly-panel-fill" type="fill" paint={{
+                        "fill-color": severityColour,
+                        "fill-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 0, PANEL_FILL_MIN_ZOOM, 0.75],
+                      }} />
+                      <Layer id="anomaly-panel-line" type="line" paint={{
+                        "line-color": severityColour,
+                        "line-width": 1.5,
+                        "line-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 0, PANEL_FILL_MIN_ZOOM, 1],
+                      }} />
+                    </Source>
+
+                    <Source id="anomaly-points" type="geojson" data={anomalyPointsGeoJSON as never}>
+                      <Layer id="anomaly-dot" type="circle" paint={{
+                        "circle-color": severityColour,
+                        "circle-radius": ["match", ["get", "severity"], "critical", 6, "medium", 4.5, 3.5],
+                        "circle-stroke-color": "#ffffff",
+                        "circle-stroke-width": ["match", ["get", "severity"], "critical", 1.75, 1.25],
+                        // Hands over to the panel fill rather than stacking on top of it.
+                        "circle-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 1, PANEL_FILL_MIN_ZOOM, 0],
+                        "circle-stroke-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 1, PANEL_FILL_MIN_ZOOM, 0],
+                      }} />
+                    </Source>
+                  </>
+                )}
+
+                {/* Drone orthomosaic overlays — suppressed in KML View, which shows outlines on their own.
+                    `beforeId` keeps them underneath the anomaly layers no matter what order
+                    the user toggles IR / V1 / V2 in. */}
                 {isRajpur && thermalVisible && !kmlViewMode && (
-                  <Source id="thermal" type="image" url="/thermal_block20.png" coordinates={THERMAL_BOUNDS.coordinates}>
-                    <Layer id="thermal-layer" type="raster" paint={{ "raster-opacity": thermalOpacity, "raster-fade-duration": 300 }} />
+                  <Source id="thermal" type="image" url={THERMAL_IMAGE} coordinates={THERMAL_BOUNDS.coordinates}>
+                    <Layer id="thermal-layer" type="raster" beforeId="anomaly-panel-fill" paint={{
+                      "raster-opacity": thermalOpacity,
+                      // The site is ~900 m across, so past roughly z18 the map is
+                      // magnifying the raster beyond 1:1. Mapbox defaults to
+                      // "linear", which blends neighbouring panel rows together
+                      // exactly when you have zoomed in to inspect them; "nearest"
+                      // keeps the row/gap boundaries hard.
+                      "raster-resampling": "nearest",
+                      "raster-contrast": THERMAL_CONTRAST,
+                      "raster-saturation": THERMAL_SATURATION,
+                      "raster-fade-duration": 300,
+                    }} />
                   </Source>
                 )}
                 {isRajpur && rgbVisible && !kmlViewMode && (
                   <Source id="rgb" type="image" url="/rgb_block20.png" coordinates={RGB_BOUNDS.coordinates}>
-                    <Layer id="rgb-layer" type="raster" paint={{ "raster-opacity": rgbOpacity, "raster-fade-duration": 300 }} />
+                    <Layer id="rgb-layer" type="raster" beforeId="anomaly-panel-fill" paint={{ "raster-opacity": rgbOpacity, "raster-fade-duration": 300 }} />
                   </Source>
                 )}
                 {isRajpur && rgb2Visible && !kmlViewMode && (
                   <Source id="rgb2" type="image" url="/rgb2_block20.png" coordinates={RGB2_BOUNDS.coordinates}>
-                    <Layer id="rgb2-layer" type="raster" paint={{ "raster-opacity": rgb2Opacity, "raster-fade-duration": 300 }} />
+                    <Layer id="rgb2-layer" type="raster" beforeId="anomaly-panel-fill" paint={{ "raster-opacity": rgb2Opacity, "raster-fade-duration": 300 }} />
                   </Source>
                 )}
 
@@ -416,36 +545,6 @@ function SiteMap() {
                     }} />
                   </Source>
                 )}
-
-                {/* ── Anomaly markers at actual drone-recorded GPS ── */}
-                {isRajpur && satelliteMarkers.map(a => {
-                  const isCrit = a.severity === "critical";
-                  const isMed = a.severity === "medium";
-                  const sz = isCrit ? 12 : isMed ? 9 : 7;
-                  return (
-                    <Marker
-                      key={a.id}
-                      longitude={a.gps.lng}
-                      latitude={a.gps.lat}
-                      anchor="center"
-                      onClick={e => {
-                        e.originalEvent.stopPropagation();
-                        setSelected(a);
-                        setPopup(a);
-                        mapRef.current?.flyTo({ center: [a.gps.lng, a.gps.lat], zoom: 20, duration: 700 });
-                      }}
-                    >
-                      <div style={{
-                        width: sz, height: sz,
-                        borderRadius: "50%",
-                        backgroundColor: SEV_COLOR[a.severity],
-                        border: `${isCrit ? 2.5 : 2}px solid white`,
-                        boxShadow: `0 1px ${isCrit ? 8 : 5}px ${SEV_COLOR[a.severity]}99`,
-                        cursor: "pointer",
-                      }} />
-                    </Marker>
-                  );
-                })}
 
                 {/* Popup for selected anomaly */}
                 {popup && (
@@ -497,7 +596,7 @@ function SiteMap() {
               {/* KML View mode badge */}
               {isRajpur && kmlViewMode && (
                 <div className="absolute top-2 left-2 bg-ochre text-ochre-fg text-[10px] font-bold mono px-2 py-0.5 flex items-center gap-1 z-10">
-                  <Map size={10} /> KML VIEW — SURVEYED PANEL OUTLINES
+                  <MapIcon size={10} /> KML VIEW — SURVEYED PANEL OUTLINES
                 </div>
               )}
 
@@ -529,6 +628,15 @@ function SiteMap() {
                       <input type="range" min={0.2} max={1} step={0.05} value={thermalOpacity} onChange={e => setThermalOpacity(Number(e.target.value))} className="w-20 accent-red-600" />
                       <span className="mono text-muted-foreground">{Math.round(thermalOpacity * 100)}%</span>
                     </div>
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={hideBasemap}
+                        onChange={e => setHideBasemap(e.target.checked)}
+                        className="accent-red-600"
+                      />
+                      <span className="text-muted-foreground">Hide basemap</span>
+                    </label>
                   </div>
                 )}
                 {isRajpur && rgbVisible && !kmlViewMode && (
@@ -553,7 +661,7 @@ function SiteMap() {
                 )}
                 {isRajpur && kmlViewMode && (
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">
-                    <div className="flex items-center gap-1.5 text-ochre font-medium"><Map size={11} /> KML — Surveyed Panels</div>
+                    <div className="flex items-center gap-1.5 text-ochre font-medium"><MapIcon size={11} /> KML — Surveyed Panels</div>
                     <p className="text-[10px] text-muted-foreground">
                       {panelOutlinesGeoJSON.features.length} outlines from Block20_1GV_4.kml
                     </p>
