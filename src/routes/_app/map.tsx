@@ -1,14 +1,23 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import {
   X, ArrowRight, MessageCircle, Thermometer, Layers,
   SplitSquareHorizontal, Navigation, Download, Map as MapIcon,
+  Crosshair, RotateCcw, Copy, EyeOff,
 } from "lucide-react";
 import { anomalies, anomalyTypes, plant, severityCounts, SEVERITY_LABEL, type Anomaly, type Severity } from "@/lib/mock-data";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { usePlantContext } from "@/lib/plant-context";
 import { buildAnomaliesKML, downloadKML } from "@/lib/kml";
 import { parseDefectImage } from "@/lib/defect-image";
+import {
+  OVERLAYS, IDENTITY, cornersFor, loadPlacements, savePlacements, toSourceSnippet,
+  type Placement,
+} from "@/lib/overlay-registration";
+import {
+  loadRasterMask, makeCoverageTest, scorePlacement,
+  type RasterMask, type AlignmentScore,
+} from "@/lib/overlay-coverage";
 import MapGL, {
   Marker, Popup, Source, Layer, NavigationControl,
   type MapRef, type ViewState,
@@ -16,52 +25,46 @@ import MapGL, {
 import type { ExpressionSpecification } from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 
-// ─── Drone orthomosaic bounds (correctly georeferenced) ───────────────────────
+// ─── Drone orthomosaic placement ──────────────────────────────────────────────
 
-// Exporting the orthomosaic to PNG discarded its georeferencing — a GeoTIFF holds
-// tie-points in its tags, a PNG has nowhere to put them. The usual fallback of
-// matching the raster against satellite imagery is unavailable too: Maxar's
-// coverage of this site predates construction, so the basemap here is bare scrub
-// with no array to align to.
+// Corners now live in src/lib/overlay-registration.ts, as a baseline rectangle
+// plus an operator-adjustable similarity transform. They moved out of here
+// because a hardcoded constant cannot be corrected without a redeploy, and these
+// corners are not measurements — they are the best available guess.
 //
-// These corners are therefore *solved*, not measured — see
-// scripts/fit_thermal_bounds.py. It registers the raster against the only ground
-// truth available, the 347 surveyed defect coordinates, under two physical
-// constraints: an orthomosaic has square ground pixels, and 347 defects spread
-// over 224 of the 733 racks must span substantially the whole array. The fit puts
-// 87% of defect coordinates on a data pixel at 0.5625 m/px.
+// Why they can only ever be a guess: exporting the orthomosaic to PNG discarded
+// its georeferencing (a GeoTIFF holds tie-points in its tags, a PNG has nowhere to
+// put them), and the usual fallback of matching the raster against satellite
+// imagery is closed too, because Maxar's coverage of this site predates
+// construction — the basemap is bare scrub with no array to align to.
 //
-// The previous corners spanned 917 x 775 m against a true footprint of 575 x 431 m
-// — the raster was blown up ~1.6x per axis and offset, which is why the array in
-// the overlay never lined up with the anomaly markers drawn on top of it.
+// scripts/fit_thermal_bounds.py recovered the thermal baseline by fitting against
+// the 347 surveyed defect coordinates and reached 87% of them on a data pixel.
+// That is the ceiling, not a stopping point chosen for convenience: re-solving
+// with a fourth parameter (rotation) and a signed-distance objective instead of
+// raw hit rate lands on 87.0% and 0.077° — the same answer. The information is
+// not in the PNG.
 //
-// Accurate to roughly a panel row. Replace with the GeoTIFF tie-points the moment
-// the .tif surfaces; do not hand-nudge these.
-const THERMAL_BOUNDS = {
-  coordinates: [
-    [73.036467, 28.258982], [73.042336, 28.258982],
-    [73.042336, 28.255081], [73.036467, 28.255081],
-  ] as [[number,number],[number,number],[number,number],[number,number]],
-};
-const RGB_BOUNDS = {
-  coordinates: [
-    [73.037842, 28.257479], [73.042711, 28.257479],
-    [73.042711, 28.254353], [73.037842, 28.254353],
-  ] as [[number,number],[number,number],[number,number],[number,number]],
-};
-const RGB2_BOUNDS = {
-  coordinates: [
-    [73.035136, 28.259860], [73.041713, 28.259860],
-    [73.041713, 28.256497], [73.035136, 28.256497],
-  ] as [[number,number],[number,number],[number,number],[number,number]],
-};
+// So the remaining 13% is split, and the split matters:
+//   * 25 defects sit in genuine interior gaps — roads and stitching holes, which
+//     account for 11.8% of the array outline. Those markers are correctly placed.
+//   * 23 defects (6.6%) fall outside the array outline. Those are real
+//     misregistration, and they are what the Align tool exists to fix by hand.
+//
+// The V1/V2 baselines were never derived from source georeferencing at all: only
+// 26.5% of surveyed defects land on a panel pixel in V1, against 25.1% expected
+// from random placement, so that registration carries no information whatsoever.
+// Re-fitting reaches ~51% — enough to show signal, not enough to trust — which is
+// why they need aligning by hand rather than by another fit.
+//
+// Replace the baselines with GeoTIFF tie-points the moment a .tif surfaces.
 
 // The raw stitcher output letterboxes the flight footprint onto a white canvas,
 // and a Mapbox image source georeferences that filler right along with the data —
 // which is why the overlay used to sit on the satellite view as an opaque box.
 // scripts/clean_orthomosaic.py alpha-cuts the filler, upscales 2x and sharpens.
-// Canvas proportions are preserved, so THERMAL_BOUNDS still applies unchanged.
-const THERMAL_IMAGE = "/thermal_block20_clean.png";
+// Canvas proportions are preserved, so the baseline still applies unchanged.
+const THERMAL_IMAGE = OVERLAYS.thermal.url;
 
 // Applied to the thermal raster on top of the per-layer opacity. Range is -1..1
 // for both; 0 is untouched source. See the tuning note in the legend panel below.
@@ -231,7 +234,50 @@ function SiteMap() {
   const dragging   = useRef(false);
   const pinchRef   = useRef<number | null>(null);
 
-  const visibleAnomalies = useMemo(() => {
+  // ── Overlay georeferencing ──
+  // Placements are keyed by overlay id and restored from localStorage, so an
+  // alignment session survives a refresh. Anything not yet aligned falls back to
+  // IDENTITY, i.e. the committed baseline — an operator who has never opened the
+  // Align tool sees exactly what shipped.
+  const [placements, setPlacements] = useState<Record<string, Placement>>(() => loadPlacements());
+  const [alignTarget, setAlignTarget] = useState<string | null>(null);
+  const [masks, setMasks] = useState<Record<string, RasterMask | null>>({});
+  // Suppress markers that fall outside every visible overlay. On by default
+  // because a marker floating on bare scrub next to the array reads as a broken
+  // map; the count is always shown so the hiding is never silent.
+  const [hideStrays, setHideStrays] = useState(true);
+
+  const placementOf = useCallback(
+    (id: string): Placement => placements[id] ?? IDENTITY,
+    [placements],
+  );
+
+  const updatePlacement = useCallback((id: string, patch: Partial<Placement>) => {
+    setPlacements(prev => {
+      const next = { ...prev, [id]: { ...(prev[id] ?? IDENTITY), ...patch } };
+      savePlacements(next);
+      return next;
+    });
+  }, []);
+
+  // Alpha masks drive both the stray filter and the live alignment score. Loaded
+  // once per image; the pixels never change, only where they are placed.
+  useEffect(() => {
+    let live = true;
+    Object.values(OVERLAYS).forEach(def => {
+      loadRasterMask(def).then(m => {
+        if (live) setMasks(prev => (def.id in prev ? prev : { ...prev, [def.id]: m }));
+      });
+    });
+    return () => { live = false; };
+  }, []);
+
+  const cornersOf = useCallback(
+    (id: string) => cornersFor(OVERLAYS[id].baseline, placementOf(id)),
+    [placementOf],
+  );
+
+  const baseAnomalies = useMemo(() => {
     if (!isRajpur) return [];
     return anomalies.filter(a =>
       filters[a.severity] &&
@@ -240,6 +286,60 @@ function SiteMap() {
       (stringFilter   === "all" || a.string   === stringFilter),
     );
   }, [isRajpur, filters, typeFilter, inverterFilter, stringFilter]);
+
+  // Which overlays are actually drawn right now. A defect is only a "stray" if it
+  // falls outside *all* of them — one covered by V1 but not by IR must not vanish
+  // the moment both are switched on.
+  const activeOverlayIds = useMemo(() => {
+    if (kmlViewMode) return [];
+    return [
+      thermalVisible ? "thermal" : null,
+      rgbVisible ? "rgb" : null,
+      rgb2Visible ? "rgb2" : null,
+    ].filter(Boolean) as string[];
+  }, [kmlViewMode, thermalVisible, rgbVisible, rgb2Visible]);
+
+  const strayIds = useMemo(() => {
+    if (activeOverlayIds.length === 0) return new Set<string>();
+    const tests = activeOverlayIds
+      .map(id => makeCoverageTest(OVERLAYS[id], placementOf(id), masks[id] ?? null))
+      .filter(Boolean);
+    if (tests.length === 0) return new Set<string>();
+    const out = new Set<string>();
+    for (const a of baseAnomalies) {
+      if (!tests.some(t => t!.insideFootprint(a.gps.lng, a.gps.lat))) out.add(a.id);
+    }
+    return out;
+  }, [activeOverlayIds, baseAnomalies, masks, placementOf]);
+
+  const visibleAnomalies = useMemo(
+    () => (hideStrays && suppressionApplies(activeOverlayIds, strayIds.size, baseAnomalies.length)
+      ? baseAnomalies.filter(a => !strayIds.has(a.id))
+      : baseAnomalies),
+    [hideStrays, activeOverlayIds, baseAnomalies, strayIds],
+  );
+
+  // Live registration quality for the Align panel, scored against the surveyed
+  // KML centroids — the only exact geography on this map.
+  const alignScore: AlignmentScore | null = useMemo(() => {
+    if (!alignTarget) return null;
+    return scorePlacement(
+      OVERLAYS[alignTarget],
+      placementOf(alignTarget),
+      masks[alignTarget] ?? null,
+      anomalies.map(a => ({ lng: a.gps.lng, lat: a.gps.lat })),
+    );
+  }, [alignTarget, placementOf, masks]);
+
+  const baselineScore: AlignmentScore | null = useMemo(() => {
+    if (!alignTarget) return null;
+    return scorePlacement(
+      OVERLAYS[alignTarget],
+      IDENTITY,
+      masks[alignTarget] ?? null,
+      anomalies.map(a => ({ lng: a.gps.lng, lat: a.gps.lat })),
+    );
+  }, [alignTarget, masks]);
 
   // Surveyed panel outlines (Block20_1GV_4.kml) — real footprints, not estimated positions.
   // Drives both the zoom-in panel fills on the satellite view and KML View.
@@ -270,6 +370,19 @@ function SiteMap() {
     () => new Map(anomalies.map(a => [a.id, a])),
     [],
   );
+
+  // Alignment reference: every surveyed footprint, ignoring the sidebar filters.
+  // Filtering here would be actively harmful — you align against as much known-good
+  // geometry as you can get, and a filter that hides two thirds of the panels would
+  // let an operator "align" a raster against a handful of points in one corner.
+  const alignReferenceGeoJSON = useMemo(() => ({
+    type: "FeatureCollection" as const,
+    features: anomalies.filter(a => a.footprint).map(a => ({
+      type: "Feature" as const,
+      geometry: { type: "Polygon" as const, coordinates: [a.footprint!] },
+      properties: {},
+    })),
+  }), []);
 
   // Shared by the dot, fill and outline layers so one severity palette drives all three.
   const severityColour: ExpressionSpecification = [
@@ -390,6 +503,26 @@ function SiteMap() {
                   <MapIcon size={13} /> KML View
                 </button>
 
+                <button
+                  onClick={() => {
+                    // Opening Align implies you want to see what you are aligning,
+                    // so switch the target overlay on rather than making the
+                    // operator remember to.
+                    const next = alignTarget ? null : (activeOverlayIds[0] ?? "thermal");
+                    if (next === "thermal") setThermalVisible(true);
+                    if (next === "rgb") setRgbVisible(true);
+                    if (next === "rgb2") setRgb2Visible(true);
+                    setAlignTarget(next);
+                    setCompareMode(false); setKmlViewMode(false);
+                  }}
+                  title="Georeference an overlay by hand against the surveyed panel footprints"
+                  className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium border transition ${
+                    alignTarget ? "bg-violet-600 text-white border-violet-600" : "bg-card text-muted-foreground border-border hover:bg-muted"
+                  }`}
+                >
+                  <Crosshair size={13} /> Align
+                </button>
+
                 {!compareMode && !kmlViewMode && (
                   <div className="flex items-center border border-border divide-x divide-border overflow-hidden">
                     <span className="px-2 text-[10px] uppercase tracking-widest text-grey-400 bg-grey-50 h-8 flex items-center">Overlay</span>
@@ -446,7 +579,7 @@ function SiteMap() {
                   style={{ width: "100%", height: "100%" }}
                   mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
                 >
-                  <Source id="cmp-thermal" type="image" url={THERMAL_IMAGE} coordinates={THERMAL_BOUNDS.coordinates}>
+                  <Source id="cmp-thermal" type="image" url={THERMAL_IMAGE} coordinates={cornersOf("thermal")}>
                     <Layer id="cmp-thermal-layer" type="raster" paint={{
                       "raster-opacity": 1,
                       "raster-resampling": "nearest",
@@ -480,10 +613,10 @@ function SiteMap() {
                   style={{ width: "100%", height: "100%" }}
                   mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
                 >
-                  <Source id="cmp-rgb" type="image" url="/rgb_block20.png" coordinates={RGB_BOUNDS.coordinates}>
+                  <Source id="cmp-rgb" type="image" url={OVERLAYS.rgb.url} coordinates={cornersOf("rgb")}>
                     <Layer id="cmp-rgb-layer" type="raster" paint={{ "raster-opacity": 0.90 }} />
                   </Source>
-                  <Source id="cmp-rgb2" type="image" url="/rgb2_block20.png" coordinates={RGB2_BOUNDS.coordinates}>
+                  <Source id="cmp-rgb2" type="image" url={OVERLAYS.rgb2.url} coordinates={cornersOf("rgb2")}>
                     <Layer id="cmp-rgb2-layer" type="raster" paint={{ "raster-opacity": 0.90 }} />
                   </Source>
                 </MapGL>
@@ -595,7 +728,7 @@ function SiteMap() {
                     `beforeId` keeps them underneath the anomaly layers no matter what order
                     the user toggles IR / V1 / V2 in. */}
                 {isRajpur && thermalVisible && !kmlViewMode && (
-                  <Source id="thermal" type="image" url={THERMAL_IMAGE} coordinates={THERMAL_BOUNDS.coordinates}>
+                  <Source id="thermal" type="image" url={THERMAL_IMAGE} coordinates={cornersOf("thermal")}>
                     <Layer id="thermal-layer" type="raster" beforeId="anomaly-panel-fill" paint={{
                       "raster-opacity": thermalOpacity,
                       // The site is ~900 m across, so past roughly z18 the map is
@@ -611,13 +744,28 @@ function SiteMap() {
                   </Source>
                 )}
                 {isRajpur && rgbVisible && !kmlViewMode && (
-                  <Source id="rgb" type="image" url="/rgb_block20.png" coordinates={RGB_BOUNDS.coordinates}>
+                  <Source id="rgb" type="image" url={OVERLAYS.rgb.url} coordinates={cornersOf("rgb")}>
                     <Layer id="rgb-layer" type="raster" beforeId="anomaly-panel-fill" paint={{ "raster-opacity": rgbOpacity, "raster-fade-duration": 300 }} />
                   </Source>
                 )}
                 {isRajpur && rgb2Visible && !kmlViewMode && (
-                  <Source id="rgb2" type="image" url="/rgb2_block20.png" coordinates={RGB2_BOUNDS.coordinates}>
+                  <Source id="rgb2" type="image" url={OVERLAYS.rgb2.url} coordinates={cornersOf("rgb2")}>
                     <Layer id="rgb2-layer" type="raster" beforeId="anomaly-panel-fill" paint={{ "raster-opacity": rgb2Opacity, "raster-fade-duration": 300 }} />
+                  </Source>
+                )}
+
+                {/* Alignment reference — the surveyed footprints, drawn on top of
+                    everything in a colour nothing else on the map uses. These are the
+                    fixed thing: you move the raster until its panel rows sit under
+                    these rectangles, never the other way round. Declared after the
+                    rasters so Mapbox stacks it above them. */}
+                {isRajpur && alignTarget && (
+                  <Source id="align-ref" type="geojson" data={alignReferenceGeoJSON as never}>
+                    <Layer id="align-ref-line" type="line" paint={{
+                      "line-color": "#22d3ee",
+                      "line-width": ["interpolate", ["linear"], ["zoom"], 15, 0.6, 19, 2],
+                      "line-opacity": 0.95,
+                    }} />
                   </Source>
                 )}
 
@@ -714,6 +862,32 @@ function SiteMap() {
                     <span>{l}</span>
                   </div>
                 ))}
+                {/* Stray markers. Never hidden silently: an anomaly the client
+                    cannot see is one they cannot act on, so the count and the way
+                    back are both always on screen. These are defects whose surveyed
+                    position falls outside the overlay's covered area entirely —
+                    a registration artefact, not a defect that has moved. Defects
+                    sitting in interior road or stitch gaps are *not* counted here
+                    and stay visible, because those are correctly placed. */}
+                {isRajpur && activeOverlayIds.length > 0 && strayIds.size > 0 && (
+                  <div className="pt-1.5 border-t border-grey-200 space-y-1">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={hideStrays}
+                        onChange={e => setHideStrays(e.target.checked)}
+                        className="accent-violet-600"
+                      />
+                      <span className="flex items-center gap-1 text-muted-foreground">
+                        <EyeOff size={11} /> Hide {strayIds.size} off-overlay
+                      </span>
+                    </label>
+                    <p className="text-[10px] text-muted-foreground leading-snug max-w-[190px]">
+                      Outside the overlay's coverage — imagery registration, not a
+                      moved defect. Still counted in reports.
+                    </p>
+                  </div>
+                )}
                 {isRajpur && thermalVisible && !kmlViewMode && (
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">
                     <div className="flex items-center gap-1.5 text-red-500 font-medium"><Thermometer size={11} /> Thermal IR</div>
@@ -767,6 +941,24 @@ function SiteMap() {
                   </div>
                 )}
               </div>
+
+              {/* Align panel */}
+              {isRajpur && alignTarget && (
+                <AlignPanel
+                  targetId={alignTarget}
+                  onTarget={id => {
+                    setAlignTarget(id);
+                    if (id === "thermal") setThermalVisible(true);
+                    if (id === "rgb") setRgbVisible(true);
+                    if (id === "rgb2") setRgb2Visible(true);
+                  }}
+                  placement={placementOf(alignTarget)}
+                  onChange={patch => updatePlacement(alignTarget, patch)}
+                  score={alignScore}
+                  baseline={baselineScore}
+                  onClose={() => setAlignTarget(null)}
+                />
+              )}
 
               {/* Non-Rajpur info */}
               {!isRajpur && (
@@ -827,6 +1019,244 @@ function SiteMap() {
           </aside>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Should off-overlay markers be suppressed at all for the overlays now on screen?
+ *
+ * This is a judgement call about honesty, not a rendering detail, which is why it
+ * is one named function rather than a condition buried in a memo.
+ *
+ * The numbers it has to arbitrate, measured against the surveyed KML centroids:
+ *
+ *     thermal IR   25 strays of 347   ( 7%)  — registration is sound, a few edges drift
+ *     visual V1   142 strays of 347   (41%)  — carries essentially no registration
+ *     visual V2   112 strays of 347   (32%)
+ *
+ * Suppressing 25 markers tidies up an otherwise trustworthy map. Suppressing 142
+ * hides a third of the plant's defects to flatter an overlay that is known to be
+ * unregistered — arguably the map should look broken there, because it is.
+ *
+ * TODO(operator policy): decide where the line sits. Options worth weighing —
+ * suppress only below some stray fraction; suppress only for overlays whose
+ * alignmentVerdict() is trustworthy; or keep it unconditional and rely on the
+ * always-visible count. Current behaviour is unconditional.
+ */
+function suppressionApplies(
+  activeOverlayIds: string[],
+  strayCount: number,
+  totalCount: number,
+): boolean {
+  void strayCount;
+  void totalCount;
+  return activeOverlayIds.length > 0;
+}
+
+// ─── Align panel ──────────────────────────────────────────────────────────────
+
+/** Nudge steps. 0.1 m is finer than the 1.155 m panel width, so the bottom of the
+ *  range can resolve better than a single module; 10 m moves about two rack pitches
+ *  for getting into the right neighbourhood quickly. */
+const NUDGE_STEPS = [0.1, 0.5, 1, 5, 10];
+
+/**
+ * How good is good enough to trust for client reporting?
+ *
+ * Deliberately a single named function rather than thresholds scattered through
+ * the JSX, because this is a policy decision about what the portal is willing to
+ * present as measured. The thermal baseline scores ~86% on data; V1 scores ~26%,
+ * which is indistinguishable from the ~25% you would get by dropping the image on
+ * the map at random.
+ */
+function alignmentVerdict(score: AlignmentScore | null): {
+  label: string;
+  tone: string;
+} {
+  if (!score) return { label: "no coverage data", tone: "text-muted-foreground" };
+  if (score.onData >= 95) return { label: "panel-accurate", tone: "text-emerald-600" };
+  if (score.onData >= 85) return { label: "within a panel row", tone: "text-emerald-600" };
+  if (score.onData >= 60) return { label: "approximate", tone: "text-amber-600" };
+  return { label: "carries no registration", tone: "text-red-600" };
+}
+
+function AlignPanel({
+  targetId, onTarget, placement, onChange, score, baseline, onClose,
+}: {
+  targetId: string;
+  onTarget: (id: string) => void;
+  placement: Placement;
+  onChange: (patch: Partial<Placement>) => void;
+  score: AlignmentScore | null;
+  baseline: AlignmentScore | null;
+  onClose: () => void;
+}) {
+  const [step, setStep] = useState(1);
+  const [copied, setCopied] = useState(false);
+  const def = OVERLAYS[targetId];
+  const verdict = alignmentVerdict(score);
+
+  const nudge = useCallback((de: number, dn: number) => {
+    onChange({ dx: placement.dx + de * step, dy: placement.dy + dn * step });
+  }, [onChange, placement.dx, placement.dy, step]);
+
+  // Arrow keys move the raster. Bound on window rather than the panel so the
+  // operator can keep the cursor over the map — which is where they are looking —
+  // instead of having to keep focus inside the control panel.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+      const moves: Record<string, [number, number]> = {
+        ArrowUp: [0, 1], ArrowDown: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+      };
+      const m = moves[e.key];
+      if (!m) return;
+      e.preventDefault();
+      nudge(m[0], m[1]);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [nudge]);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(toSourceSnippet(def, placement));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  const delta = score && baseline ? score.onData - baseline.onData : 0;
+
+  return (
+    <div className="absolute top-2 right-2 z-20 w-64 bg-card/97 border border-violet-400 shadow-lg backdrop-blur-sm text-xs">
+      <div className="flex items-center justify-between px-3 py-2 bg-violet-600 text-white">
+        <span className="font-bold flex items-center gap-1.5"><Crosshair size={12} /> ALIGN OVERLAY</span>
+        <button onClick={onClose} className="hover:opacity-70"><X size={13} /></button>
+      </div>
+
+      <div className="p-3 space-y-3">
+        <select
+          value={targetId}
+          onChange={e => onTarget(e.target.value)}
+          className="w-full h-8 px-2 border border-border bg-card text-foreground text-xs"
+        >
+          {Object.values(OVERLAYS).map(o => (
+            <option key={o.id} value={o.id}>{o.label}</option>
+          ))}
+        </select>
+
+        {/* Score. The comparison against the committed baseline is the point: it
+            tells the operator whether their hand alignment is actually an
+            improvement, rather than just different. */}
+        <div className="border border-border p-2 space-y-1 bg-muted/40">
+          <div className="flex items-baseline justify-between">
+            <span className="text-muted-foreground">On panel data</span>
+            <span className="mono font-bold text-sm">
+              {score ? `${score.onData.toFixed(1)}%` : "—"}
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between">
+            <span className="text-muted-foreground">vs baseline</span>
+            <span className={`mono ${delta > 0.05 ? "text-emerald-600" : delta < -0.05 ? "text-red-600" : "text-muted-foreground"}`}>
+              {score && baseline ? `${delta >= 0 ? "+" : ""}${delta.toFixed(1)} pts` : "—"}
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between">
+            <span className="text-muted-foreground">Strays</span>
+            <span className="mono">{score ? `${score.strays} / ${score.total}` : "—"}</span>
+          </div>
+          <p className={`pt-1 border-t border-grey-200 font-medium ${verdict.tone}`}>{verdict.label}</p>
+        </div>
+
+        {/* Nudge pad */}
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] uppercase tracking-widest text-grey-400">Move</span>
+            <select
+              value={step}
+              onChange={e => setStep(Number(e.target.value))}
+              className="h-6 px-1 border border-border bg-card text-[10px] mono"
+            >
+              {NUDGE_STEPS.map(s => <option key={s} value={s}>{s} m</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-3 gap-1 w-24 mx-auto">
+            <span />
+            <button onClick={() => nudge(0, 1)} className="h-7 border border-border hover:bg-muted">↑</button>
+            <span />
+            <button onClick={() => nudge(-1, 0)} className="h-7 border border-border hover:bg-muted">←</button>
+            <button
+              onClick={() => onChange({ dx: 0, dy: 0 })}
+              title="Recentre"
+              className="h-7 border border-border hover:bg-muted flex items-center justify-center"
+            >
+              <Crosshair size={11} />
+            </button>
+            <button onClick={() => nudge(1, 0)} className="h-7 border border-border hover:bg-muted">→</button>
+            <span />
+            <button onClick={() => nudge(0, -1)} className="h-7 border border-border hover:bg-muted">↓</button>
+            <span />
+          </div>
+          <p className="mono text-[10px] text-muted-foreground text-center mt-1">
+            {placement.dx.toFixed(1)} m E · {placement.dy.toFixed(1)} m N
+          </p>
+        </div>
+
+        <SliderRow
+          label="Scale" value={placement.scale} min={0.8} max={1.25} step={0.0005}
+          onChange={v => onChange({ scale: v })} format={v => `${(v * 100).toFixed(2)}%`}
+        />
+        <SliderRow
+          label="Rotation" value={placement.rotation} min={-5} max={5} step={0.01}
+          onChange={v => onChange({ rotation: v })} format={v => `${v.toFixed(2)}°`}
+        />
+
+        <div className="flex gap-1.5 pt-1">
+          <button
+            onClick={() => onChange({ ...IDENTITY })}
+            className="flex-1 h-7 border border-border hover:bg-muted flex items-center justify-center gap-1"
+          >
+            <RotateCcw size={11} /> Reset
+          </button>
+          <button
+            onClick={copy}
+            title="Copy these corners for pasting into overlay-registration.ts"
+            className="flex-1 h-7 border border-border hover:bg-muted flex items-center justify-center gap-1"
+          >
+            <Copy size={11} /> {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+
+        <p className="text-[10px] text-muted-foreground leading-snug border-t border-grey-200 pt-2">
+          Match the raster's panel rows to the <span className="text-cyan-500 font-medium">cyan</span> surveyed
+          outlines. Arrow keys nudge. Saved locally as you go — use Copy to promote a
+          final alignment into <span className="mono">overlay-registration.ts</span>.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function SliderRow({ label, value, min, max, step, onChange, format }: {
+  label: string; value: number; min: number; max: number; step: number;
+  onChange: (v: number) => void; format: (v: number) => string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-0.5">
+        <span className="text-[10px] uppercase tracking-widest text-grey-400">{label}</span>
+        <span className="mono text-[10px] text-muted-foreground">{format(value)}</span>
+      </div>
+      <input
+        type="range" min={min} max={max} step={step} value={value}
+        onChange={e => onChange(Number(e.target.value))}
+        className="w-full accent-violet-600"
+      />
     </div>
   );
 }
