@@ -77,6 +77,13 @@ export interface OverlayDef {
  * derived from source georeferencing at all. Keeping them as the baseline means
  * an operator who has not aligned anything sees exactly what shipped before.
  *
+ * All three `url`s point at scripts/clean_orthomosaic.py output. That matters for
+ * more than looks: the raw V1/V2 exports were ~47% and ~53% opaque white letterbox
+ * padding, which a Mapbox image source paints over the basemap as a solid box, and
+ * which — having no alpha — also made overlay-coverage.ts read the whole rectangle
+ * as covered. Cleaning them gives both an honest footprint and 4x the pixels.
+ * Canvas proportions are preserved, so these baselines still apply unchanged.
+ *
  * To add an overlay later: drop the PNG in public/, add an entry here, then open
  * Align on the map and register it. Nothing else needs to change.
  */
@@ -90,13 +97,13 @@ export const OVERLAYS: Record<string, OverlayDef> = {
   rgb: {
     id: "rgb",
     label: "Visual V1 (east)",
-    url: "/rgb_block20.png",
+    url: "/rgb_block20_clean.png",
     baseline: { west: 73.037842, north: 28.257479, east: 73.042711, south: 28.254353 },
   },
   rgb2: {
     id: "rgb2",
     label: "Visual V2 (west)",
-    url: "/rgb2_block20.png",
+    url: "/rgb2_block20_clean.png",
     baseline: { west: 73.035136, north: 28.25986, east: 73.041713, south: 28.256497 },
   },
 };

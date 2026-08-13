@@ -15,6 +15,7 @@ export type Action =
   | "qcReview"
   | "manageUsers"
   | "manageLayout"
+  | "alignOverlay"
   | "exportReports";
 
 const MATRIX: Record<Role, Record<Action, boolean>> = {
@@ -25,6 +26,7 @@ const MATRIX: Record<Role, Record<Action, boolean>> = {
     qcReview: true,
     manageUsers: true,
     manageLayout: true,
+    alignOverlay: true,
     exportReports: true,
   },
   team: {
@@ -35,6 +37,11 @@ const MATRIX: Record<Role, Record<Action, boolean>> = {
     qcReview: false,
     manageUsers: false,
     manageLayout: false,
+    // Broader than manageLayout on purpose: an inspector in the field is the
+    // person who notices an overlay sitting off its panels, and the alignment
+    // is scratch state in localStorage until someone promotes it into the
+    // registry, so letting them correct it cannot damage what clients see.
+    alignOverlay: true,
     exportReports: true,
   },
   client: {
@@ -45,6 +52,7 @@ const MATRIX: Record<Role, Record<Action, boolean>> = {
     qcReview: false,
     manageUsers: false,
     manageLayout: false,
+    alignOverlay: false,
     exportReports: true, // read-only report export only
   },
 };

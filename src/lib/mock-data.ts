@@ -12,6 +12,23 @@ export const SEVERITY_LABEL: Record<Severity, string> = {
   nodata:   "—",
 };
 
+/**
+ * Client-facing spelling of the same taxonomy.
+ *
+ * A plant owner reading "COA3" has to be taught what it means; "Critical" needs
+ * no gloss and carries the action implicitly. The code is kept in brackets so a
+ * dot on the map still ties back to the COA column in the PDF report — dropping
+ * it entirely would sever that link. Use this wherever a reading customer sees
+ * the label; keep SEVERITY_LABEL for the compact badges, CSV and KML exports,
+ * where the bare code is the established column value.
+ */
+export const SEVERITY_LABEL_FULL: Record<Severity, string> = {
+  critical: "Critical (COA3)",
+  medium:   "Medium (COA2)",
+  normal:   "Normal (COA1)",
+  nodata:   "No Data",
+};
+
 export type RootCause =
   | "Manufacturing defect"
   | "Wiring / connector fault"
@@ -508,11 +525,34 @@ export const anomalyTypeDefs: Record<string, string> = {
 
 // ─── Severity counts (derived) ───────────────────────────────────────────────
 
+/**
+ * Plant-wide health. `normal` here means "every panel we did not flag", so it
+ * counts the whole array minus the defects — the right number for a dashboard
+ * tile reading "Healthy Panels 18,773 (98.5%)".
+ *
+ * It is the wrong number for the map: see anomalyCounts below.
+ */
 export const severityCounts = {
   critical: anomalies.filter(a => a.severity === "critical").length,
   medium:   anomalies.filter(a => a.severity === "medium").length,
   normal:   plant.totalPanels - anomalies.filter(a => a.severity === "critical" || a.severity === "medium").length,
   nodata:   0,
+};
+
+/**
+ * Counts within the inspected set only — the 347 panels the drone actually
+ * surveyed and recorded a footprint for.
+ *
+ * The map must use these rather than severityCounts. A legend that promises
+ * 18,773 green dots next to a map that can only draw 62 of them is a bug the
+ * client sees before we do: there is no geometry for the unflagged panels, so
+ * "normal" on the map can only ever mean "inspected and found healthy".
+ */
+export const anomalyCounts: Record<Severity, number> = {
+  critical: anomalies.filter(a => a.severity === "critical").length,
+  medium:   anomalies.filter(a => a.severity === "medium").length,
+  normal:   anomalies.filter(a => a.severity === "normal").length,
+  nodata:   anomalies.filter(a => a.severity === "nodata").length,
 };
 
 // ─── Equipment Audit ─────────────────────────────────────────────────────────

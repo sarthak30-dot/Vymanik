@@ -5,9 +5,14 @@ import {
   SplitSquareHorizontal, Navigation, Download, Map as MapIcon,
   Crosshair, RotateCcw, Copy, EyeOff,
 } from "lucide-react";
-import { anomalies, anomalyTypes, plant, severityCounts, SEVERITY_LABEL, type Anomaly, type Severity } from "@/lib/mock-data";
+import {
+  anomalies, anomalyTypes, plant, anomalyCounts, SEVERITY_LABEL, SEVERITY_LABEL_FULL,
+  type Anomaly, type Severity,
+} from "@/lib/mock-data";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { usePlantContext } from "@/lib/plant-context";
+import { getUser } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { buildAnomaliesKML, downloadKML } from "@/lib/kml";
 import { parseDefectImage } from "@/lib/defect-image";
 import {
@@ -68,8 +73,17 @@ const THERMAL_IMAGE = OVERLAYS.thermal.url;
 
 // Applied to the thermal raster on top of the per-layer opacity. Range is -1..1
 // for both; 0 is untouched source. See the tuning note in the legend panel below.
-const THERMAL_CONTRAST   = 0.15;
-const THERMAL_SATURATION = 0.2;
+// Pushed up from 0.15/0.2 so the magma ramp separates warm modules from warm sand
+// at overview zoom — the previous values were tuned when the layer sat at partial
+// opacity over satellite, and read as washed out now that it loads at full.
+const THERMAL_CONTRAST   = 0.30;
+const THERMAL_SATURATION = 0.45;
+
+// Bilinear, not nearest. Both orthomosaics are already LANCZOS-upscaled and
+// unsharp-masked by clean_orthomosaic.py, so the detail that exists is baked in;
+// past native resolution `nearest` only adds a hard pixel grid that reads as a
+// rendering fault rather than as data.
+const RASTER_RESAMPLING = "linear" as const;
 
 // Used when "Hide basemap" is on. Declaring a minimal style object instead of a
 // mapbox:// URL means no satellite tiles are requested at all, so the thermal
@@ -190,6 +204,12 @@ function SiteMap() {
   const { selectedPlant } = usePlantContext();
   const isRajpur = selectedPlant.id === "plant-001";
 
+  // Survey tooling — KML view, KML export, and hand-alignment — is for the people
+  // who flew the site, not the people reading the result. A plant owner opening
+  // this map wants the imagery and the defects on it; a control that lets them
+  // drag the orthomosaic off its panels is a support ticket waiting to happen.
+  const isSurveyor = can(getUser()?.role, "alignOverlay");
+
   const [filters, setFilters]   = useState<Record<string, boolean>>({ critical: true, medium: true, normal: true, nodata: true });
   const [selected, setSelected] = useState<Anomaly | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -200,7 +220,10 @@ function SiteMap() {
   const [inverterFilter, setInverterFilter] = useState("all");
 
   // Satellite state
-  const [thermalVisible, setThermalVisible] = useState(false);
+  // Thermal is on at load: reading defects off the IR orthomosaic is what this
+  // page is for, and it is the one overlay whose registration is sound enough to
+  // put defect markers on top of.
+  const [thermalVisible, setThermalVisible] = useState(true);
   // V1/V2 default to off. Their corner coordinates were never derived from source
   // georeferencing and do not survive checking: only 26.5% of surveyed defects land
   // on a panel pixel in V1, against 25.1% expected from random placement — i.e. the
@@ -215,8 +238,11 @@ function SiteMap() {
   const [thermalOpacity, setThermalOpacity] = useState(1);
   const [hideBasemap, setHideBasemap]       = useState(false);
   const [hoveringAnomaly, setHoveringAnomaly] = useState(false);
-  const [rgbOpacity, setRgbOpacity]         = useState(0.90);
-  const [rgb2Opacity, setRgb2Opacity]       = useState(0.90);
+  // Full opacity now that these carry a real alpha footprint. The old 0.90 was
+  // compensating for the letterbox: knocking the whole layer back made the opaque
+  // white border less offensive, at the cost of muddying the actual imagery.
+  const [rgbOpacity, setRgbOpacity]         = useState(1);
+  const [rgb2Opacity, setRgb2Opacity]       = useState(1);
   const [compareMode, setCompareMode]       = useState(false);
   // KML View is a standalone mode — surveyed panel outlines on their own,
   // instead of mixed into the Original/V1/V2 overlay toggles.
@@ -242,10 +268,11 @@ function SiteMap() {
   const [placements, setPlacements] = useState<Record<string, Placement>>(() => loadPlacements());
   const [alignTarget, setAlignTarget] = useState<string | null>(null);
   const [masks, setMasks] = useState<Record<string, RasterMask | null>>({});
-  // Suppress markers that fall outside every visible overlay. On by default
-  // because a marker floating on bare scrub next to the array reads as a broken
-  // map; the count is always shown so the hiding is never silent.
-  const [hideStrays, setHideStrays] = useState(true);
+  // Markers falling outside every visible overlay are not drawn. This is now
+  // unconditional rather than an operator toggle: a marker floating on bare
+  // scrub beside the array reads as a broken map to a client, and the position
+  // it claims is not one the imagery can support anyway. The suppression is not
+  // silent — the sidebar always reports "N of 347 shown".
 
   const placementOf = useCallback(
     (id: string): Placement => placements[id] ?? IDENTITY,
@@ -313,11 +340,20 @@ function SiteMap() {
   }, [activeOverlayIds, baseAnomalies, masks, placementOf]);
 
   const visibleAnomalies = useMemo(
-    () => (hideStrays && suppressionApplies(activeOverlayIds, strayIds.size, baseAnomalies.length)
+    () => (suppressionApplies(activeOverlayIds, strayIds.size, baseAnomalies.length)
       ? baseAnomalies.filter(a => !strayIds.has(a.id))
       : baseAnomalies),
-    [hideStrays, activeOverlayIds, baseAnomalies, strayIds],
+    [activeOverlayIds, baseAnomalies, strayIds],
   );
+
+  // Legend tallies. Counted from what is actually on screen rather than from the
+  // dataset, so the legend agrees with the map after filters and off-overlay
+  // suppression have had their say.
+  const visibleCounts = useMemo(() => {
+    const out: Record<Severity, number> = { critical: 0, medium: 0, normal: 0, nodata: 0 };
+    for (const a of visibleAnomalies) out[a.severity]++;
+    return out;
+  }, [visibleAnomalies]);
 
   // Live registration quality for the Align panel, scored against the surveyed
   // KML centroids — the only exact geography on this map.
@@ -429,11 +465,12 @@ function SiteMap() {
 
         <div className="space-y-2">
           {([
-            { key: "critical", label: SEVERITY_LABEL.critical, dotColor: SEV_COLOR.critical, count: severityCounts.critical, color: "text-critical" },
-            { key: "medium",   label: SEVERITY_LABEL.medium,   dotColor: SEV_COLOR.medium,   count: severityCounts.medium,   color: "text-medium" },
-            { key: "normal",   label: SEVERITY_LABEL.normal,   dotColor: SEV_COLOR.normal,   count: severityCounts.normal,   color: "text-normal" },
-            { key: "nodata",   label: "No Data",   dotColor: "#6b7280",          count: severityCounts.nodata,   color: "text-muted-foreground" },
-          ] as const).map(f => (
+            { key: "critical", label: SEVERITY_LABEL_FULL.critical, dotColor: SEV_COLOR.critical, count: anomalyCounts.critical, color: "text-critical" },
+            { key: "medium",   label: SEVERITY_LABEL_FULL.medium,   dotColor: SEV_COLOR.medium,   count: anomalyCounts.medium,   color: "text-medium" },
+            { key: "normal",   label: SEVERITY_LABEL_FULL.normal,   dotColor: SEV_COLOR.normal,   count: anomalyCounts.normal,   color: "text-normal" },
+            { key: "nodata",   label: SEVERITY_LABEL_FULL.nodata,   dotColor: "#6b7280",          count: anomalyCounts.nodata,   color: "text-muted-foreground" },
+            // A row reading "(0)" is a filter that can only ever remove nothing.
+          ] as const).filter(f => f.count > 0).map(f => (
             <label key={f.key} className="flex items-center gap-3 cursor-pointer py-1.5">
               <input
                 type="checkbox"
@@ -493,6 +530,7 @@ function SiteMap() {
                   <SplitSquareHorizontal size={13} /> Compare
                 </button>
 
+                {isSurveyor && (
                 <button
                   onClick={() => { setKmlViewMode(v => !v); setCompareMode(false); }}
                   title="View surveyed panel outlines from drone KML on their own, separate from the Original/V1/V2 overlays"
@@ -502,7 +540,9 @@ function SiteMap() {
                 >
                   <MapIcon size={13} /> KML View
                 </button>
+                )}
 
+                {isSurveyor && (
                 <button
                   onClick={() => {
                     // Opening Align implies you want to see what you are aligning,
@@ -522,6 +562,7 @@ function SiteMap() {
                 >
                   <Crosshair size={13} /> Align
                 </button>
+                )}
 
                 {!compareMode && !kmlViewMode && (
                   <div className="flex items-center border border-border divide-x divide-border overflow-hidden">
@@ -540,13 +581,15 @@ function SiteMap() {
               </>
             )}
 
-            <button
-              onClick={exportKML}
-              title="Download plant boundary and visible anomalies as a .kml file for Google Earth"
-              className="h-8 px-3 flex items-center gap-1.5 text-xs font-medium border border-border bg-card text-muted-foreground hover:bg-muted"
-            >
-              <Download size={13} /> Export KML
-            </button>
+            {isSurveyor && (
+              <button
+                onClick={exportKML}
+                title="Download plant boundary and visible anomalies as a .kml file for Google Earth"
+                className="h-8 px-3 flex items-center gap-1.5 text-xs font-medium border border-border bg-card text-muted-foreground hover:bg-muted"
+              >
+                <Download size={13} /> Export KML
+              </button>
+            )}
 
             <button onClick={() => setSidebarOpen(true)} className="md:hidden px-3 py-1.5 text-xs border border-border bg-card">
               Filters
@@ -582,7 +625,7 @@ function SiteMap() {
                   <Source id="cmp-thermal" type="image" url={THERMAL_IMAGE} coordinates={cornersOf("thermal")}>
                     <Layer id="cmp-thermal-layer" type="raster" paint={{
                       "raster-opacity": 1,
-                      "raster-resampling": "nearest",
+                      "raster-resampling": RASTER_RESAMPLING,
                       "raster-contrast": THERMAL_CONTRAST,
                       "raster-saturation": THERMAL_SATURATION,
                     }} />
@@ -614,10 +657,10 @@ function SiteMap() {
                   mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
                 >
                   <Source id="cmp-rgb" type="image" url={OVERLAYS.rgb.url} coordinates={cornersOf("rgb")}>
-                    <Layer id="cmp-rgb-layer" type="raster" paint={{ "raster-opacity": 0.90 }} />
+                    <Layer id="cmp-rgb-layer" type="raster" paint={{ "raster-opacity": 1, "raster-resampling": RASTER_RESAMPLING }} />
                   </Source>
                   <Source id="cmp-rgb2" type="image" url={OVERLAYS.rgb2.url} coordinates={cornersOf("rgb2")}>
-                    <Layer id="cmp-rgb2-layer" type="raster" paint={{ "raster-opacity": 0.90 }} />
+                    <Layer id="cmp-rgb2-layer" type="raster" paint={{ "raster-opacity": 1, "raster-resampling": RASTER_RESAMPLING }} />
                   </Source>
                 </MapGL>
                 <div className="absolute top-2 right-2 bg-emerald-600 text-white text-[10px] font-bold mono px-2 py-0.5 flex items-center gap-1">
@@ -736,21 +779,21 @@ function SiteMap() {
                       // "linear", which blends neighbouring panel rows together
                       // exactly when you have zoomed in to inspect them; "nearest"
                       // keeps the row/gap boundaries hard.
-                      "raster-resampling": "nearest",
+                      "raster-resampling": RASTER_RESAMPLING,
                       "raster-contrast": THERMAL_CONTRAST,
                       "raster-saturation": THERMAL_SATURATION,
-                      "raster-fade-duration": 300,
+                      "raster-fade-duration": 0,
                     }} />
                   </Source>
                 )}
                 {isRajpur && rgbVisible && !kmlViewMode && (
                   <Source id="rgb" type="image" url={OVERLAYS.rgb.url} coordinates={cornersOf("rgb")}>
-                    <Layer id="rgb-layer" type="raster" beforeId="anomaly-panel-fill" paint={{ "raster-opacity": rgbOpacity, "raster-fade-duration": 300 }} />
+                    <Layer id="rgb-layer" type="raster" beforeId="anomaly-panel-fill" paint={{ "raster-opacity": rgbOpacity, "raster-resampling": RASTER_RESAMPLING, "raster-fade-duration": 0 }} />
                   </Source>
                 )}
                 {isRajpur && rgb2Visible && !kmlViewMode && (
                   <Source id="rgb2" type="image" url={OVERLAYS.rgb2.url} coordinates={cornersOf("rgb2")}>
-                    <Layer id="rgb2-layer" type="raster" beforeId="anomaly-panel-fill" paint={{ "raster-opacity": rgb2Opacity, "raster-fade-duration": 300 }} />
+                    <Layer id="rgb2-layer" type="raster" beforeId="anomaly-panel-fill" paint={{ "raster-opacity": rgb2Opacity, "raster-resampling": RASTER_RESAMPLING, "raster-fade-duration": 0 }} />
                   </Source>
                 )}
 
@@ -853,13 +896,15 @@ function SiteMap() {
               {/* Satellite legend */}
               <div className="absolute bottom-4 left-4 bg-card/95 border border-border px-3 py-2 text-xs space-y-1.5 shadow backdrop-blur-sm">
                 {([
-                  { l: SEVERITY_LABEL.critical, s: "critical" },
-                  { l: SEVERITY_LABEL.medium, s: "medium" },
-                  { l: SEVERITY_LABEL.normal, s: "normal" },
-                ] as const).map(({ l, s }) => (
+                  { l: SEVERITY_LABEL_FULL.critical, s: "critical", note: "Immediate action" },
+                  { l: SEVERITY_LABEL_FULL.medium,   s: "medium",   note: "Schedule repair" },
+                  { l: SEVERITY_LABEL_FULL.normal,   s: "normal",   note: "No action" },
+                ] as const).map(({ l, s, note }) => (
                   <div key={s} className="flex items-center gap-2">
                     <span style={{ width: 10, height: 10, borderRadius: "50%", display: "inline-block", backgroundColor: SEV_COLOR[s], border: "1.5px solid white", boxShadow: "0 0 0 1px rgba(0,0,0,0.2)" }} />
-                    <span>{l}</span>
+                    <span className="flex-1">{l}</span>
+                    <span className="text-[10px] text-muted-foreground">{note}</span>
+                    <span className="mono font-semibold tabular-nums w-8 text-right">{visibleCounts[s]}</span>
                   </div>
                 ))}
                 {/* Stray markers. Never hidden silently: an anomaly the client
@@ -869,21 +914,13 @@ function SiteMap() {
                     a registration artefact, not a defect that has moved. Defects
                     sitting in interior road or stitch gaps are *not* counted here
                     and stay visible, because those are correctly placed. */}
-                {isRajpur && activeOverlayIds.length > 0 && strayIds.size > 0 && (
+                {isSurveyor && isRajpur && activeOverlayIds.length > 0 && strayIds.size > 0 && (
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={hideStrays}
-                        onChange={e => setHideStrays(e.target.checked)}
-                        className="accent-violet-600"
-                      />
-                      <span className="flex items-center gap-1 text-muted-foreground">
-                        <EyeOff size={11} /> Hide {strayIds.size} off-overlay
-                      </span>
-                    </label>
+                    <div className="flex items-center gap-1 text-muted-foreground">
+                      <EyeOff size={11} /> {strayIds.size} off-overlay hidden
+                    </div>
                     <p className="text-[10px] text-muted-foreground leading-snug max-w-[190px]">
-                      Outside the overlay's coverage — imagery registration, not a
+                      Outside this overlay's coverage — imagery registration, not a
                       moved defect. Still counted in reports.
                     </p>
                   </div>
@@ -1039,10 +1076,16 @@ function SiteMap() {
  * hides a third of the plant's defects to flatter an overlay that is known to be
  * unregistered — arguably the map should look broken there, because it is.
  *
- * TODO(operator policy): decide where the line sits. Options worth weighing —
- * suppress only below some stray fraction; suppress only for overlays whose
- * alignmentVerdict() is trustworthy; or keep it unconditional and rely on the
- * always-visible count. Current behaviour is unconditional.
+ * Policy settled 2026-08-13: unconditional, and no longer operator-toggleable.
+ * The deciding argument is that a marker outside the raster is not a defect the
+ * imagery can evidence — whatever its coordinate claims, nothing on screen backs
+ * it up — so drawing it invites the client to read scrubland as a fault. The
+ * honesty requirement is met by the sidebar's "N of 347 shown", which moves as
+ * overlays are toggled, rather than by drawing markers we cannot substantiate.
+ *
+ * The V1/V2 case stays ugly, and should: switching them on visibly drops a third
+ * of the defects, which is the correct signal that those two rasters carry no
+ * registration. Fixing that needs source georeferencing, not a display rule.
  */
 function suppressionApplies(
   activeOverlayIds: string[],
