@@ -3,14 +3,22 @@
  *
  * WHY THIS EXISTS
  * ---------------
- * A GeoTIFF carries tie-points that say "image pixel (x,y) is at (lng,lat)". Our
- * orthomosaics arrive as PNG, which has nowhere to store that, so every overlay
- * lands on the map with unknown corners. scripts/fit_thermal_bounds.py tried to
- * recover them by fitting against the 347 surveyed defect coordinates; that tops
- * out at 87% of defects landing on a data pixel and cannot be pushed further —
- * a 4-parameter fit (translation, isotropic scale, rotation) against a
- * signed-distance objective reaches 87.0%, i.e. the same answer. The information
- * simply is not in the PNG.
+ * A GeoTIFF carries tie-points that say "image pixel (x,y) is at (lng,lat)". This
+ * module existed because the orthomosaics only ever arrived as PNG, which has
+ * nowhere to store that, so every overlay landed on the map with unknown corners.
+ *
+ * That is now only half true, and the halves need different treatment:
+ *
+ *   V1/V2 — SOLVED. The source GeoTIFFs were found (external drive, not Desktop).
+ *   Their tie-points are sound and the baselines below already match them exactly,
+ *   so no fitting or hand-alignment is required for these two.
+ *
+ *   Thermal — STILL FITTED. A GeoTIFF exists (Day1_T_modified.tif) but its
+ *   geotransform is hand-written and wrong (see the OVERLAYS note below), so
+ *   scripts/fit_thermal_bounds.py remains the source of truth. That fit tops out
+ *   at 87% of the 347 surveyed defects landing on a data pixel and cannot be
+ *   pushed further — a 4-parameter fit (translation, isotropic scale, rotation)
+ *   against a signed-distance objective reaches the same 87.0%.
  *
  * What *is* exact is the surveyed panel geometry in Block20_1GV_4.kml. So rather
  * than guess harder, this module lets an operator place the raster by hand against
@@ -73,15 +81,36 @@ export interface OverlayDef {
  * Every overlay the map can draw.
  *
  * Baselines are the corners that were in map.tsx before this tool existed: the
- * thermal set is the output of fit_thermal_bounds.py, the two RGB sets were never
- * derived from source georeferencing at all. Keeping them as the baseline means
- * an operator who has not aligned anything sees exactly what shipped before.
+ * thermal set is the output of fit_thermal_bounds.py. Keeping them as the
+ * baseline means an operator who has not aligned anything sees exactly what
+ * shipped before.
  *
- * All three `url`s point at scripts/clean_orthomosaic.py output. That matters for
- * more than looks: the raw V1/V2 exports were ~47% and ~53% opaque white letterbox
- * padding, which a Mapbox image source paints over the basemap as a solid box, and
- * which — having no alpha — also made overlay-coverage.ts read the whole rectangle
- * as covered. Cleaning them gives both an honest footprint and 4x the pixels.
+ * 2026-08-13: the source GeoTIFFs were located and both RGB baselines below are
+ * now confirmed EXACT — they match Day1_V1.tif's and Day1_V2.tif's GeoTIFF
+ * tie-points to all six decimals, and those rasters' pixels are square on the
+ * ground (X/Y GSD ratio 1.0000). Do not "re-fit" them. The old reading that
+ * V1/V2 scored no better than chance was measuring partial coverage, not
+ * misregistration: V1's footprint geometrically contains only 61.5% of the
+ * surveyed defects and V2's 74.1%, because each covers just part of the site.
+ *
+ * The thermal is the opposite case. Day1_T_modified.tif carries a geotransform
+ * too, but it is NOT trustworthy — equal ModelPixelScale in X and Y *in degrees*
+ * (non-square on the ground at 28.26 N) and a footprint ~1.8x inflated against
+ * the surveyed defects. The fit_thermal_bounds.py result below is the better
+ * number and is what we keep; only pixels are taken from that file.
+ *
+ * All three `url`s point at scripts/retile_from_geotiff.py output, rendered
+ * directly from the source GeoTIFFs on the external drive. The previous
+ * clean_orthomosaic.py overlays were 1024 px upscaled 2x — pixels without detail.
+ * These are true 4096 px area-averages of 566–2738 MP sources, which is what
+ * lifts the "goes blocky past z19" ceiling. Regenerate with --width 8192 for
+ * another 2x if the payload budget allows (roughly 8 MB per overlay).
+ *
+ * Padding is still alpha-cut the same way and for the same reason: the raw V1/V2
+ * exports are ~47% and ~53% opaque white letterbox, which a Mapbox image source
+ * paints over the basemap as a solid box, and which — having no alpha — also made
+ * overlay-coverage.ts read the whole rectangle as covered.
+ *
  * Canvas proportions are preserved, so these baselines still apply unchanged.
  *
  * To add an overlay later: drop the PNG in public/, add an entry here, then open
@@ -91,19 +120,19 @@ export const OVERLAYS: Record<string, OverlayDef> = {
   thermal: {
     id: "thermal",
     label: "Thermal IR",
-    url: "/thermal_block20_clean.png",
+    url: "/thermal_block20_hi.png",
     baseline: { west: 73.036467, north: 28.258982, east: 73.042336, south: 28.255081 },
   },
   rgb: {
     id: "rgb",
     label: "Visual V1 (east)",
-    url: "/rgb_block20_clean.png",
+    url: "/rgb_block20_hi.png",
     baseline: { west: 73.037842, north: 28.257479, east: 73.042711, south: 28.254353 },
   },
   rgb2: {
     id: "rgb2",
     label: "Visual V2 (west)",
-    url: "/rgb2_block20_clean.png",
+    url: "/rgb2_block20_hi.png",
     baseline: { west: 73.035136, north: 28.25986, east: 73.041713, south: 28.256497 },
   },
 };
