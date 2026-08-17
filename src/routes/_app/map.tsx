@@ -103,7 +103,7 @@ const BLANK_BASEMAP_STYLE = {
 const PANEL_DOT_MAX_ZOOM  = 18.5;
 const PANEL_FILL_MIN_ZOOM = 19.5;
 
-// Dot geometry, sized against the module rather than picked by eye.
+// Dot geometry.
 //
 // Ground resolution at this latitude is 156543.03 * cos(28.2568°) / 2^zoom, i.e.
 // 137_850 / 2^zoom m/px. A module is 1.19 m across, so the radius that makes a dot
@@ -111,15 +111,33 @@ const PANEL_FILL_MIN_ZOOM = 19.5;
 //
 //     z17 -> 0.57 px    z18 -> 1.13 px    z19 -> 2.26 px    z19.5 -> 3.20 px
 //
-// Below ~z18 that is sub-pixel, so a to-scale dot would simply not render. The
-// ramp below tracks module width at the top of the range — where the dot is about
-// to hand over to the real KML footprint and being to-scale actually matters — and
-// floors at ~1.4 px lower down, where the dot stops claiming to be the panel and
-// is only a locator. Note circle-stroke-width extends *outward* from the radius,
-// so drawn width is 2 * (radius + stroke); the stroke is kept hairline because it
-// was previously adding 3.5 px to a 12 px dot.
-// Critical stays a touch larger so triage still reads at a glance; even at 1.25x
-// this is ~2.7x narrower than the 15.5 px the layer drew before.
+// This ramp used to track those figures, on the reasoning that a dot wider than
+// its module is claiming an accuracy it does not have. **That reasoning was
+// applied at the wrong zooms and the dots came out invisible** — 1.4 px radius
+// under a 0.5 px stroke, i.e. a 3.8 px speck, on a site where the client is
+// looking for 347 of them.
+//
+// The to-scale argument only holds where a module is actually resolvable. At z17
+// the entire 575 m array is ~547 px wide and holds 19,058 panels, so a module is
+// 1.1 px: *every* legible marker overstates it, and "to scale" degenerates to
+// "not rendered". Below PANEL_DOT_MAX_ZOOM the dot is therefore a locator and is
+// sized to be seen. Above it the dot fades out entirely (circle-opacity ramps to
+// 0 across PANEL_DOT_MAX_ZOOM..PANEL_FILL_MIN_ZOOM) and the real surveyed KML
+// footprint fades in — so precision is carried by the footprint, which is exact,
+// and never by the dot. Sizing the dot for visibility costs nothing at the zooms
+// where accuracy is checkable, because it is not on screen there.
+//
+// Note circle-stroke-width extends *outward* from the radius, so drawn width is
+// 2 * (radius + stroke).
+//
+// The white stroke is not decoration. Measured against the magma thermal under
+// all 347 defect positions, mean background is rgb(162,24,103) and the severity
+// colours score: critical #ef4444 1.95:1, medium #f59e0b 3.28:1, normal #22c55e
+// 3.05:1. WCAG's floor for non-text graphics is 3:1, so *critical* — the one
+// severity that must never be missed — was the least visible thing on the map.
+// White against that same background is 7.35:1, so the halo, not the fill, is
+// what makes a marker readable here. It has to be thick enough to survive being
+// drawn over a noisy raster, hence ~1.4 px rather than a hairline.
 //
 // The severity scale is applied per stop rather than as ["*", scale, ramp]:
 // Mapbox requires a "zoom" expression to be the outermost expression of a paint
@@ -133,15 +151,20 @@ const dotRadius = (px: number): ExpressionSpecification =>
 
 const DOT_RADIUS_BY_ZOOM: ExpressionSpecification = [
   "interpolate", ["exponential", 2], ["zoom"],
-  14,   dotRadius(1.4),
-  17,   dotRadius(1.8),
-  18.5, dotRadius(2.2),
-  19.5, dotRadius(2.6),
+  // Whole-site view: 347 markers share ~137 px of array, so they must stay small
+  // or they merge into one blob and stop carrying information.
+  14,   dotRadius(2.0),
+  // Working zooms — this is where the client actually reads the map.
+  16.5, dotRadius(3.4),
+  18,   dotRadius(4.0),
+  // Handing over to the footprint; the dot is already fading out by here.
+  19.5, dotRadius(3.0),
 ];
 const DOT_STROKE_BY_ZOOM: ExpressionSpecification = [
   "interpolate", ["linear"], ["zoom"],
-  14, 0.5,
-  19, 0.8,
+  14, 0.8,
+  17, 1.4,
+  19, 1.6,
 ];
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string;
@@ -749,6 +772,19 @@ function SiteMap() {
                       <Layer id="anomaly-panel-fill" type="fill" paint={{
                         "fill-color": severityColour,
                         "fill-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 0, PANEL_FILL_MIN_ZOOM, 0.75],
+                      }} />
+                      {/* White casing under the severity outline. Same reason the
+                          dots carry a white halo: critical #ef4444 scores only
+                          1.95:1 against the magma thermal, so an unbacked red
+                          rectangle on a red raster is close to invisible — and
+                          this is the zoom band where the client is inspecting an
+                          individual panel. Declared before the coloured line so
+                          Mapbox draws it underneath, and kept 2 px wider so it
+                          reads as an outline rather than a thicker border. */}
+                      <Layer id="anomaly-panel-casing" type="line" paint={{
+                        "line-color": "#ffffff",
+                        "line-width": 3.5,
+                        "line-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 0, PANEL_FILL_MIN_ZOOM, 0.9],
                       }} />
                       <Layer id="anomaly-panel-line" type="line" paint={{
                         "line-color": severityColour,
