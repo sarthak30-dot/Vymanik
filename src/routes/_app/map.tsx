@@ -6,7 +6,7 @@ import {
   Crosshair, RotateCcw, Copy, EyeOff,
 } from "lucide-react";
 import {
-  anomalies, anomalyTypes, plant, anomalyCounts, SEVERITY_LABEL, SEVERITY_LABEL_FULL,
+  anomalies, anomalyTypes, plant, anomalyCounts, SEVERITY_LABEL_FULL,
   type Anomaly, type Severity,
 } from "@/lib/mock-data";
 import { SeverityBadge } from "@/components/SeverityBadge";
@@ -224,15 +224,19 @@ function SiteMap() {
   // page is for, and it is the one overlay whose registration is sound enough to
   // put defect markers on top of.
   const [thermalVisible, setThermalVisible] = useState(true);
-  // V1/V2 default to off. Their corner coordinates were never derived from source
-  // georeferencing and do not survive checking: only 26.5% of surveyed defects land
-  // on a panel pixel in V1, against 25.1% expected from random placement — i.e. the
-  // registration carries no information. Re-fitting against the defect coordinates
-  // (scripts/fit_thermal_bounds.py, same method) only reaches ~51%, enough to show
-  // signal but not enough to trust at panel accuracy, so the bounds are left alone
-  // rather than replaced with a different wrong number. The layers stay available
-  // behind their toggles; they just no longer load misaligned on top of a corrected
-  // thermal. Fix properly by re-exporting these as GeoTIFF and reading the tie-points.
+  // V1/V2 default to off for LAYER-STACKING reasons only — their registration is
+  // correct. Both draw after the thermal at full opacity, so defaulting them on
+  // would simply hide the layer this page exists to show. Use the toggles.
+  //
+  // 2026-08-13: the old justification here — "only 26.5% of surveyed defects land
+  // on a panel pixel in V1 against 25.1% from random placement, so the registration
+  // carries no information" — was WRONG, and is corrected rather than deleted
+  // because it nearly triggered a pointless re-fit. That metric was measuring
+  // partial coverage, not misregistration: V1's footprint geometrically contains
+  // only 61.5% of the surveyed defects and V2's 74.1%, because each covers just
+  // part of the site. Multiply by the ~53%/47% non-padding fraction and 26.5%
+  // falls straight out. The source GeoTIFFs have since been found and both
+  // baselines match their tie-points exactly. Do not re-fit these.
   const [rgbVisible, setRgbVisible]         = useState(false);
   const [rgb2Visible, setRgb2Visible]       = useState(false);
   const [thermalOpacity, setThermalOpacity] = useState(1);
@@ -850,8 +854,8 @@ function SiteMap() {
                           backgroundColor: SEV_COLOR[popup.severity] + "22",
                           color: SEV_COLOR[popup.severity],
                           border: `1px solid ${SEV_COLOR[popup.severity]}44`,
-                          textTransform: "uppercase", borderRadius: 2,
-                        }}>{SEVERITY_LABEL[popup.severity]}</span>
+                          whiteSpace: "nowrap", borderRadius: 2,
+                        }}>{SEVERITY_LABEL_FULL[popup.severity]}</span>
                       </div>
                       <p className="text-xs text-muted-foreground">{popup.type}</p>
                       <p className="text-[10px] text-muted-foreground mono mt-1.5">

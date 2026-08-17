@@ -1,4 +1,4 @@
-import { SEVERITY_LABEL, type Severity, type Status } from "@/lib/mock-data";
+import { SEVERITY_LABEL, SEVERITY_LABEL_FULL, type Severity, type Status } from "@/lib/mock-data";
 
 const DOT_COLOR: Record<Severity, string> = {
   critical: "var(--critical)",
@@ -14,11 +14,31 @@ const TEXT_COLOR: Record<Severity, string> = {
   nodata:   "var(--grey-400)",
 };
 
+/**
+ * Which spelling of the severity taxonomy this badge shows.
+ *
+ * `sm` is the dense population — a cell in the 9-column anomaly table, a slot in
+ * the dashboard's 4-up grid, the corner of a mobile card. `lg` is used in exactly
+ * three places, all of them detail-page headers with room to spare.
+ *
+ * So the size prop already carries the density signal: the dense population keeps
+ * the bare code that fits its column, and the roomy one spells the label out for
+ * a client who would otherwise have to be taught what COA3 means.
+ */
+function badgeLabel(severity: Severity, size: "sm" | "lg"): string {
+  return size === "lg"
+    ? SEVERITY_LABEL_FULL[severity]
+    : SEVERITY_LABEL[severity];
+}
+
 export function SeverityBadge({ severity, size = "sm" }: { severity: Severity; size?: "sm" | "lg" }) {
   const sz = size === "lg" ? "text-xs px-3 py-1.5" : "text-[11px] px-2 py-1";
+  // Letter-spacing is tuned per label shape: wide spacing suits a 4-char code,
+  // but stretches a mixed-case phrase into something that reads like a banner.
+  const tracking = badgeLabel(severity, size).includes(" ") ? "tracking-wide" : "tracking-widest";
   return (
     <span
-      className={`inline-flex items-center gap-1.5 font-semibold tracking-widest border border-grey-200 bg-grey-25 ${sz}`}
+      className={`inline-flex items-center gap-1.5 font-semibold ${tracking} border border-grey-200 bg-grey-25 ${sz}`}
       style={{ borderRadius: "0.125rem", color: TEXT_COLOR[severity] }}
     >
       <span
@@ -32,7 +52,7 @@ export function SeverityBadge({ severity, size = "sm" }: { severity: Severity; s
           flexShrink:      0,
         }}
       />
-      {SEVERITY_LABEL[severity]}
+      {badgeLabel(severity, size)}
     </span>
   );
 }

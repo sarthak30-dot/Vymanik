@@ -6,7 +6,7 @@ import { useAnomalies, usePatchAnomaly } from "@/lib/queries";
 import { usePlantContext } from "@/lib/plant-context";
 import { getUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
-import { SEVERITY_LABEL } from "@/lib/mock-data";
+import { SEVERITY_LABEL, SEVERITY_LABEL_FULL } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 
 // Block number as it appears in the inspection report's "Layout Location" column,
@@ -132,7 +132,7 @@ function AnomalyList() {
               }`}
             >
               <span aria-hidden style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", backgroundColor: SEV_DOT[s], flexShrink: 0 }} />
-              {s === "all" ? "All" : SEVERITY_LABEL[s]}
+              {s === "all" ? "All" : SEVERITY_LABEL_FULL[s]}
             </button>
           ))}
         </div>

@@ -19,8 +19,17 @@ export const SEVERITY_LABEL: Record<Severity, string> = {
  * no gloss and carries the action implicitly. The code is kept in brackets so a
  * dot on the map still ties back to the COA column in the PDF report — dropping
  * it entirely would sever that link. Use this wherever a reading customer sees
- * the label; keep SEVERITY_LABEL for the compact badges, CSV and KML exports,
- * where the bare code is the established column value.
+ * the label in prose or in a control: map legend and filters, the anomaly-list
+ * severity filter, the WhatsApp share text, and size="lg" severity badges.
+ *
+ * Keep SEVERITY_LABEL for two cases. First, size="sm" badges, which sit in a
+ * 9-column table cell and the dashboard grid where the full label is ~2x too
+ * wide. Second — and this one is a contract, not a preference — the exports:
+ * the Severity column of the CSV in routes/_app/anomalies/index.tsx, and both
+ * the balloon body and the folder names in lib/kml.ts, where the bare code is
+ * the established value that downstream consumers parse. (Note the CSV importer
+ * in lib/csv.ts is unrelated: it has its own alias vocabulary and never reads
+ * either of these maps.)
  */
 export const SEVERITY_LABEL_FULL: Record<Severity, string> = {
   critical: "Critical (COA3)",
