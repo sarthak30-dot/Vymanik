@@ -1,5 +1,5 @@
 import { Link, useNavigate, useLocation } from "@tanstack/react-router";
-import { Bell, X, ChevronDown, Sun, Moon, Monitor } from "lucide-react";
+import { Bell, X, ChevronDown, Sun, Moon, Monitor, MonitorPlay } from "lucide-react";
 import { useState } from "react";
 import { UrjaScanLogo } from "@/components/UrjaScanLogo";
 import { useI18n } from "@/lib/i18n";
@@ -8,6 +8,8 @@ import { getUser, clearAuth } from "@/lib/auth";
 import { usePlantContext } from "@/lib/plant-context";
 import { useTheme } from "@/hooks/use-theme";
 import type { Theme } from "@/hooks/use-theme";
+import { usePresenting, useDensity } from "@/hooks/use-presentation";
+import { canTogglePresentation } from "@/lib/presentation";
 
 const MOCK_NOTIFICATIONS = [
   { id: "1", title: "Critical: R14-M07 Multi Hotspot", body: "ΔT +47°C · Immediate action required", time: "2h ago", unread: true },
@@ -15,11 +17,14 @@ const MOCK_NOTIFICATIONS = [
   { id: "3", title: "Inspection report ready", body: "3 May 2026 IEC 62446-3 certified report published", time: "3 days ago", unread: false },
 ];
 
+// `tour` ids are picked up by GuidedTour (hooks/use-guided-tour.tsx) — see
+// resolveTarget() there for why the same id can safely appear on both the
+// desktop nav below and MobileBottomNav's matching entries.
 const CLIENT_NAV = [
   { to: "/dashboard", label: "Dashboard" },
-  { to: "/map",       label: "Map" },
+  { to: "/map",       label: "Map", tour: "nav-map" },
   { to: "/anomalies", label: "Anomalies" },
-  { to: "/reports",   label: "Reports" },
+  { to: "/reports",   label: "Reports", tour: "nav-reports" },
   { to: "/services",  label: "Services" },
 ] as const;
 
@@ -50,6 +55,20 @@ export function AppHeader() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
+  // ── Presentation Mode ──
+  // `showOperatorChrome` decides what CHROME renders (nav set, plant switcher
+  // vs static chip, the operator links in the avatar menu). It is never asked
+  // whether an action is allowed — that stays with can() in lib/permissions.ts,
+  // unaffected by this toggle. See the header comment in lib/presentation.ts.
+  //
+  // useDensity() rather than the plain densityFor(): it subscribes via
+  // useSyncExternalStore, so toggling the button below re-renders this nav in
+  // the same frame instead of on some later, unrelated re-render. See the
+  // comment on useDensity in hooks/use-presentation.ts.
+  const [presenting, setPresenting] = usePresenting();
+  const canPresent = canTogglePresentation(user?.role);
+  const showOperatorChrome = useDensity(user?.role) === "operator";
+
   const initials = user
     ? user.role === "admin" ? "CC" : user.role === "team" ? "IN" : "PO"
     : "?";
@@ -70,9 +89,13 @@ export function AppHeader() {
           <UrjaScanLogo size="sm" />
         </Link>
 
-        {/* Plant chip — hidden on Control Center; dropdown for admin/team, static for client */}
+        {/* Plant chip — hidden on Control Center; dropdown for admin/team, static for client.
+            Keyed on showOperatorChrome rather than isAdmin/isTeam directly: while
+            presenting, an admin/team viewer sees the same static chip a client
+            would — nothing here says "you can switch plants," which is exactly
+            what a prospect looking at their own plant should see. */}
         {!onControlCenter && (
-          (isAdmin || isTeam) ? (
+          showOperatorChrome ? (
             <div className="hidden md:flex items-center relative shrink-0">
               <select
                 value={selectedPlant.id}
@@ -94,14 +117,18 @@ export function AppHeader() {
           )
         )}
 
-        {/* Desktop navigation */}
+        {/* Desktop navigation — the nav SET follows density, not raw role, so
+            Presentation Mode swaps an admin/team viewer onto CLIENT_NAV exactly
+            as if they had signed in as the client. */}
         <nav className="hidden md:flex items-center gap-0.5">
-          {(user?.role === "admin" ? ADMIN_NAV : user?.role === "team" ? TEAM_NAV : CLIENT_NAV).map(({ to, label }) => {
+          {(showOperatorChrome ? (user?.role === "admin" ? ADMIN_NAV : TEAM_NAV) : CLIENT_NAV).map(({ to, label, ...rest }) => {
             const active = loc.pathname === to || (to !== "/dashboard" && to !== "/admin" && to !== "/team" && loc.pathname.startsWith(to));
+            const tour = "tour" in rest ? rest.tour : undefined;
             return (
               <Link
                 key={to}
                 to={to}
+                data-tour={tour}
                 className={`px-3 py-1.5 text-sm font-medium transition ${
                   active ? "text-ochre border-b-2 border-ochre" : "text-muted-foreground hover:text-foreground"
                 }`}
@@ -122,6 +149,26 @@ export function AppHeader() {
 
           {/* Theme toggle — cycles: light → dark → system */}
           <ThemeToggle theme={theme} setTheme={setTheme} />
+
+          {/* Presentation Mode — team/admin only. See lib/presentation.ts for
+              why this exists and exactly what it does and doesn't govern. */}
+          {canPresent && (
+            <button
+              onClick={() => setPresenting(!presenting)}
+              title={presenting
+                ? "Presentation Mode is on — showing the client view. Click to return to your Inspector Portal / Control Center chrome."
+                : "Presentation Mode — show a prospect the client view without switching accounts."}
+              aria-pressed={presenting}
+              className={`hidden sm:flex items-center gap-1.5 h-8 px-2.5 text-xs font-medium border transition ${
+                presenting
+                  ? "bg-sky-600 text-white border-sky-600"
+                  : "bg-card text-muted-foreground border-border hover:bg-muted"
+              }`}
+            >
+              <MonitorPlay size={14} />
+              <span className="hidden lg:inline">{presenting ? "Presenting" : "Present"}</span>
+            </button>
+          )}
 
           {/* Notification bell */}
           <div className="relative">
@@ -176,15 +223,29 @@ export function AppHeader() {
                   <Link to="/settings" onClick={() => setShowUserMenu(false)} className="block px-4 py-2 text-xs text-foreground hover:bg-muted">
                     Settings
                   </Link>
-                  {user?.role === "admin" && (
+                  {/* Operator escape hatches — the very "raw operational debugging
+                      flows" this task exists to keep out of a prospect's view.
+                      Gated on showOperatorChrome rather than role so they vanish
+                      the moment Presentation Mode is on, same as the nav above.
+                      requireOperatorRoute() (lib/route-guards.ts) still refuses
+                      the route directly, so this is a courtesy, not the guard. */}
+                  {showOperatorChrome && user?.role === "admin" && (
                     <Link to="/admin" onClick={() => setShowUserMenu(false)} className="block px-4 py-2 text-xs text-foreground hover:bg-muted">
                       Control Center
                     </Link>
                   )}
-                  {(user?.role === "team" || user?.role === "admin") && (
+                  {showOperatorChrome && (user?.role === "team" || user?.role === "admin") && (
                     <Link to="/team" onClick={() => setShowUserMenu(false)} className="block px-4 py-2 text-xs text-foreground hover:bg-muted">
                       Inspector Portal
                     </Link>
+                  )}
+                  {presenting && (
+                    <button
+                      onClick={() => { setPresenting(false); setShowUserMenu(false); }}
+                      className="w-full text-left px-4 py-2 text-xs text-sky-600 hover:bg-muted font-medium"
+                    >
+                      Exit Presentation Mode
+                    </button>
                   )}
                   <button onClick={handleSignOut} className="w-full text-left px-4 py-2 text-xs text-critical hover:bg-muted">
                     Sign Out

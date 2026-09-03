@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { getUser } from "@/lib/auth";
+import { requireOperatorRoute } from "@/lib/route-guards";
 import {
   Building2, Users, AlertTriangle, CheckCircle2, Clock, Plane,
   ChevronRight, Wifi, WifiOff, Activity, Shield, UserPlus, PlusCircle, KeyRound, Grid3x3,
@@ -24,6 +25,8 @@ interface ClientAccount {
 }
 
 export const Route = createFileRoute("/_app/admin")({
+  // Admin only — "Control Center" in AppHeader's user menu only shows for admin.
+  beforeLoad: () => requireOperatorRoute(["admin"]),
   head: () => ({ meta: [{ title: "Control Center — UrjaScan" }] }),
   component: ControlCenter,
 });

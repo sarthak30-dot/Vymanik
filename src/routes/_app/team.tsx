@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { getUser, setDisplayName } from "@/lib/auth";
+import { requireOperatorRoute } from "@/lib/route-guards";
 import { usePlantContext } from "@/lib/plant-context";
 import { Upload, Image as ImageIcon, Plane, ClipboardCheck, Send, Layers, Cpu, AlertTriangle, User2, MapPin, Pencil, Check, X } from "lucide-react";
 import { reviewQueue, teamMembers, allPlants, anomalyTypes, getTeamMemberByEmail, type QueueEntry } from "@/lib/mock-data";
@@ -11,6 +12,9 @@ import { AnomalyCsvImport } from "@/components/AnomalyCsvImport";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/team")({
+  // Team AND admin — the header's own "Inspector Portal" link shows for both
+  // (AppHeader.tsx), so the guard has to match what the nav already promises.
+  beforeLoad: () => requireOperatorRoute(["team", "admin"]),
   head: () => ({ meta: [{ title: "Inspector Portal — UrjaScan" }] }),
   component: TeamDashboard,
 });

@@ -3,11 +3,14 @@ import { Zap, Map, ClipboardList, TrendingUp, ArrowRight, ChevronDown, RefreshCw
 import { useState, useEffect } from "react";
 import { HealthGauge } from "@/components/HealthGauge";
 import { SeverityBadge } from "@/components/SeverityBadge";
+import { ExecutiveOverview } from "@/components/ExecutiveOverview";
 import { useI18n } from "@/lib/i18n";
 import { usePlant, useAnomalies, useInspectionHistory } from "@/lib/queries";
 import { getUser } from "@/lib/auth";
 import { allPlants, teamMembers } from "@/lib/mock-data";
 import { usePlantContext } from "@/lib/plant-context";
+import { useDensity } from "@/hooks/use-presentation";
+import { useGuidedTour, hasTourRun, type TourStep } from "@/hooks/use-guided-tour";
 import type { PlantDTO } from "@/lib/api";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
@@ -43,6 +46,43 @@ export const Route = createFileRoute("/_app/dashboard")({
   component: Dashboard,
 });
 
+/**
+ * The prospect-landing tour. Every target here is a `data-tour` id set on
+ * ExecutiveOverview's three KPIs or on the header nav (AppHeader.tsx /
+ * MobileBottomNav.tsx) — nothing points inside the map, per this task's
+ * guardrail against touching core map components. The tour ends by pointing at
+ * Map and Reports rather than trying to explain them on this page, since the
+ * whole point of "friction-free" is to hand off to the real thing quickly
+ * rather than narrate it from a distance.
+ */
+const DASHBOARD_TOUR: TourStep[] = [
+  {
+    target: "kpi-defects",
+    title: "Total Defects Found",
+    body: "Every issue our drone thermography flagged across the site, from a single warm cell to a dead string.",
+  },
+  {
+    target: "kpi-loss",
+    title: "Estimated Generation Loss",
+    body: "What these defects are costing in lost energy right now, every day they go unrepaired.",
+  },
+  {
+    target: "kpi-health",
+    title: "Site Health Score",
+    body: "The share of panels operating normally. 100% would mean the drone found nothing to flag.",
+  },
+  {
+    target: "nav-map",
+    title: "See exactly where",
+    body: "The Map shows every defect on the real layout of your site, down to the individual panel.",
+  },
+  {
+    target: "nav-reports",
+    title: "Take it with you",
+    body: "IEC 62446-3 certified inspection reports, ready to download any time from here.",
+  },
+];
+
 function trendLabel(curr: number, prev: number, unit = "from last inspection") {
   const diff = curr - prev;
   if (diff > 0) return `↑ ${diff} ${unit}`;
@@ -54,6 +94,11 @@ function Dashboard() {
   const { t } = useI18n();
   const user = getUser();
   const isAdmin = user?.role === "admin";
+  // Prospect density is the default state for a client, and for team/admin
+  // while Presentation Mode is on (lib/presentation.ts) — see the header
+  // comment on ExecutiveOverview for what changes between the two.
+  const isProspectView = useDensity(user?.role) === "prospect";
+  const tour = useGuidedTour(DASHBOARD_TOUR, "urjascan.tour.dashboard.v1");
 
   // Plant selection from shared context (driven by header dropdown)
   const { selectedPlantId, setSelectedPlantId, selectedPlant: selectedSummary } = usePlantContext();
@@ -74,6 +119,19 @@ function Dashboard() {
     const t = setTimeout(() => setTimedOut(true), 7000);
     return () => clearTimeout(t);
   }, [isLoading]);
+
+  // Auto-launch the tour once per session for a prospect-density viewer, once
+  // the real numbers have painted — starting it against a loading skeleton
+  // would spotlight nothing. hasTourRun() is a plain sessionStorage read (see
+  // hooks/use-guided-tour.tsx), so this never re-fires after the first visit
+  // this session, and never fires at all for an operator who hasn't turned on
+  // Presentation Mode.
+  useEffect(() => {
+    if (!isProspectView || isLoading || hasTourRun("urjascan.tour.dashboard.v1")) return;
+    const t = setTimeout(() => tour.start(), 900);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isProspectView, isLoading]);
 
   if (isError || (isLoading && timedOut)) {
     return (
@@ -134,11 +192,33 @@ function Dashboard() {
     Normal: i.normal / 50,
   }));
 
+  // Total findings across every severity — matches the count the anomalies
+  // list and equipment-audit records already show, so a prospect never sees
+  // two different "how many defects" numbers between screens.
+  const totalDefectCount = isAdmin
+    ? (selectedSummary.anomalyCount ?? selectedSummary.criticalCount + selectedSummary.mediumCount)
+    : anomalies.length;
+
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">
 
-      {/* ── Admin: plant selector ── */}
-      {isAdmin && (
+      {/* ── Executive Overview — the clean landing state, before the granular
+          breakdown below. Shown whenever density is "prospect": always for a
+          real client, and for team/admin while Presentation Mode is on. */}
+      {isProspectView && (
+        <ExecutiveOverview
+          defectCount={totalDefectCount}
+          dailyLossKWh={plant.dailyLossKWh}
+          dailyLossINR={plant.dailyLossINR}
+          healthScore={plant.healthScore}
+          onStartTour={tour.start}
+        />
+      )}
+      <tour.Overlay />
+
+      {/* ── Admin: plant selector — an operator control, so it stays hidden
+          under Presentation Mode even though isAdmin is still true. */}
+      {isAdmin && !isProspectView && (
         <section className="bg-card border border-border p-4 flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="flex-1">
             <p className="text-[11px] uppercase tracking-widest text-grey-400 mb-1">Viewing Plant Data For</p>
