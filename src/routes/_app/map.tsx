@@ -3,7 +3,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import {
   X, ArrowRight, MessageCircle, Thermometer, Layers,
   SplitSquareHorizontal, Navigation, Download, Map as MapIcon,
-  Crosshair, RotateCcw, Copy, EyeOff,
+  Crosshair, RotateCcw, Copy, EyeOff, MonitorPlay,
 } from "lucide-react";
 import {
   anomalies, anomalyTypes, plant, anomalyCounts, SEVERITY_LABEL_FULL,
@@ -23,46 +23,45 @@ import {
   loadRasterMask, makeCoverageTest, scorePlacement,
   type RasterMask, type AlignmentScore,
 } from "@/lib/overlay-coverage";
+import {
+  OVERLAY_ZOOM, SOURCE_TUNING, CLUSTER_TUNING, UNCLUSTERED, CLUSTERED,
+  boxPaint, clusterPaint, anchorPaint, panelChrome,
+  PRESENTATION, emitPanelSelect,
+} from "@/lib/defect-overlay";
 import MapGL, {
   Marker, Popup, Source, Layer, NavigationControl,
   type MapRef, type ViewState,
 } from "react-map-gl/mapbox";
-import type { ExpressionSpecification } from "mapbox-gl";
+import type { ExpressionSpecification, GeoJSONSource } from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 
 // ─── Drone orthomosaic placement ──────────────────────────────────────────────
 
-// Corners now live in src/lib/overlay-registration.ts, as a baseline rectangle
-// plus an operator-adjustable similarity transform. They moved out of here
-// because a hardcoded constant cannot be corrected without a redeploy, and these
-// corners are not measurements — they are the best available guess.
+// Corners live in src/lib/overlay-registration.ts as a baseline rectangle plus an
+// operator-adjustable similarity transform, and for the March 2026 survey the
+// baseline is exact.
 //
-// Why they can only ever be a guess: exporting the orthomosaic to PNG discarded
-// its georeferencing (a GeoTIFF holds tie-points in its tags, a PNG has nowhere to
-// put them), and the usual fallback of matching the raster against satellite
-// imagery is closed too, because Maxar's coverage of this site predates
-// construction — the basemap is bare scrub with no array to align to.
+// That is a change of kind, not of degree, so it is worth being explicit about.
+// The May 2025 Block 20 thermal arrived as a flat PNG with its georeferencing
+// stripped on export, and PNG has nowhere to put tie-points. Recovering the
+// placement meant fitting it against the surveyed defect coordinates, which
+// scripts/fit_thermal_bounds.py did to 87% of defects landing on a data pixel —
+// a ceiling, not a stopping point: adding rotation and re-solving against a
+// signed-distance objective returned the same 87.0%. The information was not in
+// the file. Roughly 7% of markers were provably in the wrong place, and the Align
+// tool exists because only an operator could fix them.
 //
-// scripts/fit_thermal_bounds.py recovered the thermal baseline by fitting against
-// the 347 surveyed defect coordinates and reached 87% of them on a data pixel.
-// That is the ceiling, not a stopping point chosen for convenience: re-solving
-// with a fourth parameter (rotation) and a signed-distance objective instead of
-// raw hit rate lands on 87.0% and 0.077° — the same answer. The information is
-// not in the PNG.
+// The March 2026 thermal arrived as ortho4.kmz, a superoverlay whose every tile
+// carries its own <LatLonBox>. scripts/flatten_superoverlay.py composites them and
+// the corners are read straight out. Scored identically, all 1,249 surveyed
+// defects land on a data pixel: 100.0%.
 //
-// So the remaining 13% is split, and the split matters:
-//   * 25 defects sit in genuine interior gaps — roads and stitching holes, which
-//     account for 11.8% of the array outline. Those markers are correctly placed.
-//   * 23 defects (6.6%) fall outside the array outline. Those are real
-//     misregistration, and they are what the Align tool exists to fix by hand.
-//
-// The V1/V2 baselines were never derived from source georeferencing at all: only
-// 26.5% of surveyed defects land on a panel pixel in V1, against 25.1% expected
-// from random placement, so that registration carries no information whatsoever.
-// Re-fitting reaches ~51% — enough to show signal, not enough to trust — which is
-// why they need aligning by hand rather than by another fit.
-//
-// Replace the baselines with GeoTIFF tie-points the moment a .tif surfaces.
+// Two consequences worth holding on to:
+//   * A marker that looks misplaced is now a finding about the survey, not an
+//     artefact of this map. Do not "fix" it by nudging the raster.
+//   * The Align tool and the stray-marker suppression below are insurance for the
+//     next deliverable, which may well arrive as a bare PNG again. They are not
+//     load-bearing today, and IDENTITY is the correct placement for what ships.
 
 // The raw stitcher output letterboxes the flight footprint onto a white canvas,
 // and a Mapbox image source georeferences that filler right along with the data —
@@ -72,12 +71,28 @@ import "mapbox-gl/dist/mapbox-gl.css";
 const THERMAL_IMAGE = OVERLAYS.thermal.url;
 
 // Applied to the thermal raster on top of the per-layer opacity. Range is -1..1
-// for both; 0 is untouched source. See the tuning note in the legend panel below.
-// Pushed up from 0.15/0.2 so the magma ramp separates warm modules from warm sand
-// at overview zoom — the previous values were tuned when the layer sat at partial
-// opacity over satellite, and read as washed out now that it loads at full.
-const THERMAL_CONTRAST   = 0.30;
-const THERMAL_SATURATION = 0.45;
+// for both; 0 is untouched source, which is what the March 2026 raster wants.
+//
+// These were 0.30 / 0.45 for the Block 20 thermal and had to be. That overlay was
+// a 1024 px export upscaled 2x, and the upscale flattened the magma ramp until
+// warm modules and warm sand were nearly the same colour at overview zoom; the
+// boost bought back a separation the pixels had lost.
+//
+// Carrying those values onto this raster was actively harmful. Simulating
+// Mapbox's own raster.fragment.glsl over the composited mosaic —
+//     sat_f = 1 - 1/(1.001 - saturation);  rgb += (mean(rgb) - rgb) * sat_f
+//     con_f = 1/(1 - contrast);            rgb  = (rgb - 0.5) * con_f + 0.5
+// — 0.30/0.45 drives both the sand and the hot modules into clipped red, so the
+// one distinction the layer exists to show is the first thing to go. 0.15/0.20 is
+// already visibly worse than untouched. This source is a true 3.4 cm/px
+// area-average straight off the KMZ tiles, so the ramp is intact and any boost
+// only takes headroom away.
+//
+// Leaving these at 0 also keeps the marker-contrast figures quoted above honest:
+// they were measured on the raster's own pixels, and a contrast boost would move
+// the background they were measured against.
+const THERMAL_CONTRAST   = 0;
+const THERMAL_SATURATION = 0;
 
 // Bilinear, not nearest. Both orthomosaics are already LANCZOS-upscaled and
 // unsharp-masked by clean_orthomosaic.py, so the detail that exists is baked in;
@@ -94,32 +109,37 @@ const BLANK_BASEMAP_STYLE = {
   layers: [{ id: "blank", type: "background" as const, paint: { "background-color": "#07070b" } }],
 };
 
-// A surveyed module is 1.19 m x 2.29 m. Map resolution at this latitude works out
+// A surveyed module is 1.16 m x 2.28 m. Map resolution at this latitude works out
 // to ~1.05 m/px at z17, so on the default overview a panel covers roughly 1x2
 // pixels — far too small to see, which is why anomalies are drawn as fixed-size
 // dots there. By z19.5 a panel is ~9x17 px and can carry its own true outline, so
 // the dots hand over to the real KML footprints across this range. The dot is a
 // locator; the footprint is the measurement.
-const PANEL_DOT_MAX_ZOOM  = 18.5;
-const PANEL_FILL_MIN_ZOOM = 19.5;
+//
+// The ladder itself — including the clustering band below these two — is defined
+// in lib/defect-overlay.ts, which is also where the reasoning for each boundary
+// lives. These aliases exist because the dot-geometry notes below are written in
+// terms of them.
+const PANEL_DOT_MAX_ZOOM  = OVERLAY_ZOOM.dotMax;
+const PANEL_FILL_MIN_ZOOM = OVERLAY_ZOOM.fillMin;
 
 // Dot geometry.
 //
-// Ground resolution at this latitude is 156543.03 * cos(28.2568°) / 2^zoom, i.e.
-// 137_850 / 2^zoom m/px. A module is 1.19 m across, so the radius that makes a dot
-// exactly fill the tile it marks is 0.5 * 1.19 * 2^zoom / 137_850:
+// Ground resolution at this latitude is 156543.03 * cos(28.2622°) / 2^zoom, i.e.
+// 137_867 / 2^zoom m/px. A module is 1.16 m across, so the radius that makes a dot
+// exactly fill the tile it marks is 0.5 * 1.16 * 2^zoom / 137_867:
 //
-//     z17 -> 0.57 px    z18 -> 1.13 px    z19 -> 2.26 px    z19.5 -> 3.20 px
+//     z17 -> 0.55 px    z18 -> 1.10 px    z19 -> 2.21 px    z19.5 -> 3.12 px
 //
 // This ramp used to track those figures, on the reasoning that a dot wider than
 // its module is claiming an accuracy it does not have. **That reasoning was
 // applied at the wrong zooms and the dots came out invisible** — 1.4 px radius
 // under a 0.5 px stroke, i.e. a 3.8 px speck, on a site where the client is
-// looking for 347 of them.
+// looking for 1,249 of them.
 //
 // The to-scale argument only holds where a module is actually resolvable. At z17
-// the entire 575 m array is ~547 px wide and holds 19,058 panels, so a module is
-// 1.1 px: *every* legible marker overstates it, and "to scale" degenerates to
+// the entire 1,137 m array is ~1,081 px wide and holds 10,790 panels, so a module
+// is 1.1 px: *every* legible marker overstates it, and "to scale" degenerates to
 // "not rendered". Below PANEL_DOT_MAX_ZOOM the dot is therefore a locator and is
 // sized to be seen. Above it the dot fades out entirely (circle-opacity ramps to
 // 0 across PANEL_DOT_MAX_ZOOM..PANEL_FILL_MIN_ZOOM) and the real surveyed KML
@@ -130,12 +150,13 @@ const PANEL_FILL_MIN_ZOOM = 19.5;
 // Note circle-stroke-width extends *outward* from the radius, so drawn width is
 // 2 * (radius + stroke).
 //
-// The white stroke is not decoration. Measured against the magma thermal under
-// all 347 defect positions, mean background is rgb(162,24,103) and the severity
-// colours score: critical #ef4444 1.95:1, medium #f59e0b 3.28:1, normal #22c55e
-// 3.05:1. WCAG's floor for non-text graphics is 3:1, so *critical* — the one
-// severity that must never be missed — was the least visible thing on the map.
-// White against that same background is 7.35:1, so the halo, not the fill, is
+// The white stroke is not decoration. Re-measured against the March 2026 raster
+// under all 1,249 defect positions, mean background is rgb(163,26,96) and the
+// severity colours score: critical #ef4444 1.94:1, medium #f59e0b 3.40:1, normal
+// #22c55e 3.20:1 — within noise of the Block 20 figures, because the DJI M3T
+// writes the same IronRed palette. WCAG's floor for non-text graphics is 3:1, so
+// *critical* — the one severity that must never be missed — is the least visible
+// thing on the map. White against that background is 7.30:1, so the halo, not the fill, is
 // what makes a marker readable here. It has to be thick enough to survive being
 // drawn over a noisy raster, hence ~1.4 px rather than a hairline.
 //
@@ -151,7 +172,7 @@ const dotRadius = (px: number): ExpressionSpecification =>
 
 const DOT_RADIUS_BY_ZOOM: ExpressionSpecification = [
   "interpolate", ["exponential", 2], ["zoom"],
-  // Whole-site view: 347 markers share ~137 px of array, so they must stay small
+  // Whole-site view: 1,249 markers share ~135 px of array, so they must stay small
   // or they merge into one blob and stop carrying information.
   14,   dotRadius(2.0),
   // Working zooms — this is where the client actually reads the map.
@@ -169,17 +190,60 @@ const DOT_STROKE_BY_ZOOM: ExpressionSpecification = [
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string;
 
-// Approximate plant boundary for the satellite overview polygon
+/**
+ * Overlay layers in the order they must stack, bottom first.
+ *
+ * The raster sits under the boxes so the defect geometry is never obscured by
+ * the thing it is describing; the anchor marker sits above the box it anchors;
+ * the alignment reference sits above everything, because its whole job is to be
+ * the fixed grid you drag a raster underneath.
+ *
+ * Ids not present in the current style are skipped, so this one list covers
+ * every combination of the overlay, KML-view and align toggles.
+ */
+/**
+ * Clickable layers, in priority order — queryRenderedFeatures returns top-most
+ * first within this set, so a cluster wins over the (fully transparent) box fill
+ * underneath it at overview zoom.
+ *
+ * The box fill is queried rather than its stroke because a stroke is a few pixels
+ * wide and a fill is the whole module: at z19.5 a panel is 9 x 17 px, and asking
+ * someone to hit a 1.5 px line inside that is asking them to miss.
+ */
+const CLICK_LAYERS = ["anomaly-cluster", "anomaly-dot", "anomaly-panel-fill"] as const;
+
+/** Hover has no cluster state, so it only tracks the two per-panel layers. */
+const HOVER_LAYERS = ["anomaly-panel-fill", "anomaly-dot"] as const;
+
+const OVERLAY_STACK = [
+  "thermal-layer",
+  "anomaly-panel-fill",
+  "anomaly-panel-halo",
+  "anomaly-panel-casing",
+  "anomaly-panel-line",
+  "anomaly-dot",
+  "anomaly-cluster",
+  "anomaly-cluster-count",
+  "anomaly-anchor-ring",
+  "anomaly-anchor-dot",
+  "align-ref-line",
+] as const;
+
+// Plant boundary for the satellite overview polygon — the composited extent of
+// the March 2026 thermal, so the outline and the raster are the same rectangle by
+// construction rather than a separate estimate that can drift out of step with it.
 const PLANT_BOUNDARY_COORDS = [
-  [73.033843, 28.261343], [73.043200, 28.261343],
-  [73.043200, 28.254336], [73.033843, 28.254336],
-  [73.033843, 28.261343],
+  [73.023697, 28.264500], [73.035302, 28.264500],
+  [73.035302, 28.259854], [73.023697, 28.259854],
+  [73.023697, 28.264500],
 ] as [number,number][];
 
 // ─── Panel grid constants ─────────────────────────────────────────────────────
 
 const PLANT_COLS = 26;
-const PLANT_ROWS = Math.ceil(plant.totalPanels / PLANT_COLS); // 733
+// 415 — which is also the highest rack number in the survey KML, as it should be:
+// both are 10,790 modules divided into racks of 26.
+const PLANT_ROWS = Math.ceil(plant.totalPanels / PLANT_COLS);
 
 const SEV_COLOR: Record<string, string> = {
   critical: "#ef4444",
@@ -198,7 +262,8 @@ function buildWhatsAppLink(a: Anomaly, plantName: string) {
 /** Defect frame thumbnail for the map popup. Renders nothing when the anomaly has
  *  no frame, or when the file 404s — a broken-image icon in a popup reads as a bug
  *  to a client, whereas an absent thumbnail just reads as "no photo for this one".
- *  229 frames cover 347 anomalies, so a miss is normal rather than exceptional. */
+ *  484 frames cover 1,249 anomalies, so several defects legitimately share one
+ *  frame and a miss is normal rather than exceptional. */
 function PopupDefectImage({ note }: { note: string }) {
   const { filename, src } = parseDefectImage(note);
   const [failed, setFailed] = useState(false);
@@ -247,45 +312,103 @@ function SiteMap() {
   // page is for, and it is the one overlay whose registration is sound enough to
   // put defect markers on top of.
   const [thermalVisible, setThermalVisible] = useState(true);
-  // V1/V2 default to off for LAYER-STACKING reasons only — their registration is
-  // correct. Both draw after the thermal at full opacity, so defaulting them on
-  // would simply hide the layer this page exists to show. Use the toggles.
-  //
-  // 2026-08-13: the old justification here — "only 26.5% of surveyed defects land
-  // on a panel pixel in V1 against 25.1% from random placement, so the registration
-  // carries no information" — was WRONG, and is corrected rather than deleted
-  // because it nearly triggered a pointless re-fit. That metric was measuring
-  // partial coverage, not misregistration: V1's footprint geometrically contains
-  // only 61.5% of the surveyed defects and V2's 74.1%, because each covers just
-  // part of the site. Multiply by the ~53%/47% non-padding fraction and 26.5%
-  // falls straight out. The source GeoTIFFs have since been found and both
-  // baselines match their tie-points exactly. Do not re-fit these.
-  const [rgbVisible, setRgbVisible]         = useState(false);
-  const [rgb2Visible, setRgb2Visible]       = useState(false);
   const [thermalOpacity, setThermalOpacity] = useState(1);
   const [hideBasemap, setHideBasemap]       = useState(false);
   const [hoveringAnomaly, setHoveringAnomaly] = useState(false);
-  // Full opacity now that these carry a real alpha footprint. The old 0.90 was
-  // compensating for the letterbox: knocking the whole layer back made the opaque
-  // white border less offensive, at the cost of muddying the actual imagery.
-  const [rgbOpacity, setRgbOpacity]         = useState(1);
-  const [rgb2Opacity, setRgb2Opacity]       = useState(1);
+  /**
+   * Screen-share profile. Off by default — the effects it removes are worth
+   * having when one person is looking at their own screen, and only become a
+   * liability once the frame is going through a video codec. See PRESENTATION
+   * in lib/defect-overlay.ts.
+   */
+  const [presenting, setPresenting] = useState(false);
+  // Gates the effects that need a live map object rather than a ref that may
+  // still be null on first render.
+  const [mapReady, setMapReady] = useState(false);
   const [compareMode, setCompareMode]       = useState(false);
   // KML View is a standalone mode — surveyed panel outlines on their own,
-  // instead of mixed into the Original/V1/V2 overlay toggles.
+  // instead of mixed into the IR overlay toggle.
   const [kmlViewMode, setKmlViewMode]       = useState(false);
   const [kmlOpacity, setKmlOpacity]         = useState(0.45);
   const [splitPct, setSplitPct]             = useState(50);
   const [popup, setPopup]                   = useState<Anomaly | null>(null);
   const [mapError, setMapError]             = useState<string | null>(null);
   const [viewState, setViewState]           = useState<Omit<ViewState, "width"|"height">>({
-    longitude: 73.0385, latitude: 28.2568, zoom: 17,
+    longitude: 73.0295, latitude: 28.2622, zoom: 16.2,
     bearing: 0, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 },
   });
 
   const mapRef     = useRef<MapRef>(null);
   const dragging   = useRef(false);
   const pinchRef   = useRef<number | null>(null);
+
+  // ── Box render state ──
+  //
+  // Held in Mapbox feature state, not in the GeoJSON. Rebuilding the
+  // FeatureCollection to mark one polygon as hovered would re-serialise and
+  // re-tile all 1,249 of them on every pointer move; setFeatureState writes into
+  // a map the render pass reads and touches nothing the tiler owns. The rule is
+  // spelled out in the header of lib/defect-overlay.ts — it is the difference
+  // between a hover state and a stutter.
+  //
+  // These are refs rather than React state on purpose: the value is consumed by
+  // the GL render loop, never by JSX, so putting it in state would re-render the
+  // whole route on every mousemove to change nothing the DOM can see.
+  const hoveredId  = useRef<string | null>(null);
+  const selectedId = useRef<string | null>(null);
+
+  const setBoxState = useCallback((id: string | null, key: "hover" | "selected", on: boolean) => {
+    const map = mapRef.current?.getMap();
+    // The source is absent while the style reloads (toggling Hide basemap swaps
+    // the whole style object), and setFeatureState throws on a missing source
+    // rather than no-opping.
+    if (!id || !map?.getSource("anomaly-panels")) return;
+    map.setFeatureState({ source: "anomaly-panels", id }, { [key]: on });
+  }, []);
+
+  /**
+   * Hit-test the overlay ourselves.
+   *
+   * This used to lean on `interactiveLayerIds`, which react-map-gl populates
+   * `event.features` from. That prop does not exist in react-map-gl 8 — it lives
+   * only in the `react-map-gl/mapbox-legacy` entry point, and the one this file
+   * imports never reads it. It was being passed and silently ignored, so
+   * `event.features` was whatever mapbox-gl happened to attach; verified in the
+   * browser, a plain map click arrives with `features` undefined. Cluster clicks
+   * did nothing at all as a result.
+   *
+   * Querying explicitly is also the clearer contract: the layer list below says
+   * exactly what is clickable, in priority order, at the point of use.
+   *
+   * This does NOT intercept gestures. `onClick` and `onMouseMove` are mapbox's
+   * own events, already classified — a drag that starts on a box pans the map and
+   * never reaches here — and nothing in this path calls preventDefault or
+   * stopPropagation.
+   */
+  const hitAt = useCallback((point: [number, number], layers: readonly string[]) => {
+    const map = mapRef.current?.getMap();
+    if (!map) return undefined;
+    // queryRenderedFeatures throws on a layer that is not in the style, which
+    // happens routinely here as overlays and KML view come and go.
+    const present = layers.filter(id => map.getLayer(id));
+    if (present.length === 0) return undefined;
+    return map.queryRenderedFeatures(point, { layers: present })[0];
+  }, []);
+
+  const setHoveredBox = useCallback((id: string | null) => {
+    if (hoveredId.current === id) return;
+    setBoxState(hoveredId.current, "hover", false);
+    setBoxState(id, "hover", true);
+    hoveredId.current = id;
+    setHoveringAnomaly(id !== null);
+  }, [setBoxState]);
+
+  const setSelectedBox = useCallback((id: string | null) => {
+    if (selectedId.current === id) return;
+    setBoxState(selectedId.current, "selected", false);
+    setBoxState(id, "selected", true);
+    selectedId.current = id;
+  }, [setBoxState]);
 
   // ── Overlay georeferencing ──
   // Placements are keyed by overlay id and restored from localStorage, so an
@@ -299,7 +422,7 @@ function SiteMap() {
   // unconditional rather than an operator toggle: a marker floating on bare
   // scrub beside the array reads as a broken map to a client, and the position
   // it claims is not one the imagery can support anyway. The suppression is not
-  // silent — the sidebar always reports "N of 347 shown".
+  // silent — the sidebar always reports "N of 1,249 shown".
 
   const placementOf = useCallback(
     (id: string): Placement => placements[id] ?? IDENTITY,
@@ -341,17 +464,14 @@ function SiteMap() {
     );
   }, [isRajpur, filters, typeFilter, inverterFilter, stringFilter]);
 
-  // Which overlays are actually drawn right now. A defect is only a "stray" if it
-  // falls outside *all* of them — one covered by V1 but not by IR must not vanish
-  // the moment both are switched on.
+  // Which overlays are actually drawn right now. Kept as a list even though the
+  // March 2026 survey ships exactly one raster: a defect counts as a "stray" only
+  // when it falls outside *every* visible overlay, and that rule has to survive the
+  // next deliverable arriving with a visual ortho alongside the thermal.
   const activeOverlayIds = useMemo(() => {
     if (kmlViewMode) return [];
-    return [
-      thermalVisible ? "thermal" : null,
-      rgbVisible ? "rgb" : null,
-      rgb2Visible ? "rgb2" : null,
-    ].filter(Boolean) as string[];
-  }, [kmlViewMode, thermalVisible, rgbVisible, rgb2Visible]);
+    return [thermalVisible ? "thermal" : null].filter(Boolean) as string[];
+  }, [kmlViewMode, thermalVisible]);
 
   const strayIds = useMemo(() => {
     if (activeOverlayIds.length === 0) return new Set<string>();
@@ -404,7 +524,7 @@ function SiteMap() {
     );
   }, [alignTarget, masks]);
 
-  // Surveyed panel outlines (Block20_1GV_4.kml) — real footprints, not estimated positions.
+  // Surveyed panel outlines (defpanels1.kml) — real footprints, not estimated positions.
   // Drives both the zoom-in panel fills on the satellite view and KML View.
   const panelOutlinesGeoJSON = useMemo(() => ({
     type: "FeatureCollection" as const,
@@ -447,6 +567,35 @@ function SiteMap() {
     })),
   }), []);
 
+  // ── Overlay render profile ──
+  // Recomputed only when the presentation toggle flips. The paint objects are
+  // plain data, so handing a new one to a <Layer> is a diff of paint properties
+  // rather than a layer rebuild — the boxes do not blink when the profile changes.
+  const profile = presenting ? PRESENTATION.share : PRESENTATION.desk;
+  const box     = useMemo(() => boxPaint(profile.reduceEffects), [profile.reduceEffects]);
+  const cluster = useMemo(() => clusterPaint(profile.reduceEffects), [profile.reduceEffects]);
+  const anchor  = useMemo(() => anchorPaint(profile.reduceEffects), [profile.reduceEffects]);
+
+  /**
+   * The selected panel's centroid, or nothing.
+   *
+   * Driven by `selected` — React state — rather than by the selectedId ref, so
+   * the marker also appears when a panel is chosen from somewhere other than a
+   * map click. Rebuilding a one-feature collection on selection is free; doing
+   * the same for hover across 1,249 features is what the feature-state plumbing
+   * above exists to avoid.
+   */
+  const anchorGeoJSON = useMemo(() => ({
+    type: "FeatureCollection" as const,
+    features: selected
+      ? [{
+          type: "Feature" as const,
+          geometry: { type: "Point" as const, coordinates: [selected.gps.lng, selected.gps.lat] },
+          properties: {},
+        }]
+      : [],
+  }), [selected]);
+
   // Shared by the dot, fill and outline layers so one severity palette drives all three.
   const severityColour: ExpressionSpecification = [
     "match", ["get", "severity"],
@@ -455,6 +604,53 @@ function SiteMap() {
     "normal",   SEV_COLOR.normal,
     SEV_COLOR.nodata,
   ];
+
+  /**
+   * Re-assert the overlay stacking order after any style change.
+   *
+   * `beforeId="anomaly-panel-fill"` on the raster is the primary mechanism and
+   * it works — verified against the live style, the thermal sits below all four
+   * box layers. This is a backstop for the case where it cannot work: mapbox-gl
+   * treats an unknown `beforeId` as "append", silently, so if any one anomaly
+   * layer fails to be added the raster lands on TOP and every marker on the map
+   * disappears. That is not hypothetical — it is exactly what happened while the
+   * halo paint below still had a nested zoom expression: one bad layer, and a
+   * map with 1,249 defects on it rendered none of them, with the only clue a
+   * "Layer with id ... does not exist" line in the console.
+   *
+   * Bound to `styledata` rather than run on render, because the thing it has to
+   * react to is the style changing (a layer added, or the whole style swapped by
+   * Hide basemap), which is not something React re-renders for. moveLayer only
+   * reorders the style's layer array — no re-tile, no re-upload — so running it
+   * more often than strictly needed costs nothing worth measuring.
+   */
+  useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    const restack = () => {
+      const present = OVERLAY_STACK.filter(id => map.getLayer(id));
+      // Only act when the order is actually wrong. moveLayer() itself emits
+      // `styledata`, so an unconditional reorder here would answer its own event
+      // — harmless in practice (it converges immediately, measured at 0 extra
+      // events per second) but it makes the handler re-entrant for no reason,
+      // and a no-op guard is cheaper than reasoning about that every time
+      // somebody adds a layer.
+      const order = map.getStyle().layers.map(l => l.id);
+      const idx = present.map(id => order.indexOf(id));
+      if (idx.every((v, i) => i === 0 || v > idx[i - 1])) return;
+      for (const id of present) map.moveLayer(id);
+    };
+    map.on("styledata", restack);
+    restack();
+    return () => { map.off("styledata", restack); };
+  }, [mapReady]);
+
+  // Selection can be cleared by the drawer's own close button, which knows
+  // nothing about feature state. Mirroring it here keeps the highlighted box and
+  // the open drawer from disagreeing.
+  useEffect(() => {
+    setSelectedBox(selected?.id ?? null);
+  }, [selected, setSelectedBox]);
 
   const uniqueInverters = useMemo(() =>
     ["all", ...Array.from(new Set(anomalies.map(a => a.inverter))).sort()], []);
@@ -549,7 +745,7 @@ function SiteMap() {
               <>
                 <button
                   onClick={() => { setCompareMode(v => !v); setKmlViewMode(false); }}
-                  title="Compare thermal vs visual"
+                  title="Compare thermal against satellite"
                   className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium border transition ${
                     compareMode ? "bg-primary text-white border-primary" : "bg-card text-muted-foreground border-border hover:bg-muted"
                   }`}
@@ -557,10 +753,22 @@ function SiteMap() {
                   <SplitSquareHorizontal size={13} /> Compare
                 </button>
 
+                {/* Not gated on isSurveyor: the person sharing their screen with a
+                    plant owner is as often the plant owner. */}
+                <button
+                  onClick={() => setPresenting(v => !v)}
+                  title="Screen-share mode — drops blurs, shadows and the raster crossfade so the map survives video compression, and stops the camera moving on click"
+                  className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium border transition ${
+                    presenting ? "bg-sky-600 text-white border-sky-600" : "bg-card text-muted-foreground border-border hover:bg-muted"
+                  }`}
+                >
+                  <MonitorPlay size={13} /> Present
+                </button>
+
                 {isSurveyor && (
                 <button
                   onClick={() => { setKmlViewMode(v => !v); setCompareMode(false); }}
-                  title="View surveyed panel outlines from drone KML on their own, separate from the Original/V1/V2 overlays"
+                  title="View surveyed panel outlines from drone KML on their own, separate from the IR overlay"
                   className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium border transition ${
                     kmlViewMode ? "bg-ochre text-ochre-fg border-ochre" : "bg-card text-muted-foreground border-border hover:bg-muted"
                   }`}
@@ -576,9 +784,7 @@ function SiteMap() {
                     // so switch the target overlay on rather than making the
                     // operator remember to.
                     const next = alignTarget ? null : (activeOverlayIds[0] ?? "thermal");
-                    if (next === "thermal") setThermalVisible(true);
-                    if (next === "rgb") setRgbVisible(true);
-                    if (next === "rgb2") setRgb2Visible(true);
+                    if (next) setThermalVisible(true);
                     setAlignTarget(next);
                     setCompareMode(false); setKmlViewMode(false);
                   }}
@@ -596,12 +802,6 @@ function SiteMap() {
                     <span className="px-2 text-[10px] uppercase tracking-widest text-grey-400 bg-grey-50 h-8 flex items-center">Overlay</span>
                     <button onClick={() => setThermalVisible(v => !v)} className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium transition ${thermalVisible ? "bg-red-600 text-white" : "bg-card text-muted-foreground hover:bg-muted"}`}>
                       <Thermometer size={13} /> IR
-                    </button>
-                    <button onClick={() => setRgbVisible(v => !v)} className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium transition ${rgbVisible ? "bg-emerald-600 text-white" : "bg-card text-muted-foreground hover:bg-muted"}`}>
-                      <Layers size={13} /> V1
-                    </button>
-                    <button onClick={() => setRgb2Visible(v => !v)} className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium transition ${rgb2Visible ? "bg-blue-600 text-white" : "bg-card text-muted-foreground hover:bg-muted"}`}>
-                      <Layers size={13} /> V2
                     </button>
                   </div>
                 )}
@@ -674,7 +874,13 @@ function SiteMap() {
                 </div>
               </div>
 
-              {/* Right: RGB */}
+              {/* Right: satellite basemap.
+                  This pane used to carry the Block 20 visual orthomosaics. The
+                  March 2026 survey is thermal-only, so the comparison is now
+                  thermal against Mapbox satellite — still the question a client
+                  actually asks of this control ("what is physically there?"),
+                  just answered from the basemap instead of from a second flight.
+                  Restore the image sources here if a visual ortho ever ships. */}
               <div className="relative overflow-hidden flex-1">
                 <MapGL
                   mapboxAccessToken={MAPBOX_TOKEN}
@@ -683,15 +889,9 @@ function SiteMap() {
                   style={{ width: "100%", height: "100%" }}
                   mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
                 >
-                  <Source id="cmp-rgb" type="image" url={OVERLAYS.rgb.url} coordinates={cornersOf("rgb")}>
-                    <Layer id="cmp-rgb-layer" type="raster" paint={{ "raster-opacity": 1, "raster-resampling": RASTER_RESAMPLING }} />
-                  </Source>
-                  <Source id="cmp-rgb2" type="image" url={OVERLAYS.rgb2.url} coordinates={cornersOf("rgb2")}>
-                    <Layer id="cmp-rgb2-layer" type="raster" paint={{ "raster-opacity": 1, "raster-resampling": RASTER_RESAMPLING }} />
-                  </Source>
                 </MapGL>
                 <div className="absolute top-2 right-2 bg-emerald-600 text-white text-[10px] font-bold mono px-2 py-0.5 flex items-center gap-1">
-                  <Layers size={10} /> VISUAL RGB
+                  <Layers size={10} /> SATELLITE
                 </div>
               </div>
             </div>
@@ -703,28 +903,78 @@ function SiteMap() {
               <MapGL
                 ref={mapRef}
                 mapboxAccessToken={MAPBOX_TOKEN}
-                initialViewState={{ longitude: 73.0385, latitude: 28.2568, zoom: isRajpur ? 17 : 14 }}
+                // Centre of the March 2026 thermal footprint. z16.2 rather than the
+                // old z17 because this block is 1.14 km across against Block 20's
+                // 0.57 km — at z17 half of it starts off screen.
+                initialViewState={{ longitude: 73.0295, latitude: 28.2622, zoom: isRajpur ? 16.2 : 14 }}
                 key={selectedPlant.id}
                 style={{ width: "100%", height: "100%" }}
                 mapStyle={thermalVisible && hideBasemap && !kmlViewMode
                   ? BLANK_BASEMAP_STYLE
                   : "mapbox://styles/mapbox/satellite-streets-v12"}
-                interactiveLayerIds={isRajpur && !kmlViewMode ? ["anomaly-dot", "anomaly-panel-fill"] : undefined}
                 cursor={hoveringAnomaly ? "pointer" : undefined}
-                onMouseEnter={() => setHoveringAnomaly(true)}
-                onMouseLeave={() => setHoveringAnomaly(false)}
+                fadeDuration={profile.fadeDuration}
+                onMouseMove={e => {
+                  const hit = hitAt([e.point.x, e.point.y], HOVER_LAYERS);
+                  const id = hit?.properties?.anomalyId;
+                  setHoveredBox(id === undefined || id === null ? null : String(id));
+                }}
+                onMouseLeave={() => setHoveredBox(null)}
                 onClick={e => {
-                  // With interactiveLayerIds set, a click that landed on an anomaly
-                  // arrives with the hit features attached; anything else is a click
-                  // on empty map and should dismiss the popup.
-                  const hit = e.features?.[0];
+                  const hit = hitAt([e.point.x, e.point.y], CLICK_LAYERS);
+
+                  // A cluster is a "there is more here" affordance, not a panel — it
+                  // expands to the zoom at which its members separate. Asking the
+                  // source for that zoom is what makes one click always enough,
+                  // rather than the guess a fixed zoom step would be.
+                  if (hit?.properties?.cluster) {
+                    const src = mapRef.current?.getMap().getSource("anomaly-points") as
+                      GeoJSONSource | undefined;
+                    const clusterId = hit.properties.cluster_id as number;
+                    src?.getClusterExpansionZoom(clusterId, (err, zoom) => {
+                      if (err || zoom == null) return;
+                      const [lng, lat] = (hit.geometry as GeoJSON.Point).coordinates;
+                      mapRef.current?.easeTo({ center: [lng, lat], zoom, duration: 500 });
+                    });
+                    return;
+                  }
+
                   const anomaly = hit && anomalyById.get(String(hit.properties?.anomalyId));
-                  if (!anomaly) { setPopup(null); return; }
+                  if (!anomaly) {
+                    setPopup(null);
+                    setSelectedBox(null);
+                    return;
+                  }
+
+                  // The overlay's whole output: which panel was picked. Everything
+                  // downstream — this route's drawer, the popup, anything listening
+                  // on the window — reacts to that rather than being called directly.
+                  // See the click-contract note in lib/defect-overlay.ts.
+                  emitPanelSelect({
+                    panelId: anomaly.panelId,
+                    anomalyId: anomaly.id,
+                    severity: anomaly.severity,
+                    lngLat: [anomaly.gps.lng, anomaly.gps.lat],
+                    source: "map-overlay",
+                  });
+                  setSelectedBox(anomaly.id);
                   setSelected(anomaly);
                   setPopup(anomaly);
-                  mapRef.current?.flyTo({ center: [anomaly.gps.lng, anomaly.gps.lat], zoom: 20, duration: 700 });
+
+                  // Only move the camera when the box is not yet drawn as a box.
+                  // The old behaviour flew to z20 on every click, which yanked the
+                  // view out from under someone who had already framed the table
+                  // they were discussing. Under the share profile it never moves.
+                  const zoom = mapRef.current?.getZoom() ?? 0;
+                  if (profile.autoFly && zoom < PANEL_FILL_MIN_ZOOM) {
+                    mapRef.current?.easeTo({
+                      center: [anomaly.gps.lng, anomaly.gps.lat],
+                      zoom: PANEL_FILL_MIN_ZOOM + 0.5,
+                      duration: 700,
+                    });
+                  }
                 }}
-                onLoad={() => setMapError(null)}
+                onLoad={() => { setMapError(null); setMapReady(true); }}
                 onError={e => {
                   console.error("Mapbox load error:", e.error);
                   setMapError(
@@ -768,33 +1018,75 @@ function SiteMap() {
                     gives the rasters below a stable `beforeId` to insert beneath. */}
                 {isRajpur && !kmlViewMode && (
                   <>
-                    <Source id="anomaly-panels" type="geojson" data={panelOutlinesGeoJSON as never}>
+                    {/* ── Bounding boxes ──
+                        The surveyed footprints, tiled at panel scale (SOURCE_TUNING)
+                        and keyed by anomalyId so feature state can address them.
+                        Draw order below is deliberate: fill, halo, casing, stroke —
+                        Mapbox paints in declaration order, and the halo has to sit
+                        under the white casing or it washes the casing out and the
+                        box loses the contrast the casing exists to give it. */}
+                    <Source
+                      id="anomaly-panels"
+                      type="geojson"
+                      data={panelOutlinesGeoJSON as never}
+                      {...SOURCE_TUNING}
+                    >
                       <Layer id="anomaly-panel-fill" type="fill" paint={{
                         "fill-color": severityColour,
-                        "fill-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 0, PANEL_FILL_MIN_ZOOM, 0.75],
+                        ...box.fill,
                       }} />
-                      {/* White casing under the severity outline. Same reason the
-                          dots carry a white halo: critical #ef4444 scores only
-                          1.95:1 against the magma thermal, so an unbacked red
-                          rectangle on a red raster is close to invisible — and
-                          this is the zoom band where the client is inspecting an
-                          individual panel. Declared before the coloured line so
-                          Mapbox draws it underneath, and kept 2 px wider so it
-                          reads as an outline rather than a thicker border. */}
+                      <Layer id="anomaly-panel-halo" type="line" paint={{
+                        "line-color": severityColour,
+                        ...box.halo,
+                      }} />
                       <Layer id="anomaly-panel-casing" type="line" paint={{
                         "line-color": "#ffffff",
-                        "line-width": 3.5,
-                        "line-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 0, PANEL_FILL_MIN_ZOOM, 0.9],
+                        ...box.casing,
                       }} />
                       <Layer id="anomaly-panel-line" type="line" paint={{
                         "line-color": severityColour,
-                        "line-width": 1.5,
-                        "line-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 0, PANEL_FILL_MIN_ZOOM, 1],
+                        ...box.stroke,
                       }} />
                     </Source>
 
-                    <Source id="anomaly-points" type="geojson" data={anomalyPointsGeoJSON as never}>
-                      <Layer id="anomaly-dot" type="circle" paint={{
+                    {/* ── Anchor marker ──
+                        A one-feature source, rebuilt only when the selection changes,
+                        so it costs nothing to keep separate from the 1,249-feature
+                        collections. Ground-aligned: it foreshortens with the panel
+                        under tilt, which is the point of it. */}
+                    <Source id="anomaly-anchor" type="geojson" data={anchorGeoJSON as never}>
+                      <Layer id="anomaly-anchor-ring" type="circle" paint={anchor.ring} />
+                      <Layer id="anomaly-anchor-dot" type="circle" paint={anchor.dot} />
+                    </Source>
+
+                    {/* ── Dots and clusters ──
+                        One clustered source feeds both: below OVERLAY_ZOOM.cluster
+                        Mapbox emits cluster features, above it the raw points, and
+                        the two layers below filter on which of those they got. */}
+                    <Source
+                      id="anomaly-points"
+                      type="geojson"
+                      data={anomalyPointsGeoJSON as never}
+                      {...CLUSTER_TUNING}
+                    >
+                      <Layer id="anomaly-cluster" type="circle" filter={CLUSTERED}
+                        paint={cluster.circle} />
+                      <Layer
+                        id="anomaly-cluster-count"
+                        type="symbol"
+                        filter={CLUSTERED}
+                        layout={{
+                          "text-field": ["get", "point_count_abbreviated"],
+                          // The app ships a Mapbox style whose glyph set is known to
+                          // carry this family; naming a font the style cannot fetch
+                          // drops the layer silently with nothing in the console.
+                          "text-font": ["DIN Offc Pro Medium", "Arial Unicode MS Bold"],
+                          "text-size": ["step", ["get", "point_count"], 11, 10, 12, 50, 13],
+                          "text-allow-overlap": true,
+                        }}
+                        paint={cluster.count}
+                      />
+                      <Layer id="anomaly-dot" type="circle" filter={UNCLUSTERED} paint={{
                         "circle-color": severityColour,
                         "circle-radius": DOT_RADIUS_BY_ZOOM,
                         "circle-stroke-color": "#ffffff",
@@ -802,6 +1094,11 @@ function SiteMap() {
                         // Hands over to the panel fill rather than stacking on top of it.
                         "circle-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 1, PANEL_FILL_MIN_ZOOM, 0],
                         "circle-stroke-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 1, PANEL_FILL_MIN_ZOOM, 0],
+                        // Perspective-correct: a dot on a panel 400 m away should be
+                        // smaller than one under the camera, or a tilted view reads as
+                        // a flat wall of markers.
+                        "circle-pitch-alignment": "viewport",
+                        "circle-pitch-scale": "map",
                       }} />
                     </Source>
                   </>
@@ -809,7 +1106,7 @@ function SiteMap() {
 
                 {/* Drone orthomosaic overlays — suppressed in KML View, which shows outlines on their own.
                     `beforeId` keeps them underneath the anomaly layers no matter what order
-                    the user toggles IR / V1 / V2 in. */}
+                    the user toggles IR in. */}
                 {isRajpur && thermalVisible && !kmlViewMode && (
                   <Source id="thermal" type="image" url={THERMAL_IMAGE} coordinates={cornersOf("thermal")}>
                     <Layer id="thermal-layer" type="raster" beforeId="anomaly-panel-fill" paint={{
@@ -824,16 +1121,6 @@ function SiteMap() {
                       "raster-saturation": THERMAL_SATURATION,
                       "raster-fade-duration": 0,
                     }} />
-                  </Source>
-                )}
-                {isRajpur && rgbVisible && !kmlViewMode && (
-                  <Source id="rgb" type="image" url={OVERLAYS.rgb.url} coordinates={cornersOf("rgb")}>
-                    <Layer id="rgb-layer" type="raster" beforeId="anomaly-panel-fill" paint={{ "raster-opacity": rgbOpacity, "raster-resampling": RASTER_RESAMPLING, "raster-fade-duration": 0 }} />
-                  </Source>
-                )}
-                {isRajpur && rgb2Visible && !kmlViewMode && (
-                  <Source id="rgb2" type="image" url={OVERLAYS.rgb2.url} coordinates={cornersOf("rgb2")}>
-                    <Layer id="rgb2-layer" type="raster" beforeId="anomaly-panel-fill" paint={{ "raster-opacity": rgb2Opacity, "raster-resampling": RASTER_RESAMPLING, "raster-fade-duration": 0 }} />
                   </Source>
                 )}
 
@@ -934,7 +1221,7 @@ function SiteMap() {
               )}
 
               {/* Satellite legend */}
-              <div className="absolute bottom-4 left-4 bg-card/95 border border-border px-3 py-2 text-xs space-y-1.5 shadow backdrop-blur-sm">
+              <div className={panelChrome(profile.reduceEffects, "absolute bottom-4 left-4 bg-card/95 border border-border px-3 py-2 text-xs space-y-1.5 shadow backdrop-blur-sm")}>
                 {([
                   { l: SEVERITY_LABEL_FULL.critical, s: "critical", note: "Immediate action" },
                   { l: SEVERITY_LABEL_FULL.medium,   s: "medium",   note: "Schedule repair" },
@@ -984,26 +1271,6 @@ function SiteMap() {
                     </label>
                   </div>
                 )}
-                {isRajpur && rgbVisible && !kmlViewMode && (
-                  <div className="pt-1.5 border-t border-grey-200 space-y-1">
-                    <div className="flex items-center gap-1.5 text-emerald-600 font-medium"><Layers size={11} /> Visual V1 (east)</div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground">Opacity</span>
-                      <input type="range" min={0.2} max={1} step={0.05} value={rgbOpacity} onChange={e => setRgbOpacity(Number(e.target.value))} className="w-20 accent-emerald-600" />
-                      <span className="mono text-muted-foreground">{Math.round(rgbOpacity * 100)}%</span>
-                    </div>
-                  </div>
-                )}
-                {isRajpur && rgb2Visible && !kmlViewMode && (
-                  <div className="pt-1.5 border-t border-grey-200 space-y-1">
-                    <div className="flex items-center gap-1.5 text-blue-600 font-medium"><Layers size={11} /> Visual V2 (west)</div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground">Opacity</span>
-                      <input type="range" min={0.2} max={1} step={0.05} value={rgb2Opacity} onChange={e => setRgb2Opacity(Number(e.target.value))} className="w-20 accent-blue-600" />
-                      <span className="mono text-muted-foreground">{Math.round(rgb2Opacity * 100)}%</span>
-                    </div>
-                  </div>
-                )}
                 {isRajpur && kmlViewMode && (
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">
                     <div className="flex items-center gap-1.5 text-ochre font-medium"><MapIcon size={11} /> KML — Surveyed Panels</div>
@@ -1026,13 +1293,12 @@ function SiteMap() {
                   onTarget={id => {
                     setAlignTarget(id);
                     if (id === "thermal") setThermalVisible(true);
-                    if (id === "rgb") setRgbVisible(true);
-                    if (id === "rgb2") setRgb2Visible(true);
                   }}
                   placement={placementOf(alignTarget)}
                   onChange={patch => updatePlacement(alignTarget, patch)}
                   score={alignScore}
                   baseline={baselineScore}
+                  presentation={profile.reduceEffects}
                   onClose={() => setAlignTarget(null)}
                 />
               )}
@@ -1165,7 +1431,7 @@ function alignmentVerdict(score: AlignmentScore | null): {
 }
 
 function AlignPanel({
-  targetId, onTarget, placement, onChange, score, baseline, onClose,
+  targetId, onTarget, placement, onChange, score, baseline, onClose, presentation,
 }: {
   targetId: string;
   onTarget: (id: string) => void;
@@ -1174,6 +1440,8 @@ function AlignPanel({
   score: AlignmentScore | null;
   baseline: AlignmentScore | null;
   onClose: () => void;
+  /** Screen-share profile — see panelChrome in lib/defect-overlay.ts. */
+  presentation: boolean;
 }) {
   const [step, setStep] = useState(1);
   const [copied, setCopied] = useState(false);
@@ -1216,7 +1484,7 @@ function AlignPanel({
   const delta = score && baseline ? score.onData - baseline.onData : 0;
 
   return (
-    <div className="absolute top-2 right-2 z-20 w-64 bg-card/97 border border-violet-400 shadow-lg backdrop-blur-sm text-xs">
+    <div className={panelChrome(presentation, "absolute top-2 right-2 z-20 w-64 bg-card/97 border border-violet-400 shadow-lg backdrop-blur-sm text-xs")}>
       <div className="flex items-center justify-between px-3 py-2 bg-violet-600 text-white">
         <span className="font-bold flex items-center gap-1.5"><Crosshair size={12} /> ALIGN OVERLAY</span>
         <button onClick={onClose} className="hover:opacity-70"><X size={13} /></button>
