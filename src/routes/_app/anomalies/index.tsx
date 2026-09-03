@@ -9,18 +9,27 @@ import { can } from "@/lib/permissions";
 import { SEVERITY_LABEL, SEVERITY_LABEL_FULL } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 
-// Block number as it appears in the inspection report's "Layout Location" column,
-// e.g. "Block 20 Solar Plant" -> "20".
-function blockNumber(plantName: string): string {
-  return plantName.match(/Block\s+(\d+)/i)?.[1] ?? plantName;
+/**
+ * Block number for the report's "Layout Location" column.
+ *
+ * Prefer the anomaly's own `block`, which the March 2026 survey KML carries per
+ * defect — this site spans eight blocks (06, 09, 12, 14, 16, 17, 19, 122), so a
+ * single number scraped from the plant name would be wrong for seven of them.
+ *
+ * The name fallback is for the Block 20 deliverable, whose rows had no block
+ * field and whose plant was named "Block 20 Solar Plant". Without it those rows
+ * would read "Block: Block 20 Solar Plant".
+ */
+function blockNumber(a: AnomalyDTO, plantName: string): string {
+  return a.block ?? plantName.match(/Block\s+(\d+)/i)?.[1] ?? "—";
 }
 
 // Mirrors the report's "Layout Location" string, e.g.
-// "Block: 20, Inv: A, Table: 3, Panel: R8-P12"
+// "Block: 16, Inv: A, Table: 3, Panel: R8-P12"
 function layoutLocation(a: AnomalyDTO, plantName: string): string {
   const inv = a.inverter.replace(/^INV-/i, "");
   const table = a.string.replace(/^Table-/i, "");
-  return `Block: ${blockNumber(plantName)}, Inv: ${inv}, Table: ${table}, Panel: ${a.panelId}`;
+  return `Block: ${blockNumber(a, plantName)}, Inv: ${inv}, Table: ${table}, Panel: ${a.panelId}`;
 }
 
 function mapLocation(a: AnomalyDTO): string {
@@ -30,7 +39,7 @@ function mapLocation(a: AnomalyDTO): string {
 function exportCSV(rows: AnomalyDTO[], plantName: string) {
   const header = ["SL No","Block","Layout Location","Map Location","Defect Type","Delta_T","Severity","Status","Date","Image Ref"];
   const lines = rows.map((a, i) => [
-    i + 1, blockNumber(plantName), layoutLocation(a, plantName), mapLocation(a), a.type,
+    i + 1, blockNumber(a, plantName), layoutLocation(a, plantName), mapLocation(a), a.type,
     a.deltaTNorm ?? a.deltaT ?? "", SEVERITY_LABEL[a.severity], a.status, a.date, a.rgbNote ?? "",
   ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(","));
   const csv = [header.join(","), ...lines].join("\n");
@@ -195,7 +204,7 @@ function AnomalyList() {
               {rows.map((a, i) => (
                 <tr key={a.id} className="hover:bg-grey-25 transition">
                   <td className="px-4 py-3 mono text-sm text-muted-foreground">{i + 1}</td>
-                  <td className="px-4 py-3 mono text-sm">{blockNumber(plantName)}</td>
+                  <td className="px-4 py-3 mono text-sm">{blockNumber(a, plantName)}</td>
                   <td className="px-4 py-3 mono text-xs">{layoutLocation(a, plantName)}</td>
                   <td className="px-4 py-3 mono text-xs text-muted-foreground">{mapLocation(a)}</td>
                   <td className="px-4 py-3 text-sm">{a.type}</td>

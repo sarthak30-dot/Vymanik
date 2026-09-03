@@ -1,29 +1,33 @@
 /**
- * Georeferencing for drone overlays (thermal IR, visual V1/V2, and anything added later).
+ * Georeferencing for drone overlays.
  *
  * WHY THIS EXISTS
  * ---------------
- * A GeoTIFF carries tie-points that say "image pixel (x,y) is at (lng,lat)". This
- * module existed because the orthomosaics only ever arrived as PNG, which has
- * nowhere to store that, so every overlay landed on the map with unknown corners.
+ * A raster needs four ground corners before Mapbox can draw it. Where those
+ * corners come from decides whether the map is a measurement or a picture.
  *
- * That is now only half true, and the halves need different treatment:
+ * For the May 2025 Block 20 survey they were a guess. That deliverable arrived
+ * as flat PNG, which has nowhere to store tie-points, so scripts/fit_thermal_bounds.py
+ * had to *solve* for the placement by fitting against the surveyed defect
+ * coordinates. It topped out at 87% of defects landing on a data pixel and could
+ * not be pushed further — the information simply was not in the file. This module
+ * grew a hand-alignment tool (see overlay-coverage.ts and the Align panel in
+ * routes/_app/map.tsx) because 13% of markers were provably in the wrong place
+ * and only an operator could fix them.
  *
- *   V1/V2 — SOLVED. The source GeoTIFFs were found (external drive, not Desktop).
- *   Their tie-points are sound and the baselines below already match them exactly,
- *   so no fitting or hand-alignment is required for these two.
+ * The March 2026 survey does not have that problem. It shipped as ortho4.kmz, a
+ * Google Earth superoverlay: a 6,133-tile quadtree in which every tile carries
+ * its own <LatLonBox>. scripts/flatten_superoverlay.py composites those tiles
+ * into one raster and the corners fall straight out of the KML — they are
+ * measured, not fitted. Scored the same way the old fit was scored, all 1,249
+ * surveyed defects land on a data pixel: 100.0%, against 87.0% before.
  *
- *   Thermal — STILL FITTED. A GeoTIFF exists (Day1_T_modified.tif) but its
- *   geotransform is hand-written and wrong (see the OVERLAYS note below), so
- *   scripts/fit_thermal_bounds.py remains the source of truth. That fit tops out
- *   at 87% of the 347 surveyed defects landing on a data pixel and cannot be
- *   pushed further — a 4-parameter fit (translation, isotropic scale, rotation)
- *   against a signed-distance objective reaches the same 87.0%.
- *
- * What *is* exact is the surveyed panel geometry in Block20_1GV_4.kml. So rather
- * than guess harder, this module lets an operator place the raster by hand against
- * those known-good footprints, and scores the result live (see overlay-coverage.ts)
- * so the placement is judged on a number rather than by eye.
+ * So the alignment machinery below is now a safety net rather than a
+ * requirement. It stays for three reasons: the next deliverable may well arrive
+ * as a bare PNG again, an operator needs some recourse if a raster is ever
+ * delivered mis-tagged, and the scoring in overlay-coverage.ts is what proved
+ * the 100% figure in the first place. IDENTITY is the correct placement for
+ * everything currently shipped, and the Align panel should stay untouched.
  *
  * The placement is stored as a similarity transform relative to a fixed baseline
  * rather than as four raw corners. Corners are what Mapbox wants, but they are a
@@ -34,9 +38,9 @@
  */
 
 const M_PER_DEG_LAT = 110_600.0;
-/** Plant centroid latitude. Over a ~600 m site the cos(lat) term varies by far
+/** Plant centroid latitude. Over a ~1.1 km site the cos(lat) term varies by far
  *  less than the placement's own accuracy, so one constant is enough. */
-const SITE_LAT = 28.2568;
+const SITE_LAT = 28.2622;
 const M_PER_DEG_LNG = 111_320.0 * Math.cos((SITE_LAT * Math.PI) / 180);
 
 export type Corner = [number, number];
@@ -80,60 +84,40 @@ export interface OverlayDef {
 /**
  * Every overlay the map can draw.
  *
- * Baselines are the corners that were in map.tsx before this tool existed: the
- * thermal set is the output of fit_thermal_bounds.py. Keeping them as the
- * baseline means an operator who has not aligned anything sees exactly what
- * shipped before.
+ * One entry, and that is the honest state of the world: the March 2026
+ * deliverable contains a thermal orthomosaic and nothing else. The Block 20
+ * visual overlays (rgb / rgb2, "Visual V1 (east)" and "Visual V2 (west)") were
+ * removed with that survey rather than left in place, because their footprints
+ * sit ~1.2 km east of this block — carrying them forward would have put two
+ * layers in the layer picker that draw nothing anywhere near the defects.
  *
- * 2026-08-13: the source GeoTIFFs were located and both RGB baselines below are
- * now confirmed EXACT — they match Day1_V1.tif's and Day1_V2.tif's GeoTIFF
- * tie-points to all six decimals, and those rasters' pixels are square on the
- * ground (X/Y GSD ratio 1.0000). Do not "re-fit" them. The old reading that
- * V1/V2 scored no better than chance was measuring partial coverage, not
- * misregistration: V1's footprint geometrically contains only 61.5% of the
- * surveyed defects and V2's 74.1%, because each covers just part of the site.
+ * The baseline below is the composited extent of ortho4.kmz, read directly from
+ * the superoverlay's own <LatLonBox> tags. It is a measurement. Do not re-fit it,
+ * and do not hand-align it: the placement scores 100.0% of 1,249 surveyed defects
+ * on a data pixel exactly as shipped.
  *
- * The thermal is the opposite case. Day1_T_modified.tif carries a geotransform
- * too, but it is NOT trustworthy — equal ModelPixelScale in X and Y *in degrees*
- * (non-square on the ground at 28.26 N) and a footprint ~1.8x inflated against
- * the surveyed defects. The fit_thermal_bounds.py result below is the better
- * number and is what we keep; only pixels are taken from that file.
+ * The north edge is cropped to 28.2645 rather than the raster's full 28.268208.
+ * Above that line the flight is empty except for one stray fragment in the
+ * top-right corner, and carrying it would have spent 45% of the image's pixels
+ * on transparent nothing. The northernmost defect sits at 28.264170, ~34 m
+ * inside the crop.
  *
- * All three `url`s point at scripts/retile_from_geotiff.py output, rendered
- * directly from the source GeoTIFFs on the external drive. The previous
- * clean_orthomosaic.py overlays were 1024 px upscaled 2x — pixels without detail.
- * These are true 4096 px area-averages of 566–2738 MP sources, which is what
- * lifts the "goes blocky past z19" ceiling. Regenerate with --width 8192 for
- * another 2x if the payload budget allows (roughly 8 MB per overlay).
+ * WebP, not PNG, and that is a deliberate departure from the Block 20 assets.
+ * The composite is 8192 x 3699 — 30 MP, needed to hold ~14 cm/px over a block
+ * 2x wider than the last one. As PNG-24 it is 35 MB and as quantised PNG-8 still
+ * 13 MB, either of which is a bad first paint on site over mobile data. Lossy
+ * WebP at q80 is 3.7 MB and indistinguishable from the source at 1:1 on the
+ * thermal palette. Mapbox image sources accept anything the browser can decode.
  *
- * Padding is still alpha-cut the same way and for the same reason: the raw V1/V2
- * exports are ~47% and ~53% opaque white letterbox, which a Mapbox image source
- * paints over the basemap as a solid box, and which — having no alpha — also made
- * overlay-coverage.ts read the whole rectangle as covered.
- *
- * Canvas proportions are preserved, so these baselines still apply unchanged.
- *
- * To add an overlay later: drop the PNG in public/, add an entry here, then open
+ * To add an overlay later: drop the file in public/, add an entry here, then open
  * Align on the map and register it. Nothing else needs to change.
  */
 export const OVERLAYS: Record<string, OverlayDef> = {
   thermal: {
     id: "thermal",
     label: "Thermal IR",
-    url: "/thermal_block20_hi.png",
-    baseline: { west: 73.036467, north: 28.258982, east: 73.042336, south: 28.255081 },
-  },
-  rgb: {
-    id: "rgb",
-    label: "Visual V1 (east)",
-    url: "/rgb_block20_hi.png",
-    baseline: { west: 73.037842, north: 28.257479, east: 73.042711, south: 28.254353 },
-  },
-  rgb2: {
-    id: "rgb2",
-    label: "Visual V2 (west)",
-    url: "/rgb2_block20_hi.png",
-    baseline: { west: 73.035136, north: 28.25986, east: 73.041713, south: 28.256497 },
+    url: "/thermal_ortho4_hi.webp",
+    baseline: { west: 73.023697, north: 28.264500, east: 73.035302, south: 28.259854 },
   },
 };
 

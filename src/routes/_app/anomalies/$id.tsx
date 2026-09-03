@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { ArrowLeft, MessageCircle, Download, Mail, MapPin, Check, Wrench, Loader2, ExternalLink, Navigation } from "lucide-react";
+import { ArrowLeft, MessageCircle, Download, Mail, MapPin, Check, Wrench, Loader2, ExternalLink, Navigation, ImageOff } from "lucide-react";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { useAnomaly, usePatchAnomaly } from "@/lib/queries";
 import { anomalyTypeDefs, plant, SEVERITY_LABEL_FULL } from "@/lib/mock-data";
@@ -308,21 +308,24 @@ function ThermalImage({ note, peak, deltaT }: { note: string; peak: number; delt
               </div>
             )}
             <div className="absolute bottom-2 right-8 bg-black/60 text-white text-[10px] mono px-2 py-0.5">
-              Block 20 · 28 May 2026
+              {plant.name} · {plant.lastInspection}
             </div>
           </>
         ) : (
-          /* Fallback: block-level orthomosaic if per-panel image unavailable */
+          /* Fallback: the site-wide orthomosaic when this defect has no frame.
+             Every one of the 1,249 March 2026 defects does have one, so this path
+             is currently unreachable — it is kept for imported anomalies (see
+             AnomalyCsvImport) and for any future deliverable with gaps. */
           <>
             <img
-              src="/thermal_block20.png"
-              alt="Block 20 thermal orthomosaic"
+              src="/thermal_ortho4_hi.webp"
+              alt="Site thermal orthomosaic"
               className="absolute inset-0 w-full h-full object-cover"
               style={{ filter: "saturate(1.15) contrast(1.05)" }}
             />
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="bg-black/70 text-white/70 text-xs mono px-3 py-1.5">
-                Block 20 orthomosaic (per-panel image unavailable)
+                Site orthomosaic (per-panel frame unavailable)
               </div>
             </div>
             <div className="absolute right-2 top-2 bottom-2 flex flex-col items-center gap-1">
@@ -338,74 +341,37 @@ function ThermalImage({ note, peak, deltaT }: { note: string; peak: number; delt
 }
 
 function RgbImage({ note }: { note: string }) {
-  const { filename, pos } = parseDefectImage(note);
-  // Try to load the per-panel RGB image; fall back to the block orthomosaic.
-  // NB: public/rgbimages/ does not exist in this build — only the thermal frames
-  // (public/defimages) were delivered — so this always takes the fallback path.
-  const src = filename ? `/rgbimages/${filename}` : null;
-  const [loaded, setLoaded] = useState(false);
-  const [errored, setErrored] = useState(false);
+  const { filename } = parseDefectImage(note);
 
-  // Use the full RGB orthomosaic as fallback — always available
-  const showOrtho = !src || errored;
-
+  // There is no visual imagery in this survey, and this card says so rather than
+  // showing something.
+  //
+  // It used to fall back to /rgb_block20.png — the Block 20 visual orthomosaic —
+  // whenever a per-panel RGB frame was missing, which was always, because
+  // public/rgbimages/ has never existed. So every anomaly detail page showed the
+  // same block-wide photo under the heading "Visual Image (RGB)". That was already
+  // misleading; with the March 2026 survey it would be actively wrong, since that
+  // raster is of a different block 1.2 km east and has been retired.
+  //
+  // The card is kept rather than deleted so the page keeps its two-up layout and
+  // so the absence is visible to the client as a stated gap. Restore the <img>
+  // path here the moment a visual ortho or per-panel RGB set is delivered.
   return (
     <div className="bg-card border border-border overflow-hidden">
       <div className="px-4 py-2.5 border-b border-grey-200 flex items-center justify-between">
         <span className="font-semibold text-xs uppercase tracking-widest text-grey-400">Visual Image (RGB)</span>
         {filename && (
-          <span className="mono text-xs text-muted-foreground">
-            {filename.toUpperCase()}{pos && <span className="text-grey-400"> · pos {pos}</span>}
-          </span>
+          <span className="mono text-xs text-muted-foreground">{filename.toUpperCase()}</span>
         )}
       </div>
-      <div className="relative aspect-video bg-black overflow-hidden">
-
-        {/* Per-panel RGB image (when available) */}
-        {src && !errored && (
-          <>
-            <img
-              src={src}
-              alt={`RGB visual ${filename}`}
-              className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${loaded ? "opacity-100" : "opacity-0"}`}
-              onLoad={() => setLoaded(true)}
-              onError={() => setErrored(true)}
-            />
-            {!loaded && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              </div>
-            )}
-            {pos && loaded && (
-              <div className={`absolute ${pos === "a" ? "top-2" : "bottom-2"} left-2 bg-black/70 text-white text-[10px] mono px-2 py-0.5 flex items-center gap-1`}>
-                <span className="w-1.5 h-1.5 rounded-full bg-ochre inline-block" />
-                Panel: pos {pos} ({pos === "a" ? "top" : "bottom"})
-              </div>
-            )}
-          </>
-        )}
-
-        {/* Block-level RGB orthomosaic fallback — Day1_V1.tif thumbnail */}
-        {showOrtho && (
-          <>
-            <img
-              src="/rgb_block20.png"
-              alt="Block 20 RGB visual orthomosaic"
-              className="absolute inset-0 w-full h-full object-cover"
-            />
-            <div className="absolute bottom-2 left-2 bg-black/60 text-white text-[10px] mono px-2 py-0.5">
-              Block 20 visual orthomosaic · 28 May 2026
-            </div>
-            {filename && (
-              <div className="absolute top-2 left-2 bg-black/70 text-white/70 text-[10px] mono px-2 py-0.5">
-                Per-panel: {filename.toUpperCase()} (pending upload)
-              </div>
-            )}
-          </>
-        )}
-
-        <div className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] mono px-2 py-0.5">
-          IEC 62446-3
+      <div className="relative aspect-video bg-grey-50 overflow-hidden flex items-center justify-center">
+        <div className="text-center px-6">
+          <ImageOff size={22} className="mx-auto mb-2 text-grey-400" />
+          <p className="text-xs font-medium text-muted-foreground">No visual imagery for this survey</p>
+          <p className="text-[11px] text-grey-400 mt-1">
+            The 31 March 2026 flight captured radiometric thermal only. The frame
+            beside this one is the defect as recorded.
+          </p>
         </div>
       </div>
     </div>

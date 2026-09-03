@@ -190,6 +190,16 @@ export interface AnomalyDTO {
   dailyLossINR?: number;
   dailyLossKWh?: number;
   tileBbox?: [number, number, number, number]; // [west, south, east, north] in WGS84
+  /**
+   * Asset-register position from the survey KML. Optional because the Block 20
+   * deliverable had no equivalent — anything reading these must handle absence
+   * rather than assume the March 2026 shape. Mirrors Anomaly in lib/mock-data.ts.
+   */
+  block?: string;
+  smb?: string;
+  stringSide?: string;
+  module?: string;
+  defectCode?: string;
 }
 
 // ─── Plant layout (asset hierarchy) ────────────────────────────────────────

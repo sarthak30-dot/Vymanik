@@ -97,7 +97,7 @@ function dilate(g: Grid): Grid {
 }
 
 const M_PER_DEG_LAT = 110_600.0;
-const M_PER_DEG_LNG = 111_320.0 * Math.cos((28.2568 * Math.PI) / 180);
+const M_PER_DEG_LNG = 111_320.0 * Math.cos((28.2622 * Math.PI) / 180);
 
 function groundSize(b: Baseline) {
   return {
@@ -105,6 +105,34 @@ function groundSize(b: Baseline) {
     height: (b.north - b.south) * M_PER_DEG_LAT,
   };
 }
+
+/**
+ * Widest canvas the alpha read is allowed to use.
+ *
+ * This is a performance ceiling, and it is not optional. Reading the March 2026
+ * thermal at its native 8192 x 3699 costs, measured in the browser:
+ *
+ *     drawImage  501 ms | getImageData 6,700 ms | pooling 4,900 ms
+ *     total     12.1 s, and a 121 MB Uint8ClampedArray
+ *
+ * — all of it synchronous on the main thread, which is why the map used to sit
+ * for fifteen seconds after open with no markers drawn. The Block 20 raster was
+ * 11 MP and cost about a third of that, so this was affordable right up until
+ * the raster got four times bigger.
+ *
+ * At 2048 px the same work is 907 ms and 8 MB, a 13x saving, and it costs no
+ * fidelity that matters: the grids below are 2 m and 5 m cells, so on a 1,137 m
+ * block the fine grid is 569 cells across — 3.6 source pixels per cell at 2048,
+ * against 1.8 at 1024, which is where rounding would start dropping cells.
+ *
+ * Downscaling averages alpha rather than max-pooling it, so a data sliver comes
+ * back semi-transparent. That is fine at the >10/255 threshold pool() uses: a
+ * 4x downscale averages 16 source pixels, so even one covered pixel in sixteen
+ * lands at alpha 16 and still counts. The bias is toward over-reporting
+ * coverage, which is the safe direction — it can leave a stray marker visible,
+ * never hide a correctly placed one.
+ */
+const MASK_MAX_WIDTH = 2048;
 
 const cache = new Map<string, Promise<RasterMask | null>>();
 
@@ -125,12 +153,13 @@ export function loadRasterMask(def: OverlayDef): Promise<RasterMask | null> {
     img.crossOrigin = "anonymous";
     img.onload = () => {
       try {
+        const scale = Math.min(1, MASK_MAX_WIDTH / img.naturalWidth);
         const canvas = document.createElement("canvas");
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
         const ctx = canvas.getContext("2d", { willReadFrequently: true });
         if (!ctx) return resolve(null);
-        ctx.drawImage(img, 0, 0);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         const { data: px } = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
         const g = groundSize(def.baseline);

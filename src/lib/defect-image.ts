@@ -1,14 +1,21 @@
 /**
  * Radiometric defect frames captured by the drone, one per anomaly.
  *
- * The inspection report (finalreport_20Block.csv) carries the source frame in its
- * `Label` column — e.g. "7531.JPG" — which the importer folds into the anomaly's
- * `rgbNote` as "Image: 7531.JPG (pos a)". `pos` distinguishes the two modules a
- * single frame can cover when the defect sits on a table boundary.
+ * The survey KML carries the source frame in its `Label` field — e.g.
+ * "23389.JPG" — which scripts/import_defect_kml.py folds into the anomaly's
+ * `rgbNote` as "Image: 23389.JPG".
  *
- * The 229 frames live in public/defimages, lowercased. There are fewer frames
- * than anomalies (229 vs 347) because one frame often captures several defects on
- * the same table, so several anomalies legitimately share an image.
+ * The 484 frames live in public/defimages, lowercased and re-encoded from the
+ * 696 MB of DJI M3T originals down to 36 MB (EXIF stripped, which also drops the
+ * per-frame GPS the originals embed). There are fewer frames than anomalies —
+ * 484 against 1,249 — because one frame typically captures several defects on the
+ * same table, so several anomalies legitimately share an image.
+ *
+ * `pos` is a Block 20 leftover. That deliverable disambiguated the two modules a
+ * single frame could cover with a "(pos a)" / "(pos b)" suffix; the March 2026 KML
+ * has no equivalent field, so the suffix is absent and `pos` parses as null.
+ * The parse is kept rather than deleted because the field costs nothing and the
+ * next deliverable may carry it again — but nothing may depend on it being set.
  */
 
 const DEFECT_IMAGE_DIR = "/defimages";
