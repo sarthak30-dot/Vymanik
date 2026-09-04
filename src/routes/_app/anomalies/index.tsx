@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
 import { Search, Download, FileText, Loader2, MapPin } from "lucide-react";
 import { SeverityBadge, StatusBadge } from "@/components/SeverityBadge";
@@ -50,13 +50,13 @@ function googleMapsSearchUrl(lat: number, lng: number): string {
 /**
  * The Map Location cell/row, shared between the desktop table and the mobile
  * card. `onClick` exists only for the mobile case, where this renders inside
- * another `<Link>` (the whole card navigates to the detail page) — nesting an
- * `<a>` inside an `<a>` is invalid HTML, and without stopping propagation a
- * tap here would fire both this anchor's own navigation *and* the outer
- * card's router navigation. `stopPropagation` keeps the outer Link's handler
- * from ever seeing the click; this anchor's own `target="_blank"` still
- * fires as normal, since the browser resolves the click against whichever
- * element was actually clicked, not its ancestors.
+ * the card's own click-to-navigate `<div role="link">` (see the mobile cards
+ * section below for why that's a div and not a `<Link>`) — without stopping
+ * propagation, a tap here would fire both this anchor's own navigation *and*
+ * the card's own click handler navigating to the detail page. `stopPropagation`
+ * keeps the card's handler from ever seeing the click; this anchor's own
+ * `target="_blank"` still fires as normal, since the browser resolves the
+ * click against whichever element was actually clicked, not its ancestors.
  */
 function MapLocationLink({
   a,
@@ -116,6 +116,7 @@ function AnomalyList() {
   const { data: allAnomalies = [], isLoading } = useAnomalies();
   const { selectedPlant } = usePlantContext();
   const patchAnomaly = usePatchAnomaly();
+  const navigate = useNavigate();
   const canEdit = can(getUser()?.role, "editAnomaly");
 
   // Filter anomalies by selected plant.
@@ -296,8 +297,27 @@ function AnomalyList() {
       {/* Mobile cards */}
       <div className="md:hidden space-y-2">
         {rows.map((a, i) => (
-          <Link key={a.id} to="/anomalies/$id" params={{ id: a.id }}
-            className="block bg-card border border-border p-4 hover:bg-grey-25 transition">
+          <div
+            key={a.id}
+            role="link"
+            tabIndex={0}
+            onClick={() => navigate({ to: "/anomalies/$id", params: { id: a.id } })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") navigate({ to: "/anomalies/$id", params: { id: a.id } });
+            }}
+            // Was a <Link> (an <a>) wrapping the whole card — reworked into a
+            // clickable/keyboard-operable div instead, because the Google
+            // Maps link inside it (MapLocationLink) is a real <a> too, and
+            // React (correctly) treats a nested <a> as a hydration-breaking
+            // HTML violation: verified live, "In HTML, <a> cannot be a
+            // descendant of <a>." stopPropagation alone stopped the double
+            // -navigation bug that nesting would otherwise cause, but not the
+            // underlying invalid markup — this is the actual fix, not a
+            // workaround for it. navigate() + role="link" + Enter-to-activate
+            // keeps mouse, touch, and keyboard behavior equivalent to the
+            // <Link> this replaces.
+            className="block bg-card border border-border p-4 hover:bg-grey-25 transition cursor-pointer"
+          >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="mono text-[11px] text-muted-foreground">SL {i + 1}</p>
@@ -315,7 +335,7 @@ function AnomalyList() {
               <MapLocationLink a={a} onClick={(e) => e.stopPropagation()} />
               <StatusBadge status={a.status} severity={a.severity} />
             </div>
-          </Link>
+          </div>
         ))}
       </div>
     </div>

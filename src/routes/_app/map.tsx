@@ -845,17 +845,35 @@ function SiteMap() {
     const map = mapRef.current?.getMap();
     if (!map) return;
     const restack = () => {
-      const present = OVERLAY_STACK.filter(id => map.getLayer(id));
-      // Only act when the order is actually wrong. moveLayer() itself emits
-      // `styledata`, so an unconditional reorder here would answer its own event
-      // — harmless in practice (it converges immediately, measured at 0 extra
-      // events per second) but it makes the handler re-entrant for no reason,
-      // and a no-op guard is cheaper than reasoning about that every time
-      // somebody adds a layer.
-      const order = map.getStyle().layers.map(l => l.id);
-      const idx = present.map(id => order.indexOf(id));
-      if (idx.every((v, i) => i === 0 || v > idx[i - 1])) return;
-      for (const id of present) map.moveLayer(id);
+      // Confirmed live 2026-09-04: navigating away from /map fires this
+      // handler with the map already mid-teardown — react-map-gl's own
+      // unmount effect (a child of this component, so it cleans up first)
+      // calls the underlying map.remove(), which itself emits one last
+      // `styledata` synchronously as it tears down sources/layers, and this
+      // listener is still attached (this effect's own `map.off` cleanup
+      // hasn't run yet — it's a parent effect, cleaned up after children's).
+      // getLayer/getStyle/moveLayer all reach into `map.style` internally,
+      // which is already gone by that point, throwing "Cannot read
+      // properties of undefined (reading 'getOwnLayer')" — uncaught, since
+      // it fires from an event listener React has no visibility into.
+      // There's no public "is this map still alive" check to gate on
+      // instead, so the guard is a plain try/catch around the one handler
+      // known to run past teardown, not a fix to the ordering itself.
+      try {
+        const present = OVERLAY_STACK.filter(id => map.getLayer(id));
+        // Only act when the order is actually wrong. moveLayer() itself emits
+        // `styledata`, so an unconditional reorder here would answer its own event
+        // — harmless in practice (it converges immediately, measured at 0 extra
+        // events per second) but it makes the handler re-entrant for no reason,
+        // and a no-op guard is cheaper than reasoning about that every time
+        // somebody adds a layer.
+        const order = map.getStyle().layers.map(l => l.id);
+        const idx = present.map(id => order.indexOf(id));
+        if (idx.every((v, i) => i === 0 || v > idx[i - 1])) return;
+        for (const id of present) map.moveLayer(id);
+      } catch {
+        // Map is being torn down; nothing left to restack.
+      }
     };
     map.on("styledata", restack);
     restack();
@@ -875,10 +893,17 @@ function SiteMap() {
     const map = mapRef.current?.getMap();
     if (!map) return;
     const registerSprites = () => {
-      for (const sprite of buildSeveritySprites()) {
-        if (!map.hasImage(sprite.id)) {
-          map.addImage(sprite.id, { width: sprite.width, height: sprite.height, data: sprite.data });
+      // Same teardown race restack() above documents — this is a `styledata`
+      // listener too, and map.remove()'s own final `styledata` can reach it
+      // before this effect's `map.off` cleanup does.
+      try {
+        for (const sprite of buildSeveritySprites()) {
+          if (!map.hasImage(sprite.id)) {
+            map.addImage(sprite.id, { width: sprite.width, height: sprite.height, data: sprite.data });
+          }
         }
+      } catch {
+        // Map is being torn down; nothing left to register sprites onto.
       }
     };
     // styleimagemissing is Mapbox's own escape hatch for exactly the race this
@@ -927,10 +952,23 @@ function SiteMap() {
       return 5 + t * (9 - 5);
     };
     const tick = (t: number) => {
-      if (map.getLayer("anomaly-critical-pulse")) {
-        const { opacity, radiusScale } = criticalPulseValue(t);
-        map.setPaintProperty("anomaly-critical-pulse", "circle-opacity", opacity);
-        map.setPaintProperty("anomaly-critical-pulse", "circle-radius", pulseBaseRadius(map.getZoom()) * radiusScale);
+      // Same map.remove()-during-teardown race restack() documents (see that
+      // effect's comment) — belt-and-suspenders here, since cancelAnimationFrame
+      // in this effect's own cleanup should already stop future frames, but
+      // getLayer/setPaintProperty reach into `map.style`, which a teardown
+      // that wins the race has already cleared. Deliberately does NOT
+      // reschedule from the catch branch — a torn-down map is never coming
+      // back, so looping forever polling a promise that can't resolve would
+      // trade one bug (a crash) for a worse one (an orphaned rAF loop that
+      // never stops).
+      try {
+        if (map.getLayer("anomaly-critical-pulse")) {
+          const { opacity, radiusScale } = criticalPulseValue(t);
+          map.setPaintProperty("anomaly-critical-pulse", "circle-opacity", opacity);
+          map.setPaintProperty("anomaly-critical-pulse", "circle-radius", pulseBaseRadius(map.getZoom()) * radiusScale);
+        }
+      } catch {
+        return;
       }
       raf = requestAnimationFrame(tick);
     };
@@ -1514,7 +1552,7 @@ function SiteMap() {
                   </Source>
                 )}
 
-                {/* Surveyed panel outlines — real footprints from Block20_1GV_4.kml — only in KML View */}
+                {/* Surveyed panel outlines — real footprints from defpanels1.kml — only in KML View */}
                 {isRajpur && kmlViewMode && (
                   <Source id="panel-outlines" type="geojson" data={panelOutlinesGeoJSON as never}>
                     <Layer id="panel-outlines-fill" type="fill" paint={{
@@ -1695,7 +1733,7 @@ function SiteMap() {
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">
                     <div className="flex items-center gap-1.5 text-ochre font-medium"><MapIcon size={11} /> KML — Surveyed Panels</div>
                     <p className="text-[10px] text-muted-foreground">
-                      {panelOutlinesGeoJSON.features.length} outlines from Block20_1GV_4.kml
+                      {panelOutlinesGeoJSON.features.length} outlines from defpanels1.kml
                     </p>
                     <div className="flex items-center gap-2">
                       <span className="text-muted-foreground">Fill opacity</span>

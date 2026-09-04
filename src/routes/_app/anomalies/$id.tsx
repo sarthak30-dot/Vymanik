@@ -1,11 +1,14 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { jsPDF } from "jspdf";
+import { toast } from "sonner";
 import { ArrowLeft, MessageCircle, Download, Mail, MapPin, Check, Wrench, Loader2, ExternalLink, Navigation, ImageOff } from "lucide-react";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { useAnomaly, usePatchAnomaly } from "@/lib/queries";
 import { anomalyTypeDefs, plant, SEVERITY_LABEL_FULL } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 import { parseDefectImage } from "@/lib/defect-image";
+import { tokenFor } from "@/lib/severity-tokens";
 
 export const Route = createFileRoute("/_app/anomalies/$id")({
   head: () => ({ meta: [{ title: "Anomaly Detail — UrjaScan" }] }),
@@ -15,11 +18,108 @@ export const Route = createFileRoute("/_app/anomalies/$id")({
 type Status = AnomalyDTO["status"];
 const STEPS: Status[] = ["New", "Acknowledged", "In Repair", "Closed"];
 
+/**
+ * "Download Fault Card PDF" — found wired to nothing during a portal test
+ * pass (no onClick at all). Purpose-built for this page's own field set
+ * (peak/reference cell temp, irradiance, root cause, normalised ΔT) rather
+ * than sharing code with reports.tsx's plant-wide generatePDF() or
+ * PanelAuditDrawer.tsx's exportPanelSummary() — same reasoning that file's
+ * own docblock already gives for not merging with reports.tsx: one jsPDF
+ * library, three genuinely different one-panel layouts (this one has no
+ * audit timeline; PanelAuditDrawer has no peak/reference temp or root
+ * cause), so a shared function would need as many branches as it saved.
+ */
+async function generateFaultCardPDF(anomaly: AnomalyDTO): Promise<void> {
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const W = 210;
+  const token = tokenFor(anomaly.severity);
+
+  doc.setFillColor(15, 40, 77);
+  doc.rect(0, 0, W, 28, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(18);
+  doc.setFont("helvetica", "bold");
+  doc.text("UrjaScan — Fault Card", 14, 17);
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  doc.text(`Generated ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}`, 14, 23);
+
+  let y = 40;
+  doc.setTextColor(30, 30, 30);
+  doc.setFontSize(20);
+  doc.setFont("helvetica", "bold");
+  doc.text(anomaly.panelId, 14, y);
+  if (token) {
+    const [r, g, b] = token.textRGB;
+    doc.setTextColor(r, g, b);
+    doc.setFontSize(11);
+    doc.text(anomaly.type, 14, y + 7);
+  }
+  y += 18;
+
+  doc.setTextColor(30, 30, 30);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  const fields: [string, string][] = [
+    ["Severity", `${SEVERITY_LABEL_FULL[anomaly.severity]}${anomaly.deltaT ? ` · ΔT +${anomaly.deltaT}°C` : ""}`],
+    ...(anomaly.deltaTNorm ? [["ΔT Normalised @ 1000 W/m²", `+${anomaly.deltaTNorm}°C`] as [string, string]] : []),
+    ["Status", anomaly.status],
+    ["GPS", `${anomaly.gps.lat}°N, ${anomaly.gps.lng}°E`],
+    ["String / Inverter", `${anomaly.string} · ${anomaly.inverter}`],
+    ...(anomaly.peakTemp ? [["Peak Cell Temperature", `${anomaly.peakTemp}°C`] as [string, string]] : []),
+    ...(anomaly.refTemp ? [["Reference Cell Temp", `${anomaly.refTemp}°C`] as [string, string]] : []),
+    ...(anomaly.irradiance ? [["Irradiance at Inspection", `${anomaly.irradiance} W/m²`] as [string, string]] : []),
+    ["Inspection Date", anomaly.date],
+    ...(anomaly.rootCause ? [["Root Cause", anomaly.rootCause] as [string, string]] : []),
+  ];
+  for (const [label, value] of fields) {
+    doc.setFont("helvetica", "bold");
+    doc.text(`${label}:`, 14, y);
+    doc.setFont("helvetica", "normal");
+    doc.text(value, 75, y, { maxWidth: 120 });
+    y += 7;
+  }
+
+  if (anomaly.dailyLossINR) {
+    y += 4;
+    doc.setFillColor(15, 40, 77);
+    doc.rect(14, y - 5, W - 28, 20, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.text("Estimated Power Loss", 20, y);
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.text(`Rs ${anomaly.dailyLossINR} / day`, 20, y + 8);
+    y += 22;
+  }
+
+  const { src } = parseDefectImage(anomaly.rgbNote);
+  if (src) {
+    try {
+      const res = await fetch(src);
+      const blob = await res.blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      doc.addImage(dataUrl, "JPEG", 14, y + 4, 90, 72);
+    } catch {
+      // Frame missing/unreadable — the card is still useful without it.
+    }
+  }
+
+  doc.save(`UrjaScan_FaultCard_${anomaly.panelId}.pdf`);
+}
+
 function AnomalyDetail() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
   const { data: anomaly, isLoading, isError } = useAnomaly(id);
   const patchAnomaly = usePatchAnomaly();
+  const [generatingPdf, setGeneratingPdf] = useState(false);
 
   if (isLoading) {
     return (
@@ -239,8 +339,23 @@ Ref: ${anomaly.rgbNote}`
         <a href={`https://wa.me/?text=${whatsappMsg}`} target="_blank" rel="noreferrer" className="h-10 bg-[#25D366] text-white font-semibold text-sm flex items-center justify-center gap-2 hover:opacity-90">
           <MessageCircle size={16} /> Share on WhatsApp
         </a>
-        <button className="h-10 bg-card border border-border text-foreground font-semibold text-sm flex items-center justify-center gap-2 hover:bg-muted">
-          <Download size={16} /> Download Fault Card PDF
+        <button
+          onClick={async () => {
+            setGeneratingPdf(true);
+            try {
+              await generateFaultCardPDF(anomaly);
+              toast.success("Fault card downloaded", { description: "Check your Downloads folder." });
+            } catch (e) {
+              toast.error("PDF generation failed", { description: String(e) });
+            } finally {
+              setGeneratingPdf(false);
+            }
+          }}
+          disabled={generatingPdf}
+          className="h-10 bg-card border border-border text-foreground font-semibold text-sm flex items-center justify-center gap-2 hover:bg-muted disabled:opacity-60"
+        >
+          {generatingPdf ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+          {generatingPdf ? "Generating…" : "Download Fault Card PDF"}
         </button>
         <button className="h-10 bg-card border border-border text-foreground font-semibold text-sm flex items-center justify-center gap-2 hover:bg-muted">
           <Mail size={16} /> Email to Team
