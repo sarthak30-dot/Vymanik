@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
-import { Search, Download, FileText, Loader2 } from "lucide-react";
+import { Search, Download, FileText, Loader2, MapPin } from "lucide-react";
 import { SeverityBadge, StatusBadge } from "@/components/SeverityBadge";
 import { useAnomalies, usePatchAnomaly } from "@/lib/queries";
 import { usePlantContext } from "@/lib/plant-context";
@@ -34,6 +34,50 @@ function layoutLocation(a: AnomalyDTO, plantName: string): string {
 
 function mapLocation(a: AnomalyDTO): string {
   return `${a.gps.lat.toFixed(7)}, ${a.gps.lng.toFixed(7)}`;
+}
+
+/** Google's documented "Search" URL API (maps.google.com/maps?q= still works
+ *  but this is the form Google itself recommends going forward) — a pin at
+ *  the exact coordinate, not a route, which is what a client double-checking
+ *  a defect's location wants. Distinct on purpose from the "Navigate"/driving
+ *  -directions links elsewhere in this app (map.tsx, InspectionSheet,
+ *  anomalies/$id.tsx all use `?daddr=...&dirflg=d`) — this column exists to
+ *  verify a coordinate, not to route a technician there. */
+function googleMapsSearchUrl(lat: number, lng: number): string {
+  return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+}
+
+/**
+ * The Map Location cell/row, shared between the desktop table and the mobile
+ * card. `onClick` exists only for the mobile case, where this renders inside
+ * another `<Link>` (the whole card navigates to the detail page) — nesting an
+ * `<a>` inside an `<a>` is invalid HTML, and without stopping propagation a
+ * tap here would fire both this anchor's own navigation *and* the outer
+ * card's router navigation. `stopPropagation` keeps the outer Link's handler
+ * from ever seeing the click; this anchor's own `target="_blank"` still
+ * fires as normal, since the browser resolves the click against whichever
+ * element was actually clicked, not its ancestors.
+ */
+function MapLocationLink({
+  a,
+  onClick,
+}: {
+  a: AnomalyDTO;
+  onClick?: (e: React.MouseEvent) => void;
+}) {
+  return (
+    <a
+      href={googleMapsSearchUrl(a.gps.lat, a.gps.lng)}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={onClick}
+      title="Open in Google Maps"
+      className="inline-flex items-center gap-1 text-blue-600/80 hover:text-blue-600 hover:underline underline-offset-2 transition-colors"
+    >
+      <MapPin size={11} className="shrink-0" aria-hidden />
+      {mapLocation(a)}
+    </a>
+  );
 }
 
 function exportCSV(rows: AnomalyDTO[], plantName: string) {
@@ -206,7 +250,9 @@ function AnomalyList() {
                   <td className="px-4 py-3 mono text-sm text-muted-foreground">{i + 1}</td>
                   <td className="px-4 py-3 mono text-sm">{blockNumber(a, plantName)}</td>
                   <td className="px-4 py-3 mono text-xs">{layoutLocation(a, plantName)}</td>
-                  <td className="px-4 py-3 mono text-xs text-muted-foreground">{mapLocation(a)}</td>
+                  <td className="px-4 py-3 mono text-xs">
+                    <MapLocationLink a={a} />
+                  </td>
                   <td className="px-4 py-3 text-sm">{a.type}</td>
                   <td className="px-4 py-3 mono font-semibold text-sm">
                     {a.deltaTNorm ? (
@@ -266,7 +312,7 @@ function AnomalyList() {
               ) : a.deltaT ? (
                 <span className="mono text-foreground font-semibold">{a.deltaT.toFixed(2)}°C</span>
               ) : null}
-              <span className="mono">{mapLocation(a)}</span>
+              <MapLocationLink a={a} onClick={(e) => e.stopPropagation()} />
               <StatusBadge status={a.status} severity={a.severity} />
             </div>
           </Link>
