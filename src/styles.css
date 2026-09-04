@@ -34,10 +34,15 @@
 
   --color-critical: var(--critical);
   --color-critical-bg: var(--critical-bg);
+  --color-critical-vivid: var(--critical-vivid);
   --color-medium: var(--medium);
   --color-medium-bg: var(--medium-bg);
+  --color-medium-vivid: var(--medium-vivid);
   --color-normal: var(--normal);
   --color-normal-bg: var(--normal-bg);
+  --color-normal-vivid: var(--normal-vivid);
+  --color-resolved: var(--resolved);
+  --color-resolved-vivid: var(--resolved-vivid);
   --color-surface: var(--surface);
   --color-surface-dark: var(--surface-dark);
 
@@ -77,13 +82,34 @@
   --accent:            var(--ochre);
   --accent-foreground: var(--ochre-fg);
 
-  /* ── Severity — muted institutional ── */
-  --critical:    oklch(0.52 0.18 25);  /* #C0392B deep red */
-  --critical-bg: var(--grey-25);
-  --medium:      oklch(0.58 0.13 52);  /* #B5620A amber */
-  --medium-bg:   var(--grey-25);
-  --normal:      oklch(0.52 0.12 148); /* #2E7D52 forest green */
-  --normal-bg:   var(--grey-25);
+  /* ── Severity — high-contrast defect symbology (see lib/severity-tokens.ts) ──
+   * Two shades per tier, both sourced from that file so this stylesheet can
+   * never drift out of sync with the map/PDF/table values:
+   *   --critical/--medium/--normal        TEXT shade — 4.5:1 vs white AND
+   *                                        black, since .dark never overrides
+   *                                        these and light-mode text sits on
+   *                                        a near-white card either way.
+   *   --critical-vivid/--medium-vivid/
+   *   --normal-vivid                      the brief's literal saturated hex —
+   *                                        only for anything drawn with the
+   *                                        anti-camouflage ring (map markers,
+   *                                        badge swatches), never bare text.
+   */
+  --critical:       #EE0000; /* text-safe */
+  --critical-vivid: #FF2E2E; /* Critical / Hotspot */
+  --critical-bg:    var(--grey-25);
+  --medium:         #B26200; /* text-safe */
+  --medium-vivid:   #FF8C00; /* Major / String Failure */
+  --medium-bg:      var(--grey-25);
+  --normal:         #847700; /* text-safe */
+  --normal-vivid:   #FFE600; /* Minor / Soiling */
+  --normal-bg:      var(--grey-25);
+  /* Resolved / Inspected — keyed to status "Closed", not a severity; see
+   * lib/severity-tokens.ts's tokenFor(). Distinct from --normal on purpose:
+   * a resolved CRITICAL should read as "fixed", not fade to the same green
+   * a normal/COA1 finding already uses for "never was urgent". */
+  --resolved:       #00875A; /* text-safe */
+  --resolved-vivid: #00E599;
 
   /* ── Grey scale (warm-neutral) ── */
   --grey-25:  #FAFAFA;
@@ -165,6 +191,22 @@
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
+}
+
+/* Critical pulse — DOM half of the "dynamic inner pulse" the brief asks for
+ * on Critical/Hotspot markers. Period matches lib/severity-tokens.ts's
+ * PULSE_PERIOD_MS (1400ms) so a critical badge in a table and a critical
+ * marker on the map beat in sync if both are visible at once — deliberately
+ * kept as two separate implementations (this CSS animation for DOM elements,
+ * a requestAnimationFrame loop in lib/defect-overlay.ts for the WebGL map
+ * canvas, which cannot run a CSS animation) but sharing one timing constant
+ * so they read as one design language rather than two unrelated effects. */
+@keyframes critical-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50%      { transform: scale(1.6); opacity: 0.35; }
+}
+.animate-critical-pulse {
+  animation: critical-pulse 1.4s ease-in-out infinite;
 }
 
 /* Shimmer skeleton */

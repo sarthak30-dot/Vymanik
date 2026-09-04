@@ -1,15 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback, lazy, Suspense } from "react";
 import {
   X, ArrowRight, MessageCircle, Thermometer, Layers,
   SplitSquareHorizontal, Navigation, Download, Map as MapIcon,
-  Crosshair, RotateCcw, Copy, EyeOff, MonitorPlay,
+  Crosshair, RotateCcw, Copy, EyeOff, MonitorPlay, History, Loader2,
 } from "lucide-react";
 import {
   anomalies, anomalyTypes, plant, anomalyCounts, SEVERITY_LABEL_FULL,
   type Anomaly, type Severity,
 } from "@/lib/mock-data";
 import { SeverityBadge } from "@/components/SeverityBadge";
+import { SeverityShape } from "@/components/SeverityShape";
 import { usePlantContext } from "@/lib/plant-context";
 import { getUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
@@ -28,11 +29,29 @@ import {
   boxPaint, clusterPaint, anchorPaint, panelChrome,
   PRESENTATION, emitPanelSelect,
 } from "@/lib/defect-overlay";
+import {
+  offsetCardinal, panStepMetres, orderForStepping, stepIndex,
+  clamp, PITCH_STEP, PITCH_MIN, PITCH_MAX, ZOOM_STEP,
+  type Cardinal,
+} from "@/lib/map-camera";
+import { NavigationHUD } from "@/components/NavigationHUD";
+import { InspectionSheet } from "@/components/InspectionSheet";
+import { useIsMobile } from "@/hooks/use-mobile";
+// Task 7: lazy — see PanelAuditDrawer.tsx's own docblock for why this one
+// component, jsPDF included, is deliberately kept out of map.tsx's own
+// bundle rather than imported at the top like everything else on this page.
+const PanelAuditDrawer = lazy(() => import("@/components/PanelAuditDrawer").then(m => ({ default: m.PanelAuditDrawer })));
+import {
+  SEVERITY, RESOLVED, RING_INNER,
+} from "@/lib/severity-tokens";
+import {
+  buildSeveritySprites, DOT_ICON_IMAGE, criticalPulseValue, iconSizeForRadius, type MarkerSprite,
+} from "@/lib/defect-overlay";
 import MapGL, {
   Marker, Popup, Source, Layer, NavigationControl,
   type MapRef, type ViewState,
 } from "react-map-gl/mapbox";
-import type { ExpressionSpecification, GeoJSONSource } from "mapbox-gl";
+import type { ExpressionSpecification, FilterSpecification, GeoJSONSource } from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 
 // ─── Drone orthomosaic placement ──────────────────────────────────────────────
@@ -147,18 +166,25 @@ const PANEL_FILL_MIN_ZOOM = OVERLAY_ZOOM.fillMin;
 // and never by the dot. Sizing the dot for visibility costs nothing at the zooms
 // where accuracy is checkable, because it is not on screen there.
 //
-// Note circle-stroke-width extends *outward* from the radius, so drawn width is
-// 2 * (radius + stroke).
+// Historically circle-radius/circle-stroke-width, drawn width 2*(radius+stroke).
+// Since Task 5, anomaly-dot is a symbol layer using the shape-coded sprites
+// (DOT_ICON_IMAGE in lib/defect-overlay.ts) instead of a plain circle, so this
+// ramp now feeds icon-size, a multiplier of the sprite's own 64px, rather than
+// a circle-radius directly — iconSizeForRadius (also in lib/defect-overlay.ts)
+// does that conversion, and its docblock has the "what replaces the old white
+// stroke" reasoning. The target sizes and severity scaling below are otherwise
+// unchanged from the original circle-based ramp.
 //
-// The white stroke is not decoration. Re-measured against the March 2026 raster
-// under all 1,249 defect positions, mean background is rgb(163,26,96) and the
-// severity colours score: critical #ef4444 1.94:1, medium #f59e0b 3.40:1, normal
-// #22c55e 3.20:1 — within noise of the Block 20 figures, because the DJI M3T
-// writes the same IronRed palette. WCAG's floor for non-text graphics is 3:1, so
-// *critical* — the one severity that must never be missed — is the least visible
-// thing on the map. White against that background is 7.30:1, so the halo, not the fill, is
-// what makes a marker readable here. It has to be thick enough to survive being
-// drawn over a noisy raster, hence ~1.4 px rather than a hairline.
+// The white stroke was not decoration, and the sprite's ring inherits the same
+// job. Re-measured against the March 2026 raster under all 1,249 defect
+// positions, mean background is rgb(163,26,96) and the severity colours score:
+// critical #ef4444 1.94:1, medium #f59e0b 3.40:1, normal #22c55e 3.20:1 —
+// within noise of the Block 20 figures, because the DJI M3T writes the same
+// IronRed palette. WCAG's floor for non-text graphics is 3:1, so *critical* —
+// the one severity that must never be missed — is the least visible thing on
+// the map by fill colour alone. The ring, not the fill, is what makes a marker
+// readable here; see lib/severity-tokens.ts's RING_* docblock for why it's
+// two colours rather than one.
 //
 // The severity scale is applied per stop rather than as ["*", scale, ramp]:
 // Mapbox requires a "zoom" expression to be the outermost expression of a paint
@@ -166,26 +192,32 @@ const PANEL_FILL_MIN_ZOOM = OVERLAY_ZOOM.fillMin;
 // interpolates between those results — which it cannot do if the zoom curve is
 // nested inside an arithmetic operator. Nesting it throws
 // "zoom expression may only be used as input to a top-level step or interpolate"
-// and drops the whole layer.
-const dotRadius = (px: number): ExpressionSpecification =>
-  ["match", ["get", "severity"], "critical", px * 1.25, "medium", px * 1.1, px];
+// and drops the whole layer (the rAF pulse effect above hit this same trap and
+// has its own note on the JS-side workaround, which isn't available here since
+// this has to stay a static paint expression).
+//
+// Both dotRadius (still used to derive the multipliers below) and dotIconSize
+// read the same SEVERITY_SIZE_SCALE constants rather than each hard-coding
+// 1.25/1.1 independently — two copies of one number are how a size ramp and
+// its icon-size equivalent quietly drift apart.
+const SEVERITY_SIZE_SCALE: Record<"critical" | "medium", number> = { critical: 1.25, medium: 1.1 };
+const dotIconSize = (px: number): ExpressionSpecification => [
+  "match", ["get", "severity"],
+  "critical", iconSizeForRadius(px * SEVERITY_SIZE_SCALE.critical),
+  "medium", iconSizeForRadius(px * SEVERITY_SIZE_SCALE.medium),
+  iconSizeForRadius(px),
+];
 
-const DOT_RADIUS_BY_ZOOM: ExpressionSpecification = [
+const DOT_ICON_SIZE_BY_ZOOM: ExpressionSpecification = [
   "interpolate", ["exponential", 2], ["zoom"],
   // Whole-site view: 1,249 markers share ~135 px of array, so they must stay small
   // or they merge into one blob and stop carrying information.
-  14,   dotRadius(2.0),
+  14,   dotIconSize(2.0),
   // Working zooms — this is where the client actually reads the map.
-  16.5, dotRadius(3.4),
-  18,   dotRadius(4.0),
+  16.5, dotIconSize(3.4),
+  18,   dotIconSize(4.0),
   // Handing over to the footprint; the dot is already fading out by here.
-  19.5, dotRadius(3.0),
-];
-const DOT_STROKE_BY_ZOOM: ExpressionSpecification = [
-  "interpolate", ["linear"], ["zoom"],
-  14, 0.8,
-  17, 1.4,
-  19, 1.6,
+  19.5, dotIconSize(3.0),
 ];
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string;
@@ -219,9 +251,12 @@ const OVERLAY_STACK = [
   "thermal-layer",
   "anomaly-panel-fill",
   "anomaly-panel-halo",
+  "anomaly-panel-black-ring",  // Task 5 anti-camouflage border, under the white casing
   "anomaly-panel-casing",
   "anomaly-panel-line",
+  "anomaly-critical-pulse",    // under the dots it pulses around, not on top of them
   "anomaly-dot",
+  "anomaly-cluster-black-ring",
   "anomaly-cluster",
   "anomaly-cluster-count",
   "anomaly-anchor-ring",
@@ -245,10 +280,15 @@ const PLANT_COLS = 26;
 // both are 10,790 modules divided into racks of 26.
 const PLANT_ROWS = Math.ceil(plant.totalPanels / PLANT_COLS);
 
+// High-contrast defect symbology (Task 5) — every hex here comes from
+// lib/severity-tokens.ts's SEVERITY/RESOLVED, which is where the actual
+// colour, ring, shape and pulse decisions are made and documented. This map
+// keeps a flat lookup because Mapbox paint expressions need a literal string,
+// not a function call, at the point they are built.
 const SEV_COLOR: Record<string, string> = {
-  critical: "#ef4444",
-  medium:   "#f59e0b",
-  normal:   "#22c55e",
+  critical: SEVERITY.critical.vivid,
+  medium:   SEVERITY.medium.vivid,
+  normal:   SEVERITY.normal.vivid,
   nodata:   "#374151",
 };
 
@@ -297,9 +337,24 @@ function SiteMap() {
   // this map wants the imagery and the defects on it; a control that lets them
   // drag the orthomosaic off its panels is a support ticket waiting to happen.
   const isSurveyor = can(getUser()?.role, "alignOverlay");
+  // Task 6: gates the InspectionSheet's quick-action buttons — a read-only
+  // client viewing the map on their phone gets the sheet's status/GPS/image
+  // content but not write actions, same single-source-of-truth permission the
+  // rest of the app checks before any anomaly edit.
+  const canEditAnomaly = can(getUser()?.role, "editAnomaly");
+  // Task 7: gates PanelAuditDrawer's export button — exportReports is true
+  // for every role including client (read-only report export), matching how
+  // the plant-wide report in reports.tsx is gated.
+  const canExportReports = can(getUser()?.role, "exportReports");
 
   const [filters, setFilters]   = useState<Record<string, boolean>>({ critical: true, medium: true, normal: true, nodata: true });
   const [selected, setSelected] = useState<Anomaly | null>(null);
+  // Task 7: whether the (lazy-loaded) audit drawer is open for `selected`.
+  // Owned here rather than inside InspectionSheet/the desktop drawer so
+  // there's exactly one Suspense boundary and one dynamic import() call site
+  // for the whole page, regardless of which selection UI (desktop aside,
+  // mobile sheet) the technician actually opened it from.
+  const [auditOpen, setAuditOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Filters
@@ -322,6 +377,11 @@ function SiteMap() {
    * in lib/defect-overlay.ts.
    */
   const [presenting, setPresenting] = useState(false);
+  // Task 6: drives the desktop-drawer/mobile-sheet split, the mobile render
+  // profile, and the 2D-forced pitch lock below — one read of the same
+  // breakpoint MobileBottomNav already uses (hooks/use-mobile.tsx), not a
+  // second notion of "mobile" invented for this task.
+  const isMobile = useIsMobile();
   // Gates the effects that need a live map object rather than a ref that may
   // still be null on first render.
   const [mapReady, setMapReady] = useState(false);
@@ -545,7 +605,11 @@ function SiteMap() {
     features: visibleAnomalies.map(a => ({
       type: "Feature" as const,
       geometry: { type: "Point" as const, coordinates: [a.gps.lng, a.gps.lat] },
-      properties: { severity: a.severity, anomalyId: a.id },
+      // `status` rides alongside `severity` specifically so DOT_ICON_IMAGE
+      // (lib/defect-overlay.ts) can show the Resolved diamond for a Closed
+      // finding instead of its severity's own shape — see tokenFor()'s
+      // precedence rule in lib/severity-tokens.ts.
+      properties: { severity: a.severity, anomalyId: a.id, status: a.status },
     })),
   }), [visibleAnomalies]);
 
@@ -553,6 +617,156 @@ function SiteMap() {
     () => new Map(anomalies.map(a => [a.id, a])),
     [],
   );
+
+  // ── Defect stepper order ──
+  // Walks visibleAnomalies (respecting the sidebar filters and the
+  // stray-suppression policy) rather than the full dataset, so Next/Previous
+  // can never land the camera on a panel that is not actually drawn on screen
+  // right now. See orderForStepping in lib/map-camera.ts for why the order
+  // itself is table/rack/module rather than the dataset's severity-first order.
+  const steppableAnomalies = useMemo(() => orderForStepping(visibleAnomalies), [visibleAnomalies]);
+
+  /**
+   * The state-setting half of "a panel got picked" — shared by the map click
+   * handler below, the defect stepper, and the "[" / "]" keyboard shortcuts, so
+   * all three ways of selecting a panel go through one place rather than three
+   * copies of the same four lines quietly drifting apart. Camera movement is
+   * deliberately NOT part of this: the click handler and the stepper each
+   * decide separately whether and how far to move the camera (see the comment
+   * at the click handler's call site for why those two cannot share one rule).
+   */
+  const applySelection = useCallback((anomaly: Anomaly) => {
+    emitPanelSelect({
+      panelId: anomaly.panelId,
+      anomalyId: anomaly.id,
+      severity: anomaly.severity,
+      lngLat: [anomaly.gps.lng, anomaly.gps.lat],
+      source: "map-overlay",
+    });
+    setSelectedBox(anomaly.id);
+    setSelected(anomaly);
+    setPopup(anomaly);
+  }, [setSelectedBox]);
+
+  /**
+   * Next/Previous flagged panel. Unlike a map click — which only recenters
+   * when the target is not already comfortably on screen — this always moves
+   * the camera: the entire point of the stepper is reaching a panel you have
+   * not scrolled to yet, so "already visible" is not a case it needs to handle.
+   * Zoom only ever increases to at least panel-footprint scale, never
+   * decreases — stepping through a table you are already zoomed into should
+   * not zoom you back out.
+   */
+  const stepDefect = useCallback((dir: 1 | -1) => {
+    const idx = stepIndex(steppableAnomalies, selected?.id ?? null, dir);
+    if (idx === null) return;
+    const target = steppableAnomalies[idx];
+    applySelection(target);
+    const zoom = Math.max(mapRef.current?.getZoom() ?? 0, OVERLAY_ZOOM.fillMin + 0.5);
+    mapRef.current?.easeTo({ center: [target.gps.lng, target.gps.lat], zoom, duration: 600 });
+  }, [steppableAnomalies, selected, applySelection]);
+
+  // What the stepper bar actually shows — kept separate from stepDefect
+  // itself so the label updates the instant the filters change the pool,
+  // without waiting on a click.
+  const stepperDisplay = useMemo(() => {
+    const idx = selected ? steppableAnomalies.findIndex(a => a.id === selected.id) : -1;
+    return {
+      label: idx >= 0 ? steppableAnomalies[idx].panelId : "Next Defect",
+      position: idx >= 0 ? `${idx + 1} of ${steppableAnomalies.length}` : (
+        steppableAnomalies.length > 0 ? `${steppableAnomalies.length} flagged` : null
+      ),
+      disabled: steppableAnomalies.length === 0,
+    };
+  }, [selected, steppableAnomalies]);
+
+  // ── HUD camera controls ──
+  // Deliberately thin wrappers: all the actual arithmetic (compass-true pan
+  // distance, clamping) lives in lib/map-camera.ts so it can be reasoned about
+  // and reused from the keyboard handler below without duplicating it.
+  const panCardinal = useCallback((dir: Cardinal) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const c = map.getCenter();
+    const [lng, lat] = offsetCardinal(c.lng, c.lat, dir, panStepMetres(map.getZoom()));
+    map.easeTo({ center: [lng, lat], duration: 220 });
+  }, []);
+
+  const stepPitch = useCallback((sign: 1 | -1) => {
+    const map = mapRef.current;
+    if (!map) return;
+    map.easeTo({ pitch: clamp(map.getPitch() + sign * PITCH_STEP, PITCH_MIN, PITCH_MAX), duration: 220 });
+  }, []);
+
+  const stepZoom = useCallback((sign: 1 | -1) => {
+    const map = mapRef.current;
+    if (!map) return;
+    map.easeTo({
+      zoom: clamp(map.getZoom() + sign * ZOOM_STEP, map.getMinZoom(), map.getMaxZoom()),
+      duration: 220,
+    });
+  }, []);
+
+  const resetNorth = useCallback(() => {
+    mapRef.current?.easeTo({ bearing: 0, duration: 300 });
+  }, []);
+
+  /**
+   * The keyboard half of the HUD (see lib/map-camera.ts's SHORTCUT_MATRIX,
+   * which is the legend this must stay in sync with).
+   *
+   * Bound on window, not the map container, so it works regardless of what
+   * has focus — matching AlignPanel's own arrow-key handler below, whose
+   * input/select/textarea guard this copies verbatim for the same reason.
+   *
+   * GUARDS THAT MATTER:
+   *   - alignTarget: AlignPanel binds its OWN window keydown listener for
+   *     plain arrow keys the moment it mounts (see the "Align panel" section
+   *     below), to nudge the raster under alignment. Two window-level arrow
+   *     handlers firing on the same keydown would both act on one keypress —
+   *     nudge the overlay AND pan the camera — so this listener steps aside
+   *     entirely while Align is open rather than trying to coordinate with it.
+   *   - compareMode: two independently-scrolled panes side by side have no
+   *     one camera for a keypress to mean anything about.
+   *   - isRajpur: the non-Rajpur placeholder map carries no real anomaly data
+   *     for the stepper to walk and isn't meant to be a navigable site map.
+   */
+  useEffect(() => {
+    if (!isRajpur || compareMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (alignTarget) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+
+      if (e.key === "Escape") {
+        if (selected) { e.preventDefault(); setSelected(null); }
+        return;
+      }
+      if (e.key === "[" || e.key === "]") {
+        e.preventDefault();
+        stepDefect(e.key === "]" ? 1 : -1);
+        return;
+      }
+      if (e.key.toLowerCase() === "n" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        resetNorth();
+        return;
+      }
+
+      const dirs: Partial<Record<string, Cardinal>> = {
+        ArrowUp: "N", ArrowDown: "S", ArrowLeft: "W", ArrowRight: "E",
+      };
+      const dir = dirs[e.key];
+      if (!dir) return;
+      e.preventDefault();
+
+      if (e.shiftKey) { stepZoom(e.key === "ArrowUp" ? -1 : 1); return; }
+      if (e.ctrlKey || e.metaKey) { stepPitch(e.key === "ArrowUp" ? 1 : -1); return; }
+      panCardinal(dir);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isRajpur, compareMode, alignTarget, selected, stepDefect, resetNorth, stepZoom, stepPitch, panCardinal]);
 
   // Alignment reference: every surveyed footprint, ignoring the sidebar filters.
   // Filtering here would be actively harmful — you align against as much known-good
@@ -571,7 +785,10 @@ function SiteMap() {
   // Recomputed only when the presentation toggle flips. The paint objects are
   // plain data, so handing a new one to a <Layer> is a diff of paint properties
   // rather than a layer rebuild — the boxes do not blink when the profile changes.
-  const profile = presenting ? PRESENTATION.share : PRESENTATION.desk;
+  // Presentation Mode wins outright when both apply — someone screen-sharing
+  // from their phone still needs the codec-friendly profile, not the mobile
+  // one, and reduceEffects is true either way so nothing is lost by picking one.
+  const profile = presenting ? PRESENTATION.share : isMobile ? PRESENTATION.mobile : PRESENTATION.desk;
   const box     = useMemo(() => boxPaint(profile.reduceEffects), [profile.reduceEffects]);
   const cluster = useMemo(() => clusterPaint(profile.reduceEffects), [profile.reduceEffects]);
   const anchor  = useMemo(() => anchorPaint(profile.reduceEffects), [profile.reduceEffects]);
@@ -645,12 +862,121 @@ function SiteMap() {
     return () => { map.off("styledata", restack); };
   }, [mapReady]);
 
+  /**
+   * Register the four shape-coded marker sprites (Task 5) — same lifecycle as
+   * restack() above and for the same reason: toggling Hide Basemap swaps the
+   * whole style object, which drops every `addImage` registration along with
+   * it, so `anomaly-dot`'s icon-image would start resolving to nothing and
+   * Mapbox would silently stop drawing the layer. `hasImage` guards against
+   * re-rasterising four canvases on every unrelated styledata event — only
+   * add what a fresh style is actually missing.
+   */
+  useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    const registerSprites = () => {
+      for (const sprite of buildSeveritySprites()) {
+        if (!map.hasImage(sprite.id)) {
+          map.addImage(sprite.id, { width: sprite.width, height: sprite.height, data: sprite.data });
+        }
+      }
+    };
+    // styleimagemissing is Mapbox's own escape hatch for exactly the race this
+    // component otherwise has on first mount: <Layer id="anomaly-dot"> (a
+    // child, so its own mount effect runs before this parent effect per
+    // React's child-before-parent effect order) can ask for
+    // "sev-sprite-critical" a render or two before registerSprites() above
+    // has run, and Mapbox logs a warning and skips the icon for that frame
+    // rather than waiting. Handling the event closes that window synchronously
+    // instead of relying on effect ordering staying favorable.
+    const onImageMissing = (e: { id: string }) => {
+      if (!map.hasImage(e.id)) registerSprites();
+    };
+    map.on("styledata", registerSprites);
+    map.on("styleimagemissing", onImageMissing);
+    registerSprites();
+    return () => {
+      map.off("styledata", registerSprites);
+      map.off("styleimagemissing", onImageMissing);
+    };
+  }, [mapReady]);
+
+  /**
+   * The critical "dynamic inner pulse" — see criticalPulseValue() in
+   * lib/defect-overlay.ts for why this has to be a requestAnimationFrame loop
+   * rather than a paint expression. One loop drives one paint property on one
+   * layer for every critical marker at once; it does not touch the dot layer
+   * itself; it does not run at all when there is nothing to pulse, so an idle
+   * plant with zero criticals costs nothing per frame.
+   *
+   * circle-radius is set as a plain number, not a ["*", interpolate, scale]
+   * expression: the "zoom expression must be outermost" rule from the dot
+   * geometry comment near DOT_ICON_SIZE_BY_ZOOM applies here too, and setPaintProperty
+   * goes through the same expression validator a static style does — nesting
+   * the zoom interpolation inside "*" would drop this layer exactly the way
+   * it dropped the dot layer that first time. Reading map.getZoom() and doing
+   * the interpolation in JS sidesteps the restriction entirely, which a
+   * static paint expression can't do but a per-frame JS callback can.
+   */
+  useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (!map || !mapReady) return;
+    let raf = 0;
+    const pulseBaseRadius = (zoom: number) => {
+      const t = clamp((zoom - 14) / (18.5 - 14), 0, 1);
+      return 5 + t * (9 - 5);
+    };
+    const tick = (t: number) => {
+      if (map.getLayer("anomaly-critical-pulse")) {
+        const { opacity, radiusScale } = criticalPulseValue(t);
+        map.setPaintProperty("anomaly-critical-pulse", "circle-opacity", opacity);
+        map.setPaintProperty("anomaly-critical-pulse", "circle-radius", pulseBaseRadius(map.getZoom()) * radiusScale);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [mapReady]);
+
+  /**
+   * Task 6: the live-updating half of the pitch lock — maxPitch above only
+   * applies at construction, so a viewport resize or tablet rotation crossing
+   * the 768px breakpoint mid-session (isMobile flipping without a remount)
+   * would otherwise leave a stale pitch capability that no longer matches
+   * what the HUD offers. Mirrors it into the actual mapboxgl.Map instance's
+   * own live-settable interaction handlers and constraint, and eases any
+   * existing tilt back to flat rather than leaving the camera stuck at a
+   * pitch the map can no longer be pitched away from.
+   */
+  useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (!map || !mapReady) return;
+    if (isMobile) {
+      map.setMaxPitch(0);
+      map.dragRotate.disable();
+      map.touchPitch.disable();
+      if (map.getPitch() !== 0) map.easeTo({ pitch: 0, duration: profile.fadeDuration });
+    } else {
+      map.setMaxPitch(PITCH_MAX);
+      map.dragRotate.enable();
+      map.touchPitch.enable();
+    }
+  }, [isMobile, mapReady, profile.fadeDuration]);
+
   // Selection can be cleared by the drawer's own close button, which knows
   // nothing about feature state. Mirroring it here keeps the highlighted box and
   // the open drawer from disagreeing.
   useEffect(() => {
     setSelectedBox(selected?.id ?? null);
   }, [selected, setSelectedBox]);
+
+  // Task 7: the audit drawer is scoped to one anomaly's history — stepping
+  // to the next flagged panel (or closing the selection entirely) without
+  // closing this first would otherwise leave it open showing the *previous*
+  // panel's timeline under the new panel's identity in the drawer behind it.
+  useEffect(() => {
+    setAuditOpen(false);
+  }, [selected?.id]);
 
   const uniqueInverters = useMemo(() =>
     ["all", ...Array.from(new Set(anomalies.map(a => a.inverter))).sort()], []);
@@ -908,6 +1234,15 @@ function SiteMap() {
                 // 0.57 km — at z17 half of it starts off screen.
                 initialViewState={{ longitude: 73.0295, latitude: 28.2622, zoom: isRajpur ? 16.2 : 14 }}
                 key={selectedPlant.id}
+                // Task 6's "simplified 2D mobile fallback": a tilted view costs
+                // extra fill-rate on the exact devices least able to spare it, and
+                // the pitch stepper that would produce one is already hidden on
+                // mobile (NavigationHUD's pitchEnabled prop below) — this is the
+                // enforcement to match, not just the affordance removal. Only sets
+                // the *initial* constructor value; the mobilePitchLock effect below
+                // covers a live isMobile flip (viewport resize/rotation) that this
+                // prop alone would miss.
+                maxPitch={isMobile ? 0 : undefined}
                 style={{ width: "100%", height: "100%" }}
                 mapStyle={thermalVisible && hideBasemap && !kmlViewMode
                   ? BLANK_BASEMAP_STYLE
@@ -949,17 +1284,10 @@ function SiteMap() {
                   // The overlay's whole output: which panel was picked. Everything
                   // downstream — this route's drawer, the popup, anything listening
                   // on the window — reacts to that rather than being called directly.
-                  // See the click-contract note in lib/defect-overlay.ts.
-                  emitPanelSelect({
-                    panelId: anomaly.panelId,
-                    anomalyId: anomaly.id,
-                    severity: anomaly.severity,
-                    lngLat: [anomaly.gps.lng, anomaly.gps.lat],
-                    source: "map-overlay",
-                  });
-                  setSelectedBox(anomaly.id);
-                  setSelected(anomaly);
-                  setPopup(anomaly);
+                  // See the click-contract note in lib/defect-overlay.ts, and
+                  // applySelection above for why this is shared with the stepper
+                  // and keyboard shortcuts rather than repeated here.
+                  applySelection(anomaly);
 
                   // Only move the camera when the box is not yet drawn as a box.
                   // The old behaviour flew to z20 on every click, which yanked the
@@ -1039,6 +1367,16 @@ function SiteMap() {
                         "line-color": severityColour,
                         ...box.halo,
                       }} />
+                      {/* Task 5 anti-camouflage ring, black half: paired with the
+                          white casing Layer just below to bracket every possible
+                          background luminance — see RING_* in lib/severity-tokens.ts.
+                          Declared first so casing paints over it and only the
+                          intended sliver of black shows, same nested-shape logic
+                          SeverityShape.tsx uses for the SVG badges. */}
+                      <Layer id="anomaly-panel-black-ring" type="line" paint={{
+                        "line-color": RING_INNER,
+                        ...box.blackRing,
+                      }} />
                       <Layer id="anomaly-panel-casing" type="line" paint={{
                         "line-color": "#ffffff",
                         ...box.casing,
@@ -1069,6 +1407,13 @@ function SiteMap() {
                       data={anomalyPointsGeoJSON as never}
                       {...CLUSTER_TUNING}
                     >
+                      {/* Task 5 anti-camouflage ring for clusters — same
+                          nested-shape logic as anomaly-panel-black-ring above:
+                          drawn first, under the white-stroked cluster circle, so
+                          only its outer sliver shows as a second, opposite-
+                          luminance ring around the first. */}
+                      <Layer id="anomaly-cluster-black-ring" type="circle" filter={CLUSTERED}
+                        paint={cluster.blackRing} />
                       <Layer id="anomaly-cluster" type="circle" filter={CLUSTERED}
                         paint={cluster.circle} />
                       <Layer
@@ -1086,19 +1431,49 @@ function SiteMap() {
                         }}
                         paint={cluster.count}
                       />
-                      <Layer id="anomaly-dot" type="circle" filter={UNCLUSTERED} paint={{
-                        "circle-color": severityColour,
-                        "circle-radius": DOT_RADIUS_BY_ZOOM,
-                        "circle-stroke-color": "#ffffff",
-                        "circle-stroke-width": DOT_STROKE_BY_ZOOM,
+                      {/* Task 5 "dynamic inner pulse", critical only — a plain
+                          circle layer the rAF effect above overwrites every frame
+                          via setPaintProperty (see that effect's own comment for
+                          why circle-radius is a number, not an expression); the
+                          values here are just a legal first paint before that
+                          effect's first tick runs. Filtered to UNCLUSTERED so a
+                          clustered critical doesn't pulse behind its own cluster
+                          circle — the cluster circle's own colour priority
+                          (cluster.circle in lib/defect-overlay.ts) already carries
+                          "something urgent is under here" once points merge. */}
+                      <Layer
+                        id="anomaly-critical-pulse"
+                        type="circle"
+                        filter={["all", UNCLUSTERED, ["==", ["get", "severity"], "critical"]] as FilterSpecification}
+                        paint={{
+                          "circle-color": SEVERITY.critical.vivid,
+                          "circle-radius": 5,
+                          "circle-opacity": 0.35,
+                          "circle-pitch-alignment": "viewport",
+                          "circle-pitch-scale": "map",
+                        }}
+                      />
+                      {/* Task 5: was a plain circle layer with a white
+                          circle-stroke; now a symbol layer drawing the
+                          shape-coded, black+white-ringed sprites registered by
+                          the useEffect above, so colour is no longer the only
+                          channel carrying severity. DOT_ICON_SIZE_BY_ZOOM's own
+                          comment has the target-size and severity-scaling
+                          rationale behind it. icon-allow-overlap replicates
+                          what a circle layer always did implicitly (draw every
+                          point, no collision culling): a symbol layer hides
+                          overlapping icons by default, which would silently drop
+                          markers in dense clusters of unclustered points. */}
+                      <Layer id="anomaly-dot" type="symbol" filter={UNCLUSTERED} layout={{
+                        "icon-image": DOT_ICON_IMAGE,
+                        "icon-size": DOT_ICON_SIZE_BY_ZOOM,
+                        "icon-allow-overlap": true,
+                        "icon-ignore-placement": true,
+                        // Same perspective-correctness as the old circle-pitch-alignment.
+                        "icon-pitch-alignment": "viewport",
+                      }} paint={{
                         // Hands over to the panel fill rather than stacking on top of it.
-                        "circle-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 1, PANEL_FILL_MIN_ZOOM, 0],
-                        "circle-stroke-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 1, PANEL_FILL_MIN_ZOOM, 0],
-                        // Perspective-correct: a dot on a panel 400 m away should be
-                        // smaller than one under the camera, or a tilted view reads as
-                        // a flat wall of markers.
-                        "circle-pitch-alignment": "viewport",
-                        "circle-pitch-scale": "map",
+                        "icon-opacity": ["interpolate", ["linear"], ["zoom"], PANEL_DOT_MAX_ZOOM, 1, PANEL_FILL_MIN_ZOOM, 0],
                       }} />
                     </Source>
                   </>
@@ -1205,6 +1580,45 @@ function SiteMap() {
                 )}
               </MapGL>
 
+              {/* Navigation HUD — pitch/elevation steppers, cardinal pan,
+                  north reset, defect stepper, keyboard legend. Gated on
+                  isRajpur for the same reason the anomaly layers above are:
+                  the placeholder map for any other plant has no real
+                  geometry for the stepper to walk. See components/
+                  NavigationHUD.tsx for why it shifts rather than layers under
+                  the detail drawer.
+
+                  Also suppressed while Align is open (alignTarget), and not
+                  merely to dodge the z-index collision that surfaced this: the
+                  Align panel docks in this exact bottom-right corner and comes
+                  with its own MOVE d-pad built for nudging a raster by
+                  fractions of a metre, which is a different job at a different
+                  scale than this HUD's "walk the site" panning. Running both
+                  at once is confusing regardless of who paints on top, and
+                  Align is an operator-only flow (isSurveyor), so the person
+                  who can open it already has the keyboard nudge in
+                  AlignPanel's own listener below — this HUD stepping aside
+                  matches the keyboard guard in the keydown handler above,
+                  which already refuses to act while alignTarget is set. */}
+              {isRajpur && !kmlViewMode && !alignTarget && (
+                <NavigationHUD
+                  onPan={panCardinal}
+                  onPitch={stepPitch}
+                  onZoom={stepZoom}
+                  onResetNorth={resetNorth}
+                  drawerOpen={!isMobile && !!selected}
+                  mobileSheetOpen={isMobile && !!selected}
+                  pitchEnabled={!isMobile}
+                  stepper={{
+                    label: stepperDisplay.label,
+                    position: stepperDisplay.position,
+                    disabled: stepperDisplay.disabled,
+                    onPrev: () => stepDefect(-1),
+                    onNext: () => stepDefect(1),
+                  }}
+                />
+              )}
+
               {/* KML View mode badge */}
               {isRajpur && kmlViewMode && (
                 <div className="absolute top-2 left-2 bg-ochre text-ochre-fg text-[10px] font-bold mono px-2 py-0.5 flex items-center gap-1 z-10">
@@ -1228,7 +1642,13 @@ function SiteMap() {
                   { l: SEVERITY_LABEL_FULL.normal,   s: "normal",   note: "No action" },
                 ] as const).map(({ l, s, note }) => (
                   <div key={s} className="flex items-center gap-2">
-                    <span style={{ width: 10, height: 10, borderRadius: "50%", display: "inline-block", backgroundColor: SEV_COLOR[s], border: "1.5px solid white", boxShadow: "0 0 0 1px rgba(0,0,0,0.2)" }} />
+                    {/* Task 5: was a single-colour dot with a white border and a
+                        translucent black boxShadow ring bolted on separately —
+                        replaced with the same shape-coded, black+white-ringed
+                        swatch the map markers and table badges use, so the
+                        legend actually teaches the symbol vocabulary rather
+                        than a colour-only approximation of it. */}
+                    <SeverityShape shape={SEVERITY[s].shape} fill={SEV_COLOR[s]} size={11} pulse={s === "critical"} />
                     <span className="flex-1">{l}</span>
                     <span className="text-[10px] text-muted-foreground">{note}</span>
                     <span className="mono font-semibold tabular-nums w-8 text-right">{visibleCounts[s]}</span>
@@ -1317,8 +1737,15 @@ function SiteMap() {
 
       </div>
 
-      {/* ── Detail drawer ── */}
-      {selected && (
+      {/* ── Detail drawer (desktop) / Inspection sheet (mobile, Task 6) ──
+          Same underlying selection and the same two exits (full detail page,
+          WhatsApp share) — see InspectionSheet's own docblock for why mobile
+          gets more than a narrower copy of this drawer rather than just a
+          resized one. isMobile picks between them rather than CSS alone
+          hiding one, because they need incompatible interaction models (a
+          click-outside-to-close overlay vs. a drag-to-resize sheet with its
+          own backdrop rules per snap depth). */}
+      {!isMobile && selected && (
         <div className="fixed inset-0 z-40 flex justify-end" onClick={() => setSelected(null)}>
           <div className="absolute inset-0 bg-black/30" />
           <aside
@@ -1344,6 +1771,12 @@ function SiteMap() {
               <DataRow label="GPS" value={`${selected.gps.lat.toFixed(5)}°N, ${selected.gps.lng.toFixed(5)}°E`} mono />
               <DataRow label="RGB Note" value={selected.rgbNote} />
 
+              <button
+                onClick={() => setAuditOpen(true)}
+                className="w-full h-10 bg-card border border-border hover:bg-muted text-foreground font-semibold text-sm flex items-center justify-center gap-2"
+              >
+                <History size={14} /> History & Audit
+              </button>
               <Link
                 to="/anomalies/$id"
                 params={{ id: selected.id }}
@@ -1361,6 +1794,40 @@ function SiteMap() {
             </div>
           </aside>
         </div>
+      )}
+
+      {isMobile && selected && (
+        <InspectionSheet
+          key={selected.id}
+          anomaly={selected}
+          plantName={selectedPlant.name}
+          canEdit={canEditAnomaly}
+          onClose={() => setSelected(null)}
+          onOpenAudit={() => setAuditOpen(true)}
+        />
+      )}
+
+      {/* Task 7 — see the module import above and PanelAuditDrawer.tsx's own
+          docblock for why this is the one component on the page loaded via
+          dynamic import() instead of a normal top-of-file one. The fallback
+          is intentionally minimal (a spinner over the same dark scrim the
+          real drawer opens with) since the chunk is small and this is a
+          click-triggered load, not a page-load one — there is nothing else
+          useful to show for what should typically resolve in well under a
+          second. */}
+      {auditOpen && selected && (
+        <Suspense fallback={
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <Loader2 size={28} className="animate-spin text-white" />
+          </div>
+        }>
+          <PanelAuditDrawer
+            anomaly={selected}
+            canEdit={canEditAnomaly}
+            canExport={canExportReports}
+            onClose={() => setAuditOpen(false)}
+          />
+        </Suspense>
       )}
     </div>
   );

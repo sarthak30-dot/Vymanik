@@ -241,6 +241,13 @@ export interface NewAnomalyPayload {
   gps: { lat: number; lng: number };
 }
 
+export interface BatchImportResult {
+  created: AnomalyDTO[];
+  /** index is the row's position in the request array, so the caller (the
+   *  CSV wizard) can map a failure straight back to the row it sent. */
+  failed: { index: number; panelId: string | null; error: string }[];
+}
+
 // ─── Tiles ─────────────────────────────────────────────────────────────────
 
 export interface TileLayerConfig {
@@ -360,6 +367,11 @@ export const api = {
       req<AnomalyDTO>("PATCH", `/anomalies/${id}`, body, token),
     create: (body: NewAnomalyPayload, token: string) =>
       req<AnomalyDTO>("POST", "/anomalies", body, token),
+    /** One request for up to 500 rows — see api/anomalies/batch.ts for why
+     *  each row still gets its own INSERT (and its own pass/fail) server-side
+     *  rather than one all-or-nothing multi-row insert. */
+    createBatch: (rows: NewAnomalyPayload[], token: string) =>
+      req<BatchImportResult>("POST", "/anomalies/batch", { rows }, token),
   },
 
   tiles: {

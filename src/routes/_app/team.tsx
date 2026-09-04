@@ -3,12 +3,12 @@ import { useState, useEffect } from "react";
 import { getUser, setDisplayName } from "@/lib/auth";
 import { requireOperatorRoute } from "@/lib/route-guards";
 import { usePlantContext } from "@/lib/plant-context";
-import { Upload, Image as ImageIcon, Plane, ClipboardCheck, Send, Layers, Cpu, AlertTriangle, User2, MapPin, Pencil, Check, X } from "lucide-react";
+import { Upload, UploadCloud, Image as ImageIcon, Plane, ClipboardCheck, Send, Layers, Cpu, AlertTriangle, User2, MapPin, Pencil, Check, X } from "lucide-react";
 import { reviewQueue, teamMembers, allPlants, anomalyTypes, getTeamMemberByEmail, type QueueEntry } from "@/lib/mock-data";
 import type { ProcessingStage } from "@/lib/api";
 import { useAddAnomaly, usePlantLayout } from "@/lib/queries";
 import { DEFECT_TYPES, CATEGORY_CODES } from "@/lib/taxonomy";
-import { AnomalyCsvImport } from "@/components/AnomalyCsvImport";
+import { CsvImportWizard } from "@/components/CsvImportWizard";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/team")({
@@ -426,6 +426,8 @@ function TeamDashboard() {
   const navigate = useNavigate();
   const user = getUser();
   const [dragOver, setDragOver] = useState(false);
+  const { selectedPlant: csvPlant } = usePlantContext();
+  const [csvWizardOpen, setCsvWizardOpen] = useState(false);
 
   // Display name: member name > saved displayName > "Vymanik" default
   const member = user ? getTeamMemberByEmail(user.userId) : null;
@@ -580,7 +582,30 @@ function TeamDashboard() {
       <ReportAnomalyForm inspectorName={displayName} />
 
       {/* ── Bulk import anomalies via CSV ── */}
-      <AnomalyCsvImport />
+      <section className="bg-card border border-border overflow-hidden">
+        <header className="px-5 py-4 border-b border-grey-200 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-sm flex items-center gap-2">
+              <UploadCloud size={14} className="text-ochre" /> Bulk Import — Defects (CSV)
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Column auto-mapping, GPS boundary checks, and a map preview before anything saves.
+            </p>
+          </div>
+          <button
+            onClick={() => setCsvWizardOpen(true)}
+            className="h-8 px-3 bg-ochre hover:bg-ochre-light text-ochre-fg text-xs font-semibold inline-flex items-center gap-1.5 shrink-0"
+          >
+            <UploadCloud size={13} /> Import CSV
+          </button>
+        </header>
+      </section>
+      <CsvImportWizard
+        open={csvWizardOpen}
+        onClose={() => setCsvWizardOpen(false)}
+        plantId={csvPlant.id}
+        onImported={() => {}}
+      />
 
       {/* Pipeline diagram */}
       <PipelineDiagram />

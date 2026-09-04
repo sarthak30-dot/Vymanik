@@ -229,7 +229,7 @@ function AnomalyList() {
                         <option>Closed</option>
                       </select>
                     ) : (
-                      <StatusBadge status={a.status} />
+                      <StatusBadge status={a.status} severity={a.severity} />
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
@@ -267,7 +267,7 @@ function AnomalyList() {
                 <span className="mono text-foreground font-semibold">{a.deltaT.toFixed(2)}°C</span>
               ) : null}
               <span className="mono">{mapLocation(a)}</span>
-              <StatusBadge status={a.status} />
+              <StatusBadge status={a.status} severity={a.severity} />
             </div>
           </Link>
         ))}

@@ -4,6 +4,7 @@ import { Download, ArrowRight, Award, Loader2 } from "lucide-react";
 import { inspectionHistory, plant, anomalies, severityCounts } from "@/lib/mock-data";
 import { toast } from "sonner";
 import { jsPDF } from "jspdf";
+import { SEVERITY } from "@/lib/severity-tokens";
 
 // ─── IEC 62446-3 PDF Generator ───────────────────────────────────────────────
 // Generates a fully branded, IEC-compliant inspection report client-side.
@@ -14,9 +15,15 @@ async function generatePDF(reportType: "exec" | "tech" | "warranty"): Promise<vo
   const W = 210, H = 297;
   const OCHRE = [214, 144, 35] as [number, number, number];
   const NAVY  = [15, 40, 77]  as [number, number, number];
-  const RED   = [220, 38, 38] as [number, number, number];
-  const AMBER = [245, 158, 11] as [number, number, number];
-  const GREEN = [22, 163, 74] as [number, number, number];
+  // Task 5: these three were the PDF's own copies of the severity palette —
+  // one more consumer that had drifted to its own shade instead of reading
+  // the shared token. RED/AMBER/GREEN are always used with setTextColor()
+  // (see below), body text on white paper with no ring to lean on, so this
+  // reads the TEXT variant — see lib/severity-tokens.ts's docblock for why
+  // VIVID would be the wrong half of the token here.
+  const RED   = SEVERITY.critical.textRGB as [number, number, number];
+  const AMBER = SEVERITY.medium.textRGB   as [number, number, number];
+  const GREEN = SEVERITY.normal.textRGB   as [number, number, number];
 
   const inspection = inspectionHistory[0];
   const criticalAnom = anomalies.filter(a => a.severity === "critical");

@@ -1,2 +1,2 @@
 module_id,plant_id,severity,category_code,defect_type,gps_lat,gps_lng,photo_filename,date_detected
-PLANTRAJPUR1-B01-INV01-STR01-MOD001,plant-rajpur-1,High,CO2,Multi-cell Hotspot,26.4521,73.0192,IMG_0001_RGB.jpg,2026-05-03
+B16-INV08-STR09-R05C12,plant-001,High,CO2,Multi-cell Hotspot,28.26254,73.02981,IMG_0001_RGB.jpg,2026-05-03
