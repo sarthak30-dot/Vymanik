@@ -414,6 +414,10 @@ function SiteMap() {
   const [kmlOpacity, setKmlOpacity]         = useState(0.45);
   const [splitPct, setSplitPct]             = useState(50);
   const [popup, setPopup]                   = useState<Anomaly | null>(null);
+  // Cluster-size readout on hover. The numeral inside cluster circles is hidden
+  // on the resting map (client request); this is how an operator reads a
+  // cluster's size without clicking it open.
+  const [clusterTip, setClusterTip]         = useState<{ lng: number; lat: number; count: number } | null>(null);
   const [mapError, setMapError]             = useState<string | null>(null);
   const [viewState, setViewState]           = useState<Omit<ViewState, "width"|"height">>({
     longitude: 73.0295, latitude: 28.2622, zoom: 16.2,
@@ -1343,14 +1347,23 @@ function SiteMap() {
                 mapStyle={thermalVisible && hideBasemap && !kmlViewMode
                   ? BLANK_BASEMAP_STYLE
                   : "mapbox://styles/mapbox/satellite-streets-v12"}
-                cursor={hoveringAnomaly ? "pointer" : undefined}
+                cursor={hoveringAnomaly || clusterTip ? "pointer" : undefined}
                 fadeDuration={profile.fadeDuration}
                 onMouseMove={e => {
                   const hit = hitAt([e.point.x, e.point.y], HOVER_LAYERS);
                   const id = hit?.properties?.anomalyId;
                   setHoveredBox(id === undefined || id === null ? null : String(id));
+                  // Cluster size on hover — the numeral is hidden on the map, so
+                  // the count surfaces here instead, anchored to the cluster.
+                  const c = hitAt([e.point.x, e.point.y], ["anomaly-cluster"]);
+                  if (c?.properties?.cluster) {
+                    const [lng, lat] = (c.geometry as GeoJSON.Point).coordinates;
+                    setClusterTip({ lng, lat, count: Number(c.properties.point_count) });
+                  } else {
+                    setClusterTip(null);
+                  }
                 }}
-                onMouseLeave={() => setHoveredBox(null)}
+                onMouseLeave={() => { setHoveredBox(null); setClusterTip(null); }}
                 onClick={e => {
                   const hit = hitAt([e.point.x, e.point.y], CLICK_LAYERS);
 
@@ -1627,6 +1640,25 @@ function SiteMap() {
                       "line-width": 1.25,
                     }} />
                   </Source>
+                )}
+
+                {/* Cluster-size tooltip on hover — anchored to the cluster centroid,
+                    not the cursor, so it holds steady while reading. */}
+                {clusterTip && (
+                  <Popup
+                    longitude={clusterTip.lng}
+                    latitude={clusterTip.lat}
+                    anchor="bottom"
+                    offset={16}
+                    closeButton={false}
+                    closeOnClick={false}
+                    className="cluster-tip"
+                  >
+                    <span className="mono text-xs font-semibold text-foreground">
+                      {clusterTip.count.toLocaleString("en-IN")} defects
+                    </span>
+                    <span className="block text-[10px] text-muted-foreground">click to expand</span>
+                  </Popup>
                 )}
 
                 {/* Popup for selected anomaly */}

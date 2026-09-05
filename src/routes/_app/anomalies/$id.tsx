@@ -1,9 +1,11 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, lazy, Suspense } from "react";
+import { useState, useMemo, useEffect, lazy, Suspense } from "react";
 import { jsPDF } from "jspdf";
 import { toast } from "sonner";
-import { ArrowLeft, MessageCircle, Download, Mail, MapPin, Check, Wrench, Loader2, ExternalLink, Navigation, ImageOff, Thermometer } from "lucide-react";
+import { ArrowLeft, MessageCircle, Download, Mail, MapPin, Check, Wrench, Loader2, ExternalLink, Navigation, ImageOff, Thermometer, ChevronLeft, ChevronRight } from "lucide-react";
 import { SeverityBadge } from "@/components/SeverityBadge";
+import { usePlantContext } from "@/lib/plant-context";
+import { orderForStepping } from "@/lib/map-camera";
 import { SHOW_LOSS_METRICS } from "@/lib/feature-flags";
 // Lazy so the mapbox-gl runtime (~500 kB gzip) it pulls in downloads only once a
 // detail page is open and after the core content paints, rather than being part
@@ -11,7 +13,7 @@ import { SHOW_LOSS_METRICS } from "@/lib/feature-flags";
 const PanelMiniMap = lazy(() =>
   import("@/components/PanelMiniMap").then(m => ({ default: m.PanelMiniMap })),
 );
-import { useAnomaly, usePatchAnomaly } from "@/lib/queries";
+import { useAnomaly, useAnomalies, usePatchAnomaly } from "@/lib/queries";
 import { anomalyTypeDefs, plant, SEVERITY_LABEL_FULL } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 import { parseDefectImage } from "@/lib/defect-image";
@@ -128,6 +130,44 @@ function AnomalyDetail() {
   const patchAnomaly = usePatchAnomaly();
   const [generatingPdf, setGeneratingPdf] = useState(false);
 
+  // ── Adjacent-defect navigation ──
+  // Walk the plant's defects in the SAME order the map's stepper uses
+  // (table → rack → module, via orderForStepping) so Prev/Next means the same
+  // thing on both surfaces. Computed from the route `id`, not the loaded
+  // `anomaly`, so these hooks run before the loading/error early-returns below
+  // and the hook order stays stable. Keys mirror the map: [ / ] and j / k.
+  const { data: allAnomalies = [] } = useAnomalies();
+  const { selectedPlant } = usePlantContext();
+  const ordered = useMemo(
+    () => orderForStepping(
+      allAnomalies.filter(a =>
+        a.plantId === selectedPlant.id || (!a.plantId && selectedPlant.id === "plant-001"),
+      ),
+    ),
+    [allAnomalies, selectedPlant.id],
+  );
+  const curIdx = ordered.findIndex(a => a.id === id);
+  const prevA = curIdx > 0 ? ordered[curIdx - 1] : null;
+  const nextA = curIdx >= 0 && curIdx < ordered.length - 1 ? ordered[curIdx + 1] : null;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if ((e.key === "]" || k === "j") && nextA) {
+        e.preventDefault();
+        navigate({ to: "/anomalies/$id", params: { id: nextA.id } });
+      } else if ((e.key === "[" || k === "k") && prevA) {
+        e.preventDefault();
+        navigate({ to: "/anomalies/$id", params: { id: prevA.id } });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [prevA, nextA, navigate]);
+
   if (isLoading) {
     return (
       <div className="mx-auto max-w-3xl px-6 py-12 flex items-center justify-center gap-2 text-muted-foreground">
@@ -192,7 +232,34 @@ Ref: ${anomaly.rgbNote}`
           <h1 className="text-3xl md:text-4xl font-bold">Panel <span className="mono">{anomaly.panelId}</span></h1>
           <p className="text-muted-foreground mt-1 text-sm">{anomaly.type} · {anomaly.string} · {anomaly.inverter}</p>
         </div>
-        <SeverityBadge severity={anomaly.severity} size="lg" />
+        <div className="flex flex-col items-end gap-3">
+          {/* Adjacent-defect stepper — walk the survey without a list round-trip.
+              Keyboard: [ / ] or j / k. */}
+          {ordered.length > 1 && curIdx >= 0 && (
+            <div className="flex items-center border border-border bg-card text-xs">
+              <button
+                onClick={() => prevA && navigate({ to: "/anomalies/$id", params: { id: prevA.id } })}
+                disabled={!prevA}
+                className="h-8 px-2.5 inline-flex items-center gap-1 hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition"
+                title="Previous defect ( [ or k )"
+              >
+                <ChevronLeft size={14} /> Prev
+              </button>
+              <span className="px-3 mono tabular-nums text-muted-foreground border-x border-border h-8 inline-flex items-center">
+                {curIdx + 1} <span className="opacity-50 mx-1">of</span> {ordered.length.toLocaleString("en-IN")}
+              </span>
+              <button
+                onClick={() => nextA && navigate({ to: "/anomalies/$id", params: { id: nextA.id } })}
+                disabled={!nextA}
+                className="h-8 px-2.5 inline-flex items-center gap-1 hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition"
+                title="Next defect ( ] or j )"
+              >
+                Next <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
+          <SeverityBadge severity={anomaly.severity} size="lg" />
+        </div>
       </div>
 
       {/* Images */}
@@ -239,6 +306,7 @@ Ref: ${anomaly.rgbNote}`
           lng={anomaly.gps.lng}
           severity={anomaly.severity}
           status={anomaly.status}
+          caption={`${anomaly.string} · ${anomaly.inverter}`}
         />
       </Suspense>
 

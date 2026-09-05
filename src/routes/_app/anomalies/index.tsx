@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
 import { Search, Download, FileText, Loader2, MapPin } from "lucide-react";
 import { SeverityBadge, StatusBadge } from "@/components/SeverityBadge";
 import { useAnomalies, usePatchAnomaly } from "@/lib/queries";
@@ -96,13 +96,27 @@ function exportCSV(rows: AnomalyDTO[], plantName: string) {
   URL.revokeObjectURL(url);
 }
 
-export const Route = createFileRoute("/_app/anomalies/")({
-  head: () => ({ meta: [{ title: "All Anomalies — UrjaScan" }] }),
-  component: AnomalyList,
-});
-
 type Severity = AnomalyDTO["severity"];
 type Status = AnomalyDTO["status"];
+
+const SEVERITY_VALUES = ["critical", "medium", "normal", "nodata"] as const;
+const STATUS_VALUES = ["New", "Acknowledged", "In Repair", "Closed"] as const;
+
+/** Filters live in the URL, not component state, so a filtered view survives a
+ *  refresh and the Back button and is shareable as a link — the same
+ *  validateSearch pattern the map route uses for its `focus` param. Absent =
+ *  "all"/empty, so a clean /anomalies URL stays clean. */
+export type AnomalyFilters = { sev?: Severity; status?: Status; q?: string };
+
+export const Route = createFileRoute("/_app/anomalies/")({
+  head: () => ({ meta: [{ title: "All Anomalies — UrjaScan" }] }),
+  validateSearch: (s: Record<string, unknown>): AnomalyFilters => ({
+    sev: typeof s.sev === "string" && (SEVERITY_VALUES as readonly string[]).includes(s.sev) ? s.sev as Severity : undefined,
+    status: typeof s.status === "string" && (STATUS_VALUES as readonly string[]).includes(s.status) ? s.status as Status : undefined,
+    q: typeof s.q === "string" && s.q.trim() ? s.q : undefined,
+  }),
+  component: AnomalyList,
+});
 
 const SEVERITY_RANK: Record<Severity, number> = { critical: 0, medium: 1, normal: 2, nodata: 3 };
 const SEV_DOT: Record<string, string> = {
@@ -129,9 +143,13 @@ function AnomalyList() {
     ),
   [allAnomalies, selectedPlant.id]);
 
-  const [sevFilter, setSevFilter] = useState<Severity | "all">("all");
-  const [statusFilter, setStatusFilter] = useState<Status | "all">("all");
-  const [search, setSearch] = useState("");
+  // Filters read from / write to the URL (see AnomalyFilters + validateSearch).
+  const sp = Route.useSearch();
+  const sevFilter: Severity | "all" = sp.sev ?? "all";
+  const statusFilter: Status | "all" = sp.status ?? "all";
+  const search = sp.q ?? "";
+  const setFilter = (patch: Partial<AnomalyFilters>) =>
+    navigate({ to: "/anomalies", search: (prev: AnomalyFilters) => ({ ...prev, ...patch }), replace: true });
 
   const rows = useMemo(() => {
     return anomalies
@@ -178,7 +196,7 @@ function AnomalyList() {
           {(["all", "critical", "medium", "normal"] as const).map(s => (
             <button
               key={s}
-              onClick={() => setSevFilter(s)}
+              onClick={() => setFilter({ sev: s === "all" ? undefined : s })}
               className={`inline-flex items-center gap-1.5 px-3 h-8 text-xs font-semibold border transition ${
                 sevFilter === s
                   ? "bg-grey-900 text-white border-grey-900"
@@ -192,7 +210,7 @@ function AnomalyList() {
         </div>
         <select
           value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value as Status | "all")}
+          onChange={e => setFilter({ status: e.target.value === "all" ? undefined : e.target.value as Status })}
           className="h-8 px-3 border border-border bg-card text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ochre"
         >
           <option value="all">All statuses</option>
@@ -205,7 +223,7 @@ function AnomalyList() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => setFilter({ q: e.target.value || undefined })}
             placeholder="Search by panel ID or anomaly type..."
             className="w-full h-8 pl-9 pr-3 border border-border bg-card text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ochre"
           />

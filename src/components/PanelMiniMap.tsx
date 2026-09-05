@@ -29,6 +29,7 @@ export function PanelMiniMap({
   lng,
   severity,
   status,
+  caption,
 }: {
   anomalyId: string;
   panelId: string;
@@ -36,6 +37,9 @@ export function PanelMiniMap({
   lng: number;
   severity: Severity;
   status?: Status;
+  /** Rack/inverter context (e.g. "Table-198 · INV-B") shown as a footer strip so
+   *  the panel's location reads without opening the full map. */
+  caption?: string;
 }) {
   const pinColor = tokenFor(severity, status)?.vivid ?? "#EE0000";
 
@@ -90,6 +94,14 @@ export function PanelMiniMap({
           </div>
         )}
       </div>
+
+      {caption && (
+        <div className="px-5 py-2.5 border-t border-border flex items-center gap-2 text-xs">
+          <MapPin size={12} style={{ color: pinColor }} className="shrink-0" />
+          <span className="mono font-semibold text-foreground">{panelId}</span>
+          <span className="text-muted-foreground truncate">· {caption}</span>
+        </div>
+      )}
     </section>
   );
 }
