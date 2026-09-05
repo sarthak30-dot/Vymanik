@@ -103,26 +103,14 @@ export type MarkerShape = "triangle" | "circle" | "square" | "diamond";
 export const SEVERITY: Record<Exclude<Severity, "nodata">, SeverityToken> = {
   critical: {
     briefName: "Critical / Hotspot",
-    // Cyan, not the old red #FF2E2E: red camouflages against the warm magma/
-    // ochre thermal IR raster (critical-red measured only 1.94:1 on the mean
-    // thermal background — see boxPaint's casing note). Cyan is the cold end of
-    // the IR palette's opposite, so a cyan ring reads against hot pixels.
-    vivid: "#00FFFF", vividRGB: [0x00, 0xff, 0xff],
-    // TEXT variant regenerated to the docblock's rule — a teal whose relative
-    // luminance (~0.179) is the one narrow band that clears 4.5:1 (WCAG AA)
-    // against BOTH white and black, since --critical has no .dark override.
-    text: "#008383", textRGB: [0x00, 0x83, 0x83],
+    vivid: "#FF2E2E", vividRGB: [0xff, 0x2e, 0x2e],
+    text: "#EE0000", textRGB: [0xee, 0x00, 0x00],
     shape: "triangle",
   },
   medium: {
     briefName: "Major / String Failure",
-    // Neon green, not the old orange #FF8C00: orange sits inside the thermal
-    // raster's own warm ramp and blends into it. Neon green is off that ramp
-    // entirely, so a medium box stays separable from the IR beneath it.
-    vivid: "#39FF14", vividRGB: [0x39, 0xff, 0x14],
-    // TEXT variant regenerated per the docblock rule (hue held, darkened until
-    // it clears 4.5:1 on both white and black); ~0.176 luminance.
-    text: "#1E870B", textRGB: [0x1e, 0x87, 0x0b],
+    vivid: "#FF8C00", vividRGB: [0xff, 0x8c, 0x00],
+    text: "#B26200", textRGB: [0xb2, 0x62, 0x00],
     shape: "circle",
   },
   normal: {

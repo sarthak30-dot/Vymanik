@@ -1,9 +1,16 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import { jsPDF } from "jspdf";
 import { toast } from "sonner";
 import { ArrowLeft, MessageCircle, Download, Mail, MapPin, Check, Wrench, Loader2, ExternalLink, Navigation, ImageOff } from "lucide-react";
 import { SeverityBadge } from "@/components/SeverityBadge";
+import { SHOW_LOSS_METRICS } from "@/lib/feature-flags";
+// Lazy so the mapbox-gl runtime (~500 kB gzip) it pulls in downloads only once a
+// detail page is open and after the core content paints, rather than being part
+// of this route's initial bundle. Same code-split pattern as PanelAuditDrawer.
+const PanelMiniMap = lazy(() =>
+  import("@/components/PanelMiniMap").then(m => ({ default: m.PanelMiniMap })),
+);
 import { useAnomaly, usePatchAnomaly } from "@/lib/queries";
 import { anomalyTypeDefs, plant, SEVERITY_LABEL_FULL } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
@@ -221,8 +228,22 @@ Ref: ${anomaly.rgbNote}`
         </div>
       </section>
 
-      {/* Financial */}
-      {anomaly.dailyLossINR && (
+      {/* Contextual locator — where this panel sits on the site, with a deep link
+          into the full map focused on it. Suspense fallback holds the card's
+          height so the surrounding layout doesn't jump while mapbox loads. */}
+      <Suspense fallback={<div className="bg-card border border-border h-[19.5rem] animate-pulse" />}>
+        <PanelMiniMap
+          anomalyId={anomaly.id}
+          panelId={anomaly.panelId}
+          lat={anomaly.gps.lat}
+          lng={anomaly.gps.lng}
+          severity={anomaly.severity}
+          status={anomaly.status}
+        />
+      </Suspense>
+
+      {/* Financial — hidden at the client's request (see SHOW_LOSS_METRICS). */}
+      {SHOW_LOSS_METRICS && anomaly.dailyLossINR && (
         <section className="bg-primary text-white p-6">
           <p className="font-semibold text-sm flex items-center gap-2 text-white/70 uppercase tracking-widest">Estimated Power Loss</p>
           <p className="mono text-4xl font-bold text-ochre mt-2">₹ {anomaly.dailyLossINR} <span className="text-base font-normal text-white/70">per day</span></p>

@@ -26,12 +26,16 @@ export function ExecutiveOverview({
   defectCount,
   dailyLossKWh,
   dailyLossINR,
+  showLoss = true,
   healthScore,
   onStartTour,
 }: {
   defectCount: number;
   dailyLossKWh: number;
   dailyLossINR: number;
+  /** When false, the Estimated Generation Loss KPI is omitted and the grid
+   *  drops to two columns. Defaults true so existing callers are unaffected. */
+  showLoss?: boolean;
   healthScore: number;
   onStartTour: () => void;
 }) {
@@ -52,7 +56,7 @@ export function ExecutiveOverview({
         </button>
       </div>
 
-      <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className={`mt-5 grid grid-cols-1 gap-4 ${showLoss ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
         <div data-tour="kpi-defects" className="flex items-start gap-3">
           <div className="w-9 h-9 bg-white/10 flex items-center justify-center shrink-0">
             <AlertOctagon size={16} className="text-ochre" />
@@ -65,23 +69,25 @@ export function ExecutiveOverview({
           </div>
         </div>
 
-        <div data-tour="kpi-loss" className="flex items-start gap-3">
-          <div className="w-9 h-9 bg-white/10 flex items-center justify-center shrink-0">
-            <Zap size={16} className="text-ochre" />
+        {showLoss && (
+          <div data-tour="kpi-loss" className="flex items-start gap-3">
+            <div className="w-9 h-9 bg-white/10 flex items-center justify-center shrink-0">
+              <Zap size={16} className="text-ochre" />
+            </div>
+            <div>
+              <p className="mono text-3xl font-bold leading-none">
+                {dailyLossKWh.toLocaleString("en-IN")}
+                <span className="text-base font-normal text-white/60"> kWh/day</span>
+              </p>
+              <p className="text-xs text-white/70 mt-1.5">
+                Estimated Generation Loss{" "}
+                <span className="text-white/50">
+                  · ≈ ₹ {dailyLossINR.toLocaleString("en-IN")}/day
+                </span>
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="mono text-3xl font-bold leading-none">
-              {dailyLossKWh.toLocaleString("en-IN")}
-              <span className="text-base font-normal text-white/60"> kWh/day</span>
-            </p>
-            <p className="text-xs text-white/70 mt-1.5">
-              Estimated Generation Loss{" "}
-              <span className="text-white/50">
-                · ≈ ₹ {dailyLossINR.toLocaleString("en-IN")}/day
-              </span>
-            </p>
-          </div>
-        </div>
+        )}
 
         <div data-tour="kpi-health" className="flex items-start gap-3">
           <div className="w-9 h-9 bg-white/10 flex items-center justify-center shrink-0">

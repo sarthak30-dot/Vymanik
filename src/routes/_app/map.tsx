@@ -323,6 +323,12 @@ function PopupDefectImage({ note }: { note: string }) {
 
 export const Route = createFileRoute("/_app/map")({
   head: () => ({ meta: [{ title: "Site Map — UrjaScan" }] }),
+  // `?focus=<anomalyId>` lets another page (e.g. the anomaly detail mini-map)
+  // deep-link the map pre-centred on one panel. Validated to a string|undefined
+  // so a malformed param can never reach the focus effect as a non-string.
+  validateSearch: (search: Record<string, unknown>): { focus?: string } => ({
+    focus: typeof search.focus === "string" ? search.focus : undefined,
+  }),
   component: SiteMap,
 });
 
@@ -684,6 +690,28 @@ function SiteMap() {
       disabled: steppableAnomalies.length === 0,
     };
   }, [selected, steppableAnomalies]);
+
+  // ── Deep-link focus ──
+  // Honour `/map?focus=<anomalyId>` once the map is live: select that panel and
+  // fly to it, the same way a click or the stepper would. Guarded by a ref so it
+  // fires exactly once per arrival — panning away afterwards must not yank the
+  // camera back, and re-running effects (filter changes, resizes) must not
+  // re-trigger it. Reuses applySelection so the URL path and the click path
+  // produce an identical selected state (box highlight, popup, sheet).
+  const { focus } = Route.useSearch();
+  const focusHandled = useRef(false);
+  useEffect(() => {
+    if (!mapReady || !focus || focusHandled.current) return;
+    const anomaly = anomalyById.get(focus);
+    if (!anomaly) return;
+    focusHandled.current = true;
+    applySelection(anomaly);
+    mapRef.current?.easeTo({
+      center: [anomaly.gps.lng, anomaly.gps.lat],
+      zoom: Math.max(mapRef.current.getZoom(), OVERLAY_ZOOM.fillMin + 1),
+      duration: 900,
+    });
+  }, [mapReady, focus, anomalyById, applySelection]);
 
   // ── HUD camera controls ──
   // Deliberately thin wrappers: all the actual arithmetic (compass-true pan

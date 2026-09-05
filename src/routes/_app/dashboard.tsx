@@ -9,6 +9,7 @@ import { usePlant, useAnomalies, useInspectionHistory } from "@/lib/queries";
 import { getUser } from "@/lib/auth";
 import { allPlants, teamMembers } from "@/lib/mock-data";
 import { usePlantContext } from "@/lib/plant-context";
+import { SHOW_LOSS_METRICS } from "@/lib/feature-flags";
 import { useDensity } from "@/hooks/use-presentation";
 import { useGuidedTour, hasTourRun, type TourStep } from "@/hooks/use-guided-tour";
 import type { PlantDTO } from "@/lib/api";
@@ -61,11 +62,14 @@ const DASHBOARD_TOUR: TourStep[] = [
     title: "Total Defects Found",
     body: "Every issue our drone thermography flagged across the site, from a single warm cell to a dead string.",
   },
-  {
+  // The generation-loss tour step is only meaningful when the KPI it points at
+  // is rendered — dropped from the walkthrough while SHOW_LOSS_METRICS is off so
+  // the tour never highlights an element that isn't on the page.
+  ...(SHOW_LOSS_METRICS ? [{
     target: "kpi-loss",
     title: "Estimated Generation Loss",
     body: "What these defects are costing in lost energy right now, every day they go unrepaired.",
-  },
+  }] : []),
   {
     target: "kpi-health",
     title: "Site Health Score",
@@ -210,6 +214,7 @@ function Dashboard() {
           defectCount={totalDefectCount}
           dailyLossKWh={plant.dailyLossKWh}
           dailyLossINR={plant.dailyLossINR}
+          showLoss={SHOW_LOSS_METRICS}
           healthScore={plant.healthScore}
           onStartTour={tour.start}
         />
@@ -273,25 +278,29 @@ function Dashboard() {
         <DataTile color="normal" count={severityCounts.normal} label={t("panels_healthy")} sub={t("no_action")} trend={normalTrend} total={plant.totalPanels} />
       </section>
 
-      {/* Financial impact */}
-      <section className="bg-primary text-white p-5 md:p-6 flex flex-col md:flex-row md:items-center gap-4 md:gap-8">
-        <div className="flex items-center gap-3 md:flex-1">
-          <div className="w-10 h-10 bg-white/10 flex items-center justify-center">
-            <Zap size={18} className="text-ochre" />
+      {/* Financial impact — hidden at the client's request (see SHOW_LOSS_METRICS).
+          The `space-y-6` on the page container collapses the gap automatically
+          when this section is absent, so no awkward whitespace is left behind. */}
+      {SHOW_LOSS_METRICS && (
+        <section className="bg-primary text-white p-5 md:p-6 flex flex-col md:flex-row md:items-center gap-4 md:gap-8">
+          <div className="flex items-center gap-3 md:flex-1">
+            <div className="w-10 h-10 bg-white/10 flex items-center justify-center">
+              <Zap size={18} className="text-ochre" />
+            </div>
+            <div>
+              <p className="text-sm text-white/70">{t("est_daily_loss")}</p>
+              <p className="text-xs text-white/50 mt-0.5">Based on ₹ {plant.feedInTariff.toFixed(2)}/kWh feed-in tariff</p>
+            </div>
           </div>
-          <div>
-            <p className="text-sm text-white/70">{t("est_daily_loss")}</p>
-            <p className="text-xs text-white/50 mt-0.5">Based on ₹ {plant.feedInTariff.toFixed(2)}/kWh feed-in tariff</p>
+          <div className="md:text-center">
+            <p className="mono text-3xl md:text-4xl font-bold text-ochre">₹ {plant.dailyLossINR.toLocaleString("en-IN")} <span className="text-base font-normal text-white/70">/ day</span></p>
           </div>
-        </div>
-        <div className="md:text-center">
-          <p className="mono text-3xl md:text-4xl font-bold text-ochre">₹ {plant.dailyLossINR.toLocaleString("en-IN")} <span className="text-base font-normal text-white/70">/ day</span></p>
-        </div>
-        <div className="md:text-right">
-          <p className="mono text-lg text-white/90">≈ {plant.dailyLossKWh} kWh lost</p>
-          <p className="text-xs text-white/50">≈ ₹ {(plant.dailyLossINR * 30).toLocaleString("en-IN")}/month</p>
-        </div>
-      </section>
+          <div className="md:text-right">
+            <p className="mono text-lg text-white/90">≈ {plant.dailyLossKWh} kWh lost</p>
+            <p className="text-xs text-white/50">≈ ₹ {(plant.dailyLossINR * 30).toLocaleString("en-IN")}/month</p>
+          </div>
+        </section>
+      )}
 
       {/* Primary actions */}
       <section className="grid grid-cols-1 md:grid-cols-2 gap-3">
