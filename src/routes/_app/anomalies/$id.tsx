@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState, useMemo, useEffect, lazy, Suspense } from "react";
 import { jsPDF } from "jspdf";
 import { toast } from "sonner";
-import { ArrowLeft, MessageCircle, Download, Mail, MapPin, Check, Wrench, Loader2, ExternalLink, Navigation, ImageOff, Thermometer, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, MessageCircle, Download, Mail, MapPin, Check, Wrench, Loader2, ExternalLink, Navigation, ChevronLeft, ChevronRight } from "lucide-react";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { usePlantContext } from "@/lib/plant-context";
 import { orderForStepping } from "@/lib/map-camera";
@@ -262,10 +262,11 @@ Ref: ${anomaly.rgbNote}`
         </div>
       </div>
 
-      {/* Images */}
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Thermal evidence — the RGB card was removed: this is a radiometric
+          thermal-only survey, so a second "no visual imagery" panel added nothing.
+          Restore a two-up grid here if a visual/RGB set is ever delivered. */}
+      <section className="max-w-3xl">
         <ThermalImage note={anomaly.rgbNote} peak={anomaly.peakTemp ?? 83} deltaT={anomaly.deltaT} />
-        <RgbImage note={anomaly.rgbNote} />
       </section>
 
       {/* Data grid */}
@@ -544,56 +545,3 @@ function ThermalImage({ note, peak, deltaT }: { note: string; peak: number; delt
   );
 }
 
-function RgbImage({ note }: { note: string }) {
-  const { filename } = parseDefectImage(note);
-
-  // There is no visual imagery in this survey, and this card says so rather than
-  // showing something.
-  //
-  // It used to fall back to /rgb_block20.png — the Block 20 visual orthomosaic —
-  // whenever a per-panel RGB frame was missing, which was always, because
-  // public/rgbimages/ has never existed. So every anomaly detail page showed the
-  // same block-wide photo under the heading "Visual Image (RGB)". That was already
-  // misleading; with the March 2026 survey it would be actively wrong, since that
-  // raster is of a different block 1.2 km east and has been retired.
-  //
-  // The card is kept rather than deleted so the page keeps its two-up layout and
-  // so the absence is visible to the client as a stated gap. Restore the <img>
-  // path here the moment a visual ortho or per-panel RGB set is delivered.
-  return (
-    <div className="bg-card border border-border overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-grey-200 flex items-center justify-between">
-        <span className="font-semibold text-xs uppercase tracking-widest text-grey-400">Visual Image (RGB)</span>
-        {filename && (
-          <span className="mono text-xs text-muted-foreground">{filename.toUpperCase()}</span>
-        )}
-      </div>
-      {/* Designed empty state — reads as a property of a thermal-only survey, not a
-          failed image load. A faint diagonal hatch gives the panel composed
-          texture; the provenance chip reframes the absence; the copy points the
-          operator to where the real evidence is (the thermal frame beside it). No
-          dead CTA — RGB capture isn't a feature yet, so we don't fake a button. */}
-      <div
-        className="relative aspect-video overflow-hidden flex items-center justify-center"
-        style={{
-          background:
-            "repeating-linear-gradient(45deg, var(--surface) 0, var(--surface) 9px, var(--surface-dark) 9px, var(--surface-dark) 18px)",
-        }}
-      >
-        <div className="text-center px-6 max-w-[22rem]">
-          <span className="inline-flex items-center gap-1.5 mb-3 px-2 py-1 bg-ochre-muted text-foreground border border-ochre/30 text-[11px] font-medium uppercase tracking-wide">
-            <Thermometer size={12} className="text-ochre" /> Radiometric thermal survey
-          </span>
-          <div className="mx-auto mb-2 w-10 h-10 rounded-full bg-card border border-border flex items-center justify-center">
-            <ImageOff size={18} className="text-muted-foreground" />
-          </div>
-          <p className="text-sm font-semibold text-foreground">No RGB frame for this defect</p>
-          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-            The 31 March 2026 flight captured thermal only — expected for this survey
-            type. The thermal frame beside this one is the defect as recorded.
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
