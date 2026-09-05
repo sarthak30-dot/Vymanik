@@ -332,6 +332,17 @@ export const Route = createFileRoute("/_app/map")({
   component: SiteMap,
 });
 
+// Layer-control preferences that persist across visits — an inspector who works
+// with outlines off or the basemap hidden shouldn't have to re-toggle every time
+// they open the map. thermalVisible is deliberately NOT persisted: the IR overlay
+// is the point of the page, so it always starts on.
+const LAYER_PREFS_KEY = "urjascan.map.layerPrefs";
+type LayerPrefs = { thermalOpacity?: number; hideBasemap?: boolean; showOutlines?: boolean };
+function loadLayerPrefs(): LayerPrefs {
+  try { return JSON.parse(localStorage.getItem(LAYER_PREFS_KEY) || "{}") as LayerPrefs; }
+  catch { return {}; }
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 function SiteMap() {
@@ -373,13 +384,13 @@ function SiteMap() {
   // page is for, and it is the one overlay whose registration is sound enough to
   // put defect markers on top of.
   const [thermalVisible, setThermalVisible] = useState(true);
-  const [thermalOpacity, setThermalOpacity] = useState(1);
-  const [hideBasemap, setHideBasemap]       = useState(false);
+  const [thermalOpacity, setThermalOpacity] = useState(() => loadLayerPrefs().thermalOpacity ?? 1);
+  const [hideBasemap, setHideBasemap]       = useState(() => loadLayerPrefs().hideBasemap ?? false);
   // Client toggle: lets an inspector strip the coloured defect boxes off the
   // panels to read the raw thermal tiles underneath. On by default — the boxes
   // are the point of this view; hiding them is the exception. Drives the
   // `visibility` layout property of the five anomaly-panel-* layers below.
-  const [showOutlines, setShowOutlines]     = useState(true);
+  const [showOutlines, setShowOutlines]     = useState(() => loadLayerPrefs().showOutlines ?? true);
   const [hoveringAnomaly, setHoveringAnomaly] = useState(false);
   /**
    * Screen-share profile. Off by default — the effects it removes are worth
@@ -833,6 +844,12 @@ function SiteMap() {
     () => ({ visibility: (showOutlines ? "visible" : "none") as "visible" | "none" }),
     [showOutlines],
   );
+  // Persist the layer-control choices whenever they change (see LAYER_PREFS_KEY).
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAYER_PREFS_KEY, JSON.stringify({ thermalOpacity, hideBasemap, showOutlines }));
+    } catch { /* private mode / storage disabled — prefs just won't persist */ }
+  }, [thermalOpacity, hideBasemap, showOutlines]);
 
   /**
    * The selected panel's centroid, or nothing.
@@ -1756,18 +1773,26 @@ function SiteMap() {
                     </p>
                   </div>
                 )}
-                {isRajpur && !kmlViewMode && (
-                  <div className="pt-1.5 border-t border-grey-200">
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={showOutlines}
-                        onChange={e => setShowOutlines(e.target.checked)}
-                        className="accent-red-600"
-                      />
-                      <span className="text-muted-foreground">Show Defect Outlines</span>
-                    </label>
+                {isRajpur && (
+                  <div className="pt-1.5 border-t border-grey-200 flex items-center justify-between">
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
+                      <Layers size={11} /> Layers
+                    </span>
+                    <span className="mono text-[10px] text-muted-foreground tabular-nums">
+                      {(kmlViewMode ? 1 : (thermalVisible ? 1 : 0) + (showOutlines ? 1 : 0))} on
+                    </span>
                   </div>
+                )}
+                {isRajpur && !kmlViewMode && (
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={showOutlines}
+                      onChange={e => setShowOutlines(e.target.checked)}
+                      className="accent-red-600"
+                    />
+                    <span className="text-muted-foreground">Show Defect Outlines</span>
+                  </label>
                 )}
                 {isRajpur && thermalVisible && !kmlViewMode && (
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">

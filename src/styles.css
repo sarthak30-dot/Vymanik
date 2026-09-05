@@ -150,7 +150,10 @@
   --border:              oklch(1 0 0 / 10%);
   --input:               oklch(1 0 0 / 12%);
   --muted:               oklch(0.22 0.02 255);
-  --muted-foreground:    oklch(0.55 0.01 255);
+  /* Lifted from 0.55L: at 0.55 the 10-11px secondary text used across cards, the
+     map HUD and legends landed ~4.0:1 on --card (0.18L) — under WCAG AA. 0.64L
+     clears 4.5:1 while staying visibly "muted". One token, every consumer. */
+  --muted-foreground:    oklch(0.64 0.012 255);
   --secondary:           oklch(0.22 0.02 255);
   --secondary-foreground: oklch(0.97 0 0);
   --popover:             oklch(0.18 0.02 255);

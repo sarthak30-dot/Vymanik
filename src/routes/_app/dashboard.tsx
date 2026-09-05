@@ -384,13 +384,21 @@ function DataTile({
 }: { color: "critical" | "medium" | "normal"; count: number; label: string; sub: string; trend: string; total?: number }) {
   const textColor = { critical: "text-critical", medium: "text-medium", normal: "text-normal" }[color];
   const dotColor = { critical: "var(--critical)", medium: "var(--medium)", normal: "var(--normal)" }[color];
+  // Vivid (not text) shade for the stripe — it's a graphic accent with the card
+  // behind it, the same role the map fills use it for. Encodes severity in FORM
+  // so critical reads first even in glare or for a colour-blind operator.
+  const stripeColor = { critical: "var(--critical-vivid)", medium: "var(--medium-vivid)", normal: "var(--normal-vivid)" }[color];
+  // Critical outweighs the other two by type size — in a triage view the eye
+  // should land on the count that means "dispatch today" before anything else.
+  const isCritical = color === "critical";
   const pct = total && total > 0 ? ((count / total) * 100).toFixed(1) : null;
   return (
-    <div className="p-5">
+    <div className="relative p-5 pl-6">
+      <span aria-hidden className="absolute left-0 top-0 h-full w-1" style={{ backgroundColor: stripeColor }} />
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-baseline gap-2">
-            <p className={`mono text-4xl font-bold ${textColor} leading-none`}>{count.toLocaleString("en-IN")}</p>
+            <p className={`mono ${isCritical ? "text-5xl" : "text-4xl"} font-bold ${textColor} leading-none`}>{count.toLocaleString("en-IN")}</p>
             {pct && <span className={`mono text-sm font-medium ${textColor} opacity-60`}>{pct}%</span>}
           </div>
           <p className="font-semibold text-foreground mt-3 text-sm flex items-center gap-1.5">

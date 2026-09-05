@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState, lazy, Suspense } from "react";
 import { jsPDF } from "jspdf";
 import { toast } from "sonner";
-import { ArrowLeft, MessageCircle, Download, Mail, MapPin, Check, Wrench, Loader2, ExternalLink, Navigation, ImageOff } from "lucide-react";
+import { ArrowLeft, MessageCircle, Download, Mail, MapPin, Check, Wrench, Loader2, ExternalLink, Navigation, ImageOff, Thermometer } from "lucide-react";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { SHOW_LOSS_METRICS } from "@/lib/feature-flags";
 // Lazy so the mapbox-gl runtime (~500 kB gzip) it pulls in downloads only once a
@@ -500,13 +500,29 @@ function RgbImage({ note }: { note: string }) {
           <span className="mono text-xs text-muted-foreground">{filename.toUpperCase()}</span>
         )}
       </div>
-      <div className="relative aspect-video bg-grey-50 overflow-hidden flex items-center justify-center">
-        <div className="text-center px-6">
-          <ImageOff size={22} className="mx-auto mb-2 text-grey-400" />
-          <p className="text-xs font-medium text-muted-foreground">No visual imagery for this survey</p>
-          <p className="text-[11px] text-grey-400 mt-1">
-            The 31 March 2026 flight captured radiometric thermal only. The frame
-            beside this one is the defect as recorded.
+      {/* Designed empty state — reads as a property of a thermal-only survey, not a
+          failed image load. A faint diagonal hatch gives the panel composed
+          texture; the provenance chip reframes the absence; the copy points the
+          operator to where the real evidence is (the thermal frame beside it). No
+          dead CTA — RGB capture isn't a feature yet, so we don't fake a button. */}
+      <div
+        className="relative aspect-video overflow-hidden flex items-center justify-center"
+        style={{
+          background:
+            "repeating-linear-gradient(45deg, var(--surface) 0, var(--surface) 9px, var(--surface-dark) 9px, var(--surface-dark) 18px)",
+        }}
+      >
+        <div className="text-center px-6 max-w-[22rem]">
+          <span className="inline-flex items-center gap-1.5 mb-3 px-2 py-1 bg-ochre-muted text-foreground border border-ochre/30 text-[11px] font-medium uppercase tracking-wide">
+            <Thermometer size={12} className="text-ochre" /> Radiometric thermal survey
+          </span>
+          <div className="mx-auto mb-2 w-10 h-10 rounded-full bg-card border border-border flex items-center justify-center">
+            <ImageOff size={18} className="text-muted-foreground" />
+          </div>
+          <p className="text-sm font-semibold text-foreground">No RGB frame for this defect</p>
+          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+            The 31 March 2026 flight captured thermal only — expected for this survey
+            type. The thermal frame beside this one is the defect as recorded.
           </p>
         </div>
       </div>
