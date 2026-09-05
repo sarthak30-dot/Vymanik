@@ -369,6 +369,11 @@ function SiteMap() {
   const [thermalVisible, setThermalVisible] = useState(true);
   const [thermalOpacity, setThermalOpacity] = useState(1);
   const [hideBasemap, setHideBasemap]       = useState(false);
+  // Client toggle: lets an inspector strip the coloured defect boxes off the
+  // panels to read the raw thermal tiles underneath. On by default — the boxes
+  // are the point of this view; hiding them is the exception. Drives the
+  // `visibility` layout property of the five anomaly-panel-* layers below.
+  const [showOutlines, setShowOutlines]     = useState(true);
   const [hoveringAnomaly, setHoveringAnomaly] = useState(false);
   /**
    * Screen-share profile. Off by default — the effects it removes are worth
@@ -792,6 +797,14 @@ function SiteMap() {
   const box     = useMemo(() => boxPaint(profile.reduceEffects), [profile.reduceEffects]);
   const cluster = useMemo(() => clusterPaint(profile.reduceEffects), [profile.reduceEffects]);
   const anchor  = useMemo(() => anchorPaint(profile.reduceEffects), [profile.reduceEffects]);
+  // Layout object shared by the five anomaly-panel-* box layers so the "Show
+  // Defect Outlines" toggle hides them all as one. A layout `visibility` change
+  // is reactive through react-map-gl (setLayoutProperty) and, unlike removing
+  // the layers, leaves OVERLAY_STACK's moveLayer ordering untouched.
+  const outlineVisibility = useMemo(
+    () => ({ visibility: (showOutlines ? "visible" : "none") as "visible" | "none" }),
+    [showOutlines],
+  );
 
   /**
    * The selected panel's centroid, or nothing.
@@ -1397,11 +1410,11 @@ function SiteMap() {
                       data={panelOutlinesGeoJSON as never}
                       {...SOURCE_TUNING}
                     >
-                      <Layer id="anomaly-panel-fill" type="fill" paint={{
+                      <Layer id="anomaly-panel-fill" type="fill" layout={outlineVisibility} paint={{
                         "fill-color": severityColour,
                         ...box.fill,
                       }} />
-                      <Layer id="anomaly-panel-halo" type="line" paint={{
+                      <Layer id="anomaly-panel-halo" type="line" layout={outlineVisibility} paint={{
                         "line-color": severityColour,
                         ...box.halo,
                       }} />
@@ -1411,15 +1424,15 @@ function SiteMap() {
                           Declared first so casing paints over it and only the
                           intended sliver of black shows, same nested-shape logic
                           SeverityShape.tsx uses for the SVG badges. */}
-                      <Layer id="anomaly-panel-black-ring" type="line" paint={{
+                      <Layer id="anomaly-panel-black-ring" type="line" layout={outlineVisibility} paint={{
                         "line-color": RING_INNER,
                         ...box.blackRing,
                       }} />
-                      <Layer id="anomaly-panel-casing" type="line" paint={{
+                      <Layer id="anomaly-panel-casing" type="line" layout={outlineVisibility} paint={{
                         "line-color": "#ffffff",
                         ...box.casing,
                       }} />
-                      <Layer id="anomaly-panel-line" type="line" paint={{
+                      <Layer id="anomaly-panel-line" type="line" layout={outlineVisibility} paint={{
                         "line-color": severityColour,
                         ...box.stroke,
                       }} />
@@ -1459,7 +1472,12 @@ function SiteMap() {
                         type="symbol"
                         filter={CLUSTERED}
                         layout={{
-                          "text-field": ["get", "point_count_abbreviated"],
+                          // Cluster counts hidden per client request: the sized,
+                          // colour-priced cluster circle still communicates "more
+                          // here", but the numeral is suppressed. Empty text-field
+                          // renders nothing; the layer is kept (rather than removed)
+                          // so OVERLAY_STACK's moveLayer ordering stays intact.
+                          "text-field": "",
                           // The app ships a Mapbox style whose glyph set is known to
                           // carry this family; naming a font the style cannot fetch
                           // drops the layer silently with nothing in the console.
@@ -1708,6 +1726,19 @@ function SiteMap() {
                       Outside this overlay's coverage — imagery registration, not a
                       moved defect. Still counted in reports.
                     </p>
+                  </div>
+                )}
+                {isRajpur && !kmlViewMode && (
+                  <div className="pt-1.5 border-t border-grey-200">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={showOutlines}
+                        onChange={e => setShowOutlines(e.target.checked)}
+                        className="accent-red-600"
+                      />
+                      <span className="text-muted-foreground">Show Defect Outlines</span>
+                    </label>
                   </div>
                 )}
                 {isRajpur && thermalVisible && !kmlViewMode && (
