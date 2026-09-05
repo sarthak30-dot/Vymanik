@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useMemo } from "react";
-import { Search, Download, FileText, Loader2, MapPin } from "lucide-react";
+import { useMemo, useState, useEffect } from "react";
+import { Search, Download, FileText, Loader2, MapPin, ChevronDown, X } from "lucide-react";
+import { toast } from "sonner";
 import { SeverityBadge, StatusBadge } from "@/components/SeverityBadge";
 import { useAnomalies, usePatchAnomaly } from "@/lib/queries";
 import { usePlantContext } from "@/lib/plant-context";
@@ -108,6 +109,17 @@ const STATUS_VALUES = ["New", "Acknowledged", "In Repair", "Closed"] as const;
  *  "all"/empty, so a clean /anomalies URL stays clean. */
 export type AnomalyFilters = { sev?: Severity; status?: Status; q?: string };
 
+/** One-click saved views — each maps to filter values the URL can already
+ *  express, so a preset is just a shortcut to a search state, and the active
+ *  preset stays highlighted because it reads the same URL the chips write. */
+const FILTER_PRESETS: { label: string; sev?: Severity; status?: Status }[] = [
+  { label: "All view" },
+  { label: "Critical", sev: "critical" },
+  { label: "Critical · New", sev: "critical", status: "New" },
+  { label: "In repair", status: "In Repair" },
+  { label: "Resolved", status: "Closed" },
+];
+
 export const Route = createFileRoute("/_app/anomalies/")({
   head: () => ({ meta: [{ title: "All Anomalies — UrjaScan" }] }),
   validateSearch: (s: Record<string, unknown>): AnomalyFilters => ({
@@ -166,6 +178,27 @@ function AnomalyList() {
       });
   }, [anomalies, sevFilter, statusFilter, search]);
 
+  // ── Bulk selection ──
+  // Ephemeral (not URL-backed): a selection is a transient "act on these now"
+  // set, not a shareable view. Cleared whenever the filter changes, so a bulk
+  // action can never touch a row the operator can no longer see.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  useEffect(() => { setSelectedIds(new Set()); }, [sevFilter, statusFilter, search]);
+  const selectedRows = useMemo(() => rows.filter(a => selectedIds.has(a.id)), [rows, selectedIds]);
+  const allSelected = rows.length > 0 && selectedRows.length === rows.length;
+  const toggleOne = (id: string) => setSelectedIds(s => {
+    const n = new Set(s);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+  const toggleAll = () => setSelectedIds(allSelected ? new Set() : new Set(rows.map(a => a.id)));
+  const clearSelection = () => setSelectedIds(new Set());
+  const bulkSetStatus = (status: Status) => {
+    selectedRows.forEach(a => patchAnomaly.mutate({ id: a.id, status }));
+    toast.success(`${selectedRows.length} ${selectedRows.length === 1 ? "anomaly" : "anomalies"} set to “${status}”`);
+    clearSelection();
+  };
+
   if (isLoading) {
     return (
       <div className="mx-auto max-w-7xl px-4 sm:px-6 py-12 flex items-center justify-center gap-2 text-muted-foreground">
@@ -189,6 +222,24 @@ function AnomalyList() {
           )}
         </p>
       </header>
+
+      {/* Saved views — one-click filter presets */}
+      <div className="flex gap-2 flex-wrap">
+        {FILTER_PRESETS.map(p => {
+          const active = sevFilter === (p.sev ?? "all") && statusFilter === (p.status ?? "all");
+          return (
+            <button
+              key={p.label}
+              onClick={() => setFilter({ sev: p.sev, status: p.status })}
+              className={`px-3 h-7 text-xs font-medium border transition ${
+                active ? "bg-ochre text-ochre-fg border-ochre" : "bg-card text-muted-foreground border-border hover:bg-muted"
+              }`}
+            >
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
 
       {/* Filter bar */}
       <div className="bg-card border border-border p-4 flex flex-col lg:flex-row gap-3 lg:items-center">
@@ -228,23 +279,57 @@ function AnomalyList() {
             className="w-full h-8 pl-9 pr-3 border border-border bg-card text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ochre"
           />
         </div>
-        <div className="flex gap-2">
+        {/* One export control instead of scattered buttons. Native <details> so
+            there's no outside-click plumbing; each item closes the menu itself. */}
+        <details className="relative group">
+          <summary className="h-8 px-3 border border-border bg-card text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+            <Download size={12} /> Export <ChevronDown size={12} className="opacity-60" />
+          </summary>
+          <div className="absolute right-0 z-20 mt-1 w-52 bg-card border border-border shadow-lg py-1 text-xs">
+            <button onClick={e => { exportCSV(rows, plantName); (e.currentTarget.closest("details") as HTMLDetailsElement).open = false; }}
+              className="w-full text-left px-3 py-2 hover:bg-muted flex items-center gap-2">
+              <Download size={12} /> Filtered ({rows.length}) · CSV
+            </button>
+            <button onClick={e => { exportCSV(anomalies, plantName); (e.currentTarget.closest("details") as HTMLDetailsElement).open = false; }}
+              className="w-full text-left px-3 py-2 hover:bg-muted flex items-center gap-2">
+              <FileText size={12} /> All ({anomalies.length}) · CSV
+            </button>
+          </div>
+        </details>
+      </div>
+
+      {/* Bulk action bar — appears only with a selection */}
+      {selectedRows.length > 0 && (
+        <div className="bg-grey-900 text-white px-4 py-2.5 flex items-center gap-3 flex-wrap text-xs sticky top-2 z-10 shadow-lg">
+          <span className="font-semibold mono tabular-nums">{selectedRows.length} selected</span>
+          <span className="text-white/40">|</span>
+          {canEdit && (
+            <label className="flex items-center gap-2">
+              <span className="text-white/70">Set status</span>
+              <select
+                defaultValue=""
+                onChange={e => { if (e.target.value) { bulkSetStatus(e.target.value as Status); e.target.value = ""; } }}
+                className="h-7 px-2 bg-grey-900 border border-white/25 text-white text-xs focus:outline-none focus:ring-1 focus:ring-ochre"
+              >
+                <option value="" disabled>Choose…</option>
+                <option>New</option>
+                <option>Acknowledged</option>
+                <option>In Repair</option>
+                <option>Closed</option>
+              </select>
+            </label>
+          )}
           <button
-            onClick={() => exportCSV(rows, plantName)}
-            className="h-8 px-3 border border-border bg-card text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted"
-            title={`Export ${rows.length} filtered anomalies as CSV`}
+            onClick={() => exportCSV(selectedRows, plantName)}
+            className="h-7 px-3 border border-white/25 hover:bg-white/10 inline-flex items-center gap-1.5 font-medium"
           >
-            <Download size={12} /> CSV
+            <Download size={12} /> Export selected
           </button>
-          <button
-            onClick={() => exportCSV(anomalies, plantName)}
-            className="h-8 px-3 border border-border bg-card text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted"
-            title="Export all 347 anomalies"
-          >
-            <FileText size={12} /> Export All
+          <button onClick={clearSelection} className="ml-auto h-7 px-2 inline-flex items-center gap-1 text-white/70 hover:text-white">
+            <X size={13} /> Clear
           </button>
         </div>
-      </div>
+      )}
 
       {/* Table — desktop */}
       <div className="bg-card border border-border overflow-hidden hidden md:block">
@@ -252,6 +337,15 @@ function AnomalyList() {
           <table className="w-full text-sm">
             <thead className="bg-muted text-[11px] uppercase tracking-widest text-grey-400 border-b border-border">
               <tr>
+                <th className="w-10 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                    aria-label="Select all filtered anomalies"
+                    className="accent-ochre align-middle cursor-pointer"
+                  />
+                </th>
                 <th className="text-left px-4 py-3 font-semibold">SL No</th>
                 <th className="text-left px-4 py-3 font-semibold">Block</th>
                 <th className="text-left px-4 py-3 font-semibold">Layout Location</th>
@@ -265,7 +359,16 @@ function AnomalyList() {
             </thead>
             <tbody className="divide-y divide-border">
               {rows.map((a, i) => (
-                <tr key={a.id} className="hover:bg-grey-25 transition">
+                <tr key={a.id} className={`transition ${selectedIds.has(a.id) ? "bg-ochre-muted" : "hover:bg-grey-25"}`}>
+                  <td className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(a.id)}
+                      onChange={() => toggleOne(a.id)}
+                      aria-label={`Select ${a.panelId}`}
+                      className="accent-ochre align-middle cursor-pointer"
+                    />
+                  </td>
                   <td className="px-4 py-3 mono text-sm text-muted-foreground">{i + 1}</td>
                   <td className="px-4 py-3 mono text-sm">{blockNumber(a, plantName)}</td>
                   <td className="px-4 py-3 mono text-xs">{layoutLocation(a, plantName)}</td>
@@ -334,13 +437,23 @@ function AnomalyList() {
             // workaround for it. navigate() + role="link" + Enter-to-activate
             // keeps mouse, touch, and keyboard behavior equivalent to the
             // <Link> this replaces.
-            className="block bg-card border border-border p-4 hover:bg-grey-25 transition cursor-pointer"
+            className={`block border p-4 transition cursor-pointer ${selectedIds.has(a.id) ? "bg-ochre-muted border-ochre/40" : "bg-card border-border hover:bg-grey-25"}`}
           >
             <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="mono text-[11px] text-muted-foreground">SL {i + 1}</p>
-                <p className="mono font-bold text-sm mt-0.5">{layoutLocation(a, plantName)}</p>
-                <p className="text-sm mt-1 text-muted-foreground">{a.type}</p>
+              <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(a.id)}
+                  onChange={() => toggleOne(a.id)}
+                  onClick={e => e.stopPropagation()}
+                  aria-label={`Select ${a.panelId}`}
+                  className="accent-ochre mt-0.5 cursor-pointer"
+                />
+                <div>
+                  <p className="mono text-[11px] text-muted-foreground">SL {i + 1}</p>
+                  <p className="mono font-bold text-sm mt-0.5">{layoutLocation(a, plantName)}</p>
+                  <p className="text-sm mt-1 text-muted-foreground">{a.type}</p>
+                </div>
               </div>
               <SeverityBadge severity={a.severity} />
             </div>
