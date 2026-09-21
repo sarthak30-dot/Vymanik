@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useLocation } from "@tanstack/react-router";
 import { useMemo, useState, useEffect } from "react";
 import { Search, Download, FileText, Loader2, MapPin, ChevronDown, X } from "lucide-react";
 import { toast } from "sonner";
@@ -99,6 +99,37 @@ function exportCSV(rows: AnomalyDTO[], plantName: string) {
 
 type Severity = AnomalyDTO["severity"];
 type Status = AnomalyDTO["status"];
+
+// ── Tab strip shared across the three anomaly views ──────────────────────────
+
+function AnomalyTabNav() {
+  const loc = useLocation();
+  const tabs = [
+    { to: "/anomalies" as const,           label: "All Anomalies" },
+    { to: "/anomalies/by-block" as const,  label: "Block-wise" },
+    { to: "/anomalies/by-defect" as const, label: "Defect-wise" },
+  ];
+  return (
+    <div className="flex gap-0 border-b border-border -mb-5">
+      {tabs.map(({ to, label }) => {
+        const active = loc.pathname === to;
+        return (
+          <Link
+            key={to}
+            to={to}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition ${
+              active
+                ? "border-ochre text-ochre"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {label}
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
 
 const SEVERITY_VALUES = ["critical", "medium", "normal", "nodata"] as const;
 const STATUS_VALUES = ["New", "Acknowledged", "In Repair", "Closed"] as const;
@@ -222,6 +253,8 @@ function AnomalyList() {
           )}
         </p>
       </header>
+
+      <AnomalyTabNav />
 
       {/* Saved views — one-click filter presets */}
       <div className="flex gap-2 flex-wrap">

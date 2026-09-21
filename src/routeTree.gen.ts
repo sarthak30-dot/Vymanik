@@ -19,6 +19,8 @@ import { Route as AppMapRouteImport } from './routes/_app/map'
 import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
 import { Route as AppAdminRouteImport } from './routes/_app/admin'
 import { Route as AppAnomaliesIndexRouteImport } from './routes/_app/anomalies/index'
+import { Route as AppAnomaliesByDefectRouteImport } from './routes/_app/anomalies/by-defect'
+import { Route as AppAnomaliesByBlockRouteImport } from './routes/_app/anomalies/by-block'
 import { Route as AppAnomaliesIdRouteImport } from './routes/_app/anomalies/$id'
 
 const AppRoute = AppRouteImport.update({
@@ -70,6 +72,16 @@ const AppAnomaliesIndexRoute = AppAnomaliesIndexRouteImport.update({
   path: '/anomalies/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAnomaliesByDefectRoute = AppAnomaliesByDefectRouteImport.update({
+  id: '/anomalies/by-defect',
+  path: '/anomalies/by-defect',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAnomaliesByBlockRoute = AppAnomaliesByBlockRouteImport.update({
+  id: '/anomalies/by-block',
+  path: '/anomalies/by-block',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAnomaliesIdRoute = AppAnomaliesIdRouteImport.update({
   id: '/anomalies/$id',
   path: '/anomalies/$id',
@@ -86,6 +98,8 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AppSettingsRoute
   '/team': typeof AppTeamRoute
   '/anomalies/$id': typeof AppAnomaliesIdRoute
+  '/anomalies/by-block': typeof AppAnomaliesByBlockRoute
+  '/anomalies/by-defect': typeof AppAnomaliesByDefectRoute
   '/anomalies/': typeof AppAnomaliesIndexRoute
 }
 export interface FileRoutesByTo {
@@ -98,6 +112,8 @@ export interface FileRoutesByTo {
   '/settings': typeof AppSettingsRoute
   '/team': typeof AppTeamRoute
   '/anomalies/$id': typeof AppAnomaliesIdRoute
+  '/anomalies/by-block': typeof AppAnomaliesByBlockRoute
+  '/anomalies/by-defect': typeof AppAnomaliesByDefectRoute
   '/anomalies': typeof AppAnomaliesIndexRoute
 }
 export interface FileRoutesById {
@@ -112,6 +128,8 @@ export interface FileRoutesById {
   '/_app/settings': typeof AppSettingsRoute
   '/_app/team': typeof AppTeamRoute
   '/_app/anomalies/$id': typeof AppAnomaliesIdRoute
+  '/_app/anomalies/by-block': typeof AppAnomaliesByBlockRoute
+  '/_app/anomalies/by-defect': typeof AppAnomaliesByDefectRoute
   '/_app/anomalies/': typeof AppAnomaliesIndexRoute
 }
 export interface FileRouteTypes {
@@ -126,6 +144,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/team'
     | '/anomalies/$id'
+    | '/anomalies/by-block'
+    | '/anomalies/by-defect'
     | '/anomalies/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -138,6 +158,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/team'
     | '/anomalies/$id'
+    | '/anomalies/by-block'
+    | '/anomalies/by-defect'
     | '/anomalies'
   id:
     | '__root__'
@@ -151,6 +173,8 @@ export interface FileRouteTypes {
     | '/_app/settings'
     | '/_app/team'
     | '/_app/anomalies/$id'
+    | '/_app/anomalies/by-block'
+    | '/_app/anomalies/by-defect'
     | '/_app/anomalies/'
   fileRoutesById: FileRoutesById
 }
@@ -231,6 +255,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAnomaliesIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/anomalies/by-defect': {
+      id: '/_app/anomalies/by-defect'
+      path: '/anomalies/by-defect'
+      fullPath: '/anomalies/by-defect'
+      preLoaderRoute: typeof AppAnomaliesByDefectRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/anomalies/by-block': {
+      id: '/_app/anomalies/by-block'
+      path: '/anomalies/by-block'
+      fullPath: '/anomalies/by-block'
+      preLoaderRoute: typeof AppAnomaliesByBlockRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/anomalies/$id': {
       id: '/_app/anomalies/$id'
       path: '/anomalies/$id'
@@ -250,6 +288,8 @@ interface AppRouteChildren {
   AppSettingsRoute: typeof AppSettingsRoute
   AppTeamRoute: typeof AppTeamRoute
   AppAnomaliesIdRoute: typeof AppAnomaliesIdRoute
+  AppAnomaliesByBlockRoute: typeof AppAnomaliesByBlockRoute
+  AppAnomaliesByDefectRoute: typeof AppAnomaliesByDefectRoute
   AppAnomaliesIndexRoute: typeof AppAnomaliesIndexRoute
 }
 
@@ -262,6 +302,8 @@ const AppRouteChildren: AppRouteChildren = {
   AppSettingsRoute: AppSettingsRoute,
   AppTeamRoute: AppTeamRoute,
   AppAnomaliesIdRoute: AppAnomaliesIdRoute,
+  AppAnomaliesByBlockRoute: AppAnomaliesByBlockRoute,
+  AppAnomaliesByDefectRoute: AppAnomaliesByDefectRoute,
   AppAnomaliesIndexRoute: AppAnomaliesIndexRoute,
 }
 
