@@ -110,7 +110,7 @@ function AnomalyTabNav() {
     { to: "/anomalies/by-defect" as const, label: "Defect-wise" },
   ];
   return (
-    <div className="flex gap-0 border-b border-border -mb-5">
+    <div className="flex gap-0 border-b border-border">
       {tabs.map(({ to, label }) => {
         const active = loc.pathname === to;
         return (
