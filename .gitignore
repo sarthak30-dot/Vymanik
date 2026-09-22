@@ -36,3 +36,11 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
+
+# Defect frames — large raw JPEGs from the drone survey (661 MB total).
+# Thumbnails in public/defimages/thumb/ ARE committed (tiny WebP, ~3 KB each).
+# To restore the full frames locally: unzip the vendor-supplied zip into public/defimages/.
+public/defimages/*.JPG
+public/defimages/*.jpg
+public/defimages/*.JPEG
+public/defimages/*.jpeg
