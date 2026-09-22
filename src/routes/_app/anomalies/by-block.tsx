@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { Loader2, ChevronUp, ChevronDown, ArrowLeft, LayoutGrid } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Cell } from "recharts";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { useAnomalies } from "@/lib/queries";
 import { usePlantContext } from "@/lib/plant-context";
@@ -39,6 +40,24 @@ function AnomalyTabNav() {
           </Link>
         );
       })}
+    </div>
+  );
+}
+
+// ── Block bar chart ───────────────────────────────────────────────────────────
+
+const BLOCK_CHART_COLORS = [
+  "#FF2E2E", "#FF8C00", "#FFE600", "#00B8D9", "#36B37E",
+  "#6554C0", "#FF5630", "#00875A", "#0052CC", "#8777D9",
+];
+
+function BlockTooltip({ active, payload }: { active?: boolean; payload?: { payload: { block: string; count: number } }[] }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return (
+    <div className="bg-card border border-border shadow p-3 text-xs space-y-0.5">
+      <p className="font-semibold text-foreground">Block {d.block}</p>
+      <p className="text-muted-foreground"><span className="mono font-semibold text-foreground">{d.count}</span> defects</p>
     </div>
   );
 }
@@ -200,6 +219,47 @@ function BlockwiseAnomaly() {
       </header>
 
       <AnomalyTabNav />
+
+      {/* ── Block bar chart ── */}
+      {!selectedBlock && blockStats.length > 0 && (
+        <div className="bg-card border border-border p-4">
+          <p className="text-xs font-semibold uppercase tracking-widest text-grey-400 mb-4">
+            Defects per Block
+          </p>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart
+              data={blockStats.map(bs => ({ block: bs.block, count: bs.defectCount }))}
+              margin={{ top: 4, right: 16, bottom: 20, left: 8 }}
+              barCategoryGap="30%"
+            >
+              <XAxis
+                dataKey="block"
+                tick={{ fontSize: 10, fill: "var(--muted-foreground,#888)" }}
+                tickFormatter={v => `B${v}`}
+              />
+              <YAxis
+                tick={{ fontSize: 10, fill: "var(--muted-foreground,#888)" }}
+                allowDecimals={false}
+              />
+              <RechartsTooltip content={<BlockTooltip />} cursor={{ fill: "var(--grey-25,#fafafa)" }} />
+              <Bar dataKey="count" radius={[2, 2, 0, 0]}>
+                {blockStats.map((_, i) => (
+                  <Cell
+                    key={i}
+                    fill={BLOCK_CHART_COLORS[i % BLOCK_CHART_COLORS.length]}
+                    opacity={0.85}
+                    style={{ cursor: "pointer" }}
+                    onClick={() => { setSelectedBlock(blockStats[i].block); }}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+          <p className="text-[11px] text-muted-foreground mt-1 text-center">
+            Click a bar to drill into that block's defects
+          </p>
+        </div>
+      )}
 
       {/* ── Block summary table ── */}
       {!selectedBlock && (

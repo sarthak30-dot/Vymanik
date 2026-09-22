@@ -15,6 +15,7 @@ import { useGuidedTour, hasTourRun, type TourStep } from "@/hooks/use-guided-tou
 import type { PlantDTO } from "@/lib/api";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
+  PieChart, Pie, Cell, BarChart, Bar,
 } from "recharts";
 
 /** Build a PlantDTO from the allPlants summary for admin multi-plant view */
@@ -277,6 +278,99 @@ function Dashboard() {
         <DataTile color="medium" count={severityCounts.medium} label={t("medium_anomalies")} sub={t("schedule_30")} trend={mediumTrend} total={plant.totalPanels} />
         <DataTile color="normal" count={severityCounts.normal} label={t("panels_healthy")} sub={t("no_action")} trend={normalTrend} total={plant.totalPanels} />
       </section>
+
+      {/* ── Quick Anomaly Overview charts ── */}
+      {anomalies.length > 0 && (() => {
+        const critCount = anomalies.filter(a => a.severity === "critical").length;
+        const medCount  = anomalies.filter(a => a.severity === "medium").length;
+        const normCount = anomalies.filter(a => a.severity === "normal").length;
+        const total = critCount + medCount + normCount;
+        const pieData = [
+          { name: "Critical", value: critCount, pct: ((critCount / total) * 100).toFixed(1), color: "#FF2E2E" },
+          { name: "Medium",   value: medCount,  pct: ((medCount  / total) * 100).toFixed(1), color: "#FF8C00" },
+          { name: "Normal",   value: normCount, pct: ((normCount / total) * 100).toFixed(1), color: "#36B37E" },
+        ].filter(d => d.value > 0);
+
+        const blockMap: Record<string, number> = {};
+        for (const a of anomalies) {
+          const b = a.block ?? "?";
+          blockMap[b] = (blockMap[b] ?? 0) + 1;
+        }
+        const barData = Object.entries(blockMap)
+          .sort(([a], [b]) => Number(a) - Number(b))
+          .map(([block, count]) => ({ block, count }));
+
+        const BAR_COLORS = ["#FF2E2E","#FF8C00","#FFE600","#00B8D9","#36B37E","#6554C0","#FF5630","#00875A","#0052CC","#8777D9"];
+
+        return (
+          <section className="bg-card border border-border p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Severity pie */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-grey-400 mb-2">Severity Breakdown</p>
+              <div className="flex items-center gap-4">
+                <div style={{ width: 140, height: 140, flexShrink: 0 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={pieData} cx="50%" cy="50%" innerRadius={35} outerRadius={62} dataKey="value" strokeWidth={0}>
+                        {pieData.map(d => <Cell key={d.name} fill={d.color} opacity={0.9} />)}
+                      </Pie>
+                      <Tooltip
+                        content={({ active, payload }) => {
+                          if (!active || !payload?.length) return null;
+                          const d = payload[0].payload as typeof pieData[0];
+                          return (
+                            <div className="bg-card border border-border shadow p-2 text-xs">
+                              <p className="font-semibold">{d.name}</p>
+                              <p className="text-muted-foreground">{d.value} ({d.pct}%)</p>
+                            </div>
+                          );
+                        }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="space-y-1.5 text-sm">
+                  {pieData.map(d => (
+                    <div key={d.name} className="flex items-center gap-2">
+                      <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: d.color }} />
+                      <span className="text-muted-foreground">{d.name}</span>
+                      <span className="mono font-semibold text-foreground ml-auto pl-4">{d.value}</span>
+                      <span className="text-muted-foreground text-xs w-10 text-right">{d.pct}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            {/* Block bar chart */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-grey-400 mb-2">Defects per Block</p>
+              <ResponsiveContainer width="100%" height={140}>
+                <BarChart data={barData} margin={{ top: 4, right: 8, bottom: 16, left: 0 }} barCategoryGap="30%">
+                  <XAxis dataKey="block" tick={{ fontSize: 9, fill: "var(--muted-foreground,#888)" }} tickFormatter={v => `B${v}`} />
+                  <YAxis tick={{ fontSize: 9, fill: "var(--muted-foreground,#888)" }} allowDecimals={false} width={24} />
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const d = payload[0].payload as typeof barData[0];
+                      return (
+                        <div className="bg-card border border-border shadow p-2 text-xs">
+                          <p className="font-semibold">Block {d.block}</p>
+                          <p className="text-muted-foreground">{d.count} defects</p>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Bar dataKey="count" radius={[2, 2, 0, 0]}>
+                    {barData.map((_, i) => (
+                      <Cell key={i} fill={BAR_COLORS[i % BAR_COLORS.length]} opacity={0.85} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+        );
+      })()}
 
       {/* Financial impact — hidden at the client's request (see SHOW_LOSS_METRICS).
           The `space-y-6` on the page container collapses the gap automatically

@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate, useLocation } from "@tanstack/react-router";
 import { useMemo, useState, useEffect } from "react";
 import { Search, Download, FileText, Loader2, MapPin, ChevronDown, X } from "lucide-react";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
 import { toast } from "sonner";
 import { SeverityBadge, StatusBadge } from "@/components/SeverityBadge";
 import { useAnomalies, usePatchAnomaly } from "@/lib/queries";
@@ -131,6 +132,66 @@ function AnomalyTabNav() {
   );
 }
 
+// ── Severity pie chart ────────────────────────────────────────────────────────
+
+const PIE_COLORS: Record<string, string> = {
+  Critical: "#FF2E2E",
+  Medium:   "#FF8C00",
+  Normal:   "#36B37E",
+};
+
+function SeverityPieTooltip({ active, payload }: { active?: boolean; payload?: { name: string; value: number; payload: { pct: string } }[] }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0];
+  return (
+    <div className="bg-card border border-border shadow p-3 text-xs space-y-0.5">
+      <p className="font-semibold text-foreground">{d.name}</p>
+      <p className="text-muted-foreground"><span className="mono font-semibold text-foreground">{d.value}</span> panels ({d.payload.pct}%)</p>
+    </div>
+  );
+}
+
+function SeverityPieChart({ critical, medium, normal }: { critical: number; medium: number; normal: number }) {
+  const total = critical + medium + normal;
+  if (total === 0) return null;
+  const data = [
+    { name: "Critical", value: critical, pct: ((critical / total) * 100).toFixed(1) },
+    { name: "Medium",   value: medium,   pct: ((medium / total) * 100).toFixed(1) },
+    { name: "Normal",   value: normal,   pct: ((normal / total) * 100).toFixed(1) },
+  ].filter(d => d.value > 0);
+  return (
+    <div className="bg-card border border-border p-4">
+      <p className="text-xs font-semibold uppercase tracking-widest text-grey-400 mb-2">
+        Severity Breakdown
+      </p>
+      <div className="flex items-center gap-4">
+        <div style={{ width: 160, height: 160, flexShrink: 0 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={data} cx="50%" cy="50%" innerRadius={40} outerRadius={70} dataKey="value" strokeWidth={0}>
+                {data.map(d => (
+                  <Cell key={d.name} fill={PIE_COLORS[d.name]} opacity={0.9} />
+                ))}
+              </Pie>
+              <RechartsTooltip content={<SeverityPieTooltip />} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="space-y-2 text-sm">
+          {data.map(d => (
+            <div key={d.name} className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: PIE_COLORS[d.name] }} />
+              <span className="text-muted-foreground">{d.name}</span>
+              <span className="mono font-semibold text-foreground ml-auto pl-4">{d.value}</span>
+              <span className="text-muted-foreground text-xs w-10 text-right">{d.pct}%</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const SEVERITY_VALUES = ["critical", "medium", "normal", "nodata"] as const;
 const STATUS_VALUES = ["New", "Acknowledged", "In Repair", "Closed"] as const;
 
@@ -255,6 +316,12 @@ function AnomalyList() {
       </header>
 
       <AnomalyTabNav />
+
+      <SeverityPieChart
+        critical={anomalies.filter(a => a.severity === "critical").length}
+        medium={anomalies.filter(a => a.severity === "medium").length}
+        normal={anomalies.filter(a => a.severity === "normal").length}
+      />
 
       {/* Saved views — one-click filter presets */}
       <div className="flex gap-2 flex-wrap">
