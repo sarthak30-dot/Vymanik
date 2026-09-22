@@ -291,16 +291,28 @@ function Dashboard() {
           { name: "Normal",   value: normCount, pct: ((normCount / total) * 100).toFixed(1), color: "#36B37E" },
         ].filter(d => d.value > 0);
 
-        const blockMap: Record<string, number> = {};
+        // Per-block severity counts → drives bar color
+        const blockSevMap: Record<string, { critical: number; medium: number; normal: number; total: number }> = {};
         for (const a of anomalies) {
           const b = a.block ?? "?";
-          blockMap[b] = (blockMap[b] ?? 0) + 1;
+          if (!blockSevMap[b]) blockSevMap[b] = { critical: 0, medium: 0, normal: 0, total: 0 };
+          blockSevMap[b].total++;
+          if (a.severity === "critical") blockSevMap[b].critical++;
+          else if (a.severity === "medium") blockSevMap[b].medium++;
+          else blockSevMap[b].normal++;
         }
-        const barData = Object.entries(blockMap)
+        const barData = Object.entries(blockSevMap)
           .sort(([a], [b]) => Number(a) - Number(b))
-          .map(([block, count]) => ({ block, count }));
+          .map(([block, s]) => ({ block, count: s.total, critical: s.critical, medium: s.medium, normal: s.normal }));
 
-        const BAR_COLORS = ["#FF2E2E","#FF8C00","#FFE600","#00B8D9","#36B37E","#6554C0","#FF5630","#00875A","#0052CC","#8777D9"];
+        // Bar color = dominant severity in that block
+        function blockBarColor(d: typeof barData[0]) {
+          if (d.critical >= d.medium && d.critical >= d.normal) return "#FF2E2E";
+          if (d.medium >= d.normal) return "#FF8C00";
+          return "#36B37E";
+        }
+
+        const topBlock = barData.reduce((a, b) => (b.count > a.count ? b : a), barData[0]);
 
         return (
           <section className="bg-card border border-border p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -352,21 +364,36 @@ function Dashboard() {
                     content={({ active, payload }) => {
                       if (!active || !payload?.length) return null;
                       const d = payload[0].payload as typeof barData[0];
+                      const t = d.count || 1;
                       return (
-                        <div className="bg-card border border-border shadow p-2 text-xs">
-                          <p className="font-semibold">Block {d.block}</p>
-                          <p className="text-muted-foreground">{d.count} defects</p>
+                        <div className="bg-card border border-border shadow p-2 text-xs space-y-0.5 min-w-[130px]">
+                          <p className="font-semibold mb-1">Block {d.block} — {d.count} defects</p>
+                          <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{background:"#FF2E2E"}} /><span className="text-muted-foreground">Critical</span><span className="ml-auto font-semibold">{d.critical} ({((d.critical/t)*100).toFixed(0)}%)</span></div>
+                          <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{background:"#FF8C00"}} /><span className="text-muted-foreground">Medium</span><span className="ml-auto font-semibold">{d.medium} ({((d.medium/t)*100).toFixed(0)}%)</span></div>
+                          <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{background:"#36B37E"}} /><span className="text-muted-foreground">Normal</span><span className="ml-auto font-semibold">{d.normal} ({((d.normal/t)*100).toFixed(0)}%)</span></div>
                         </div>
                       );
                     }}
                   />
                   <Bar dataKey="count" radius={[2, 2, 0, 0]}>
-                    {barData.map((_, i) => (
-                      <Cell key={i} fill={BAR_COLORS[i % BAR_COLORS.length]} opacity={0.85} />
+                    {barData.map((d, i) => (
+                      <Cell key={i} fill={blockBarColor(d)} opacity={0.88} />
                     ))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
+              {/* Colour legend */}
+              <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground">
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{background:"#FF2E2E"}} />Critical dominant</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{background:"#FF8C00"}} />Medium dominant</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{background:"#36B37E"}} />Normal dominant</span>
+              </div>
+              {/* Highest-anomaly block callout */}
+              {topBlock && (
+                <p className="mt-2 text-[11px] leading-snug text-muted-foreground border-t border-border pt-2">
+                  <span className="font-semibold text-foreground">Block {topBlock.block}</span> has the highest defect count ({topBlock.count} defects — {((topBlock.critical / topBlock.count) * 100).toFixed(0)}% critical). Prioritise inspection here first.
+                </p>
+              )}
             </div>
           </section>
         );
