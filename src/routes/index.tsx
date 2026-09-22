@@ -203,7 +203,10 @@ function LoginPage() {
             <button type="button" onClick={() => setLang(lang === "en" ? "hi" : "en")} className="hover:text-foreground">
               {lang === "en" ? "English | हिंदी" : "हिंदी | English"}
             </button>
-            <span>Powered by <span className="font-semibold text-foreground">Vymanik Aerospace</span></span>
+            <a href="https://vymanikaero.in/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 opacity-80 hover:opacity-100 transition-opacity" title="Visit Vymanik Aerospace">
+              <span className="text-muted-foreground text-xs">Powered by</span>
+              <img src="/vymanik-logo.webp" alt="Vymanik Aerospace" className="h-5 w-auto object-contain" />
+            </a>
           </div>
         </div>
       </div>
