@@ -111,7 +111,7 @@ export interface Anomaly {
  * need no such caveat.
  */
 export const plant = {
-  name: "Blocks 06-19 Solar Plant",
+  name: "Blocks 06-122 Solar Plant",
   location: "Rajasthan, India",
   capacityMW: 5.7,
   totalPanels: 10790,
@@ -1566,7 +1566,7 @@ export interface EquipmentAudit {
 }
 
 export const equipmentAudits: EquipmentAudit[] = [
-  { id: "audit-001", name: "Blocks 06-19 Thermal Inspection — March 2026", type: "Thermal / Drone", started: "31 March 2026", completed: "31 March 2026", status: "Completed", modulesInspected: 10790, findings: 1249 },
+  { id: "audit-001", name: "Blocks 06-122 Thermal Inspection — March 2026", type: "Thermal / Drone", started: "31 March 2026", completed: "31 March 2026", status: "Completed", modulesInspected: 10790, findings: 1249 },
 ];
 
 // ─── Plant Digitization ──────────────────────────────────────────────────────
@@ -1665,7 +1665,7 @@ export interface PlantSummary {
 export const allPlants: PlantSummary[] = [
   {
     id: "plant-001",
-    name: "Blocks 06-19 Solar Plant",
+    name: "Blocks 06-122 Solar Plant",
     client: "—",
     location: "Rajasthan, India",
     capacityMW: 5.7,
@@ -1704,8 +1704,8 @@ export interface QueueEntry {
 export const reviewQueue: QueueEntry[] = [
   {
     uploadId: "upload-001",
-    client: "Blocks 06-19 Plant Owner",
-    plant: "Blocks 06-19 Solar Plant",
+    client: "Blocks 06-122 Plant Owner",
+    plant: "Blocks 06-122 Solar Plant",
     pilot: "Arjun Sharma",
     uploadedAt: "31 March 2026, 13:22",
     datasetGB: 0.7,
