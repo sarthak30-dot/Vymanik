@@ -231,8 +231,8 @@ const SEV_DOT: Record<string, string> = {
 };
 
 function AnomalyList() {
-  const { data: allAnomalies = [], isLoading } = useAnomalies();
   const { selectedPlant } = usePlantContext();
+  const { data: allAnomalies = [], isLoading } = useAnomalies(selectedPlant.id);
   const patchAnomaly = usePatchAnomaly();
   const navigate = useNavigate();
   const canEdit = can(getUser()?.role, "editAnomaly");

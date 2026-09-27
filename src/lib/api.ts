@@ -216,6 +216,8 @@ export interface AnomalyDTO {
   stringSide?: string;
   module?: string;
   defectCode?: string;
+  /** Surveyed panel outline, [lng, lat] closed ring (migration 007). */
+  footprint?: [number, number][];
 }
 
 // ─── Plant layout (asset hierarchy) ────────────────────────────────────────
@@ -327,6 +329,44 @@ async function req<T>(
   return res.json() as Promise<T>;
 }
 
+// ─── Survey upload (Control Center) ──────────────────────────────────────────
+
+export interface SurveyOverlay {
+  url: string;
+  west: number;
+  north: number;
+  east: number;
+  south: number;
+}
+
+export interface PlantSurvey {
+  plantId: string;
+  inspectionId: string;
+  inspectionDate: string;
+  defectCount: number;
+  uploadedAt: string;
+  overlay: SurveyOverlay | null;
+}
+
+/** One defect row as POST /api/survey (action "import-defects") expects it. */
+export interface SurveyDefectRow {
+  panelId: string;
+  row: number;
+  col: number;
+  type: string;
+  severity: "critical" | "medium" | "normal";
+  string: string;
+  inverter: string;
+  rgbNote: string;
+  gps: { lat: number; lng: number };
+  block?: string;
+  smb?: string;
+  stringSide?: string;
+  module?: string;
+  defectCode?: string;
+  footprint?: [number, number][];
+}
+
 export const api = {
   auth: {
     login: (body: LoginRequest) => req<AuthToken>("POST", "/auth/login", body),
@@ -353,6 +393,23 @@ export const api = {
       req<InviteClientResult>("POST", "/admin/invite-client", body, token),
   },
 
+  survey: {
+    get: (plantId: string, token: string) =>
+      req<{ survey: PlantSurvey | null }>("GET", `/survey?plantId=${encodeURIComponent(plantId)}`, undefined, token),
+    importDefects: (
+      body: { plantId: string; inspectionId: string; inspectionDate: string; rows: SurveyDefectRow[]; replace: boolean },
+      token: string,
+    ) => req<{ inserted: number }>("POST", "/survey", { action: "import-defects", ...body }, token),
+    signOverlay: (
+      body: { plantId: string; inspectionId: string; contentType: string },
+      token: string,
+    ) => req<{ signedUrl: string; publicUrl: string }>("POST", "/survey", { action: "sign-overlay", ...body }, token),
+    saveSurvey: (
+      body: { plantId: string; inspectionId: string; inspectionDate: string; defectCount: number; overlay: SurveyOverlay | null },
+      token: string,
+    ) => req<{ survey: PlantSurvey }>("POST", "/survey", { action: "save-survey", ...body }, token),
+  },
+
   plantLayout: {
     get: (plantId: string, token: string) =>
       req<PlantLayout>("GET", `/plant-layout?plantId=${plantId}`, undefined, token),
@@ -377,8 +434,15 @@ export const api = {
   },
 
   anomalies: {
-    list: (plantId: string, inspectionId: string, token: string) =>
-      req<AnomalyDTO[]>("GET", `/anomalies?plantId=${plantId}&inspectionId=${inspectionId}`, undefined, token),
+    list: (plantId: string, inspectionId: string | undefined, token: string) =>
+      req<AnomalyDTO[]>(
+        "GET",
+        inspectionId
+          ? `/anomalies?plantId=${encodeURIComponent(plantId)}&inspectionId=${encodeURIComponent(inspectionId)}`
+          : `/anomalies?plantId=${encodeURIComponent(plantId)}`,
+        undefined,
+        token,
+      ),
     get: (id: string, token: string) =>
       req<AnomalyDTO>("GET", `/anomalies/${id}`, undefined, token),
     patch: (id: string, body: AnomalyStatusPatch, token: string) =>

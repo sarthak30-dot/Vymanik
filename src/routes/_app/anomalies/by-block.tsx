@@ -156,8 +156,8 @@ function HealthDot({ score }: { score: number }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 function BlockwiseAnomaly() {
-  const { data: allAnomalies = [], isLoading } = useAnomalies();
   const { selectedPlant } = usePlantContext();
+  const { data: allAnomalies = [], isLoading } = useAnomalies(selectedPlant.id);
   const navigate = useNavigate();
   const { block: blockParam } = Route.useSearch();
 

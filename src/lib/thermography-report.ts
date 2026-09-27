@@ -17,6 +17,14 @@ import { SEVERITY } from "./severity-tokens";
 import { downloadTextFile } from "./csv";
 import type { Anomaly, PlantSummary } from "./mock-data";
 
+/**
+ * The fields the report actually reads — a structural subset satisfied by
+ * both mock-data's Anomaly (the baked plant-001 survey) and api's AnomalyDTO
+ * (an uploaded survey's rows from the DB), so the same generator serves both.
+ */
+export type ReportAnomaly = Pick<Anomaly, "panelId" | "type" | "deltaT" | "severity" | "string" | "inverter" | "gps"> &
+  Partial<Pick<Anomaly, "block" | "smb" | "stringSide" | "module">>;
+
 // ─── Report metadata (the admin-entered inputs the client asked for) ───────
 
 export interface ReportMetadata {
@@ -97,11 +105,11 @@ export function defaultReportMetadata(
 
 type COA = "COA1" | "COA2" | "COA3";
 
-function coaLabel(a: Anomaly): COA {
+function coaLabel(a: ReportAnomaly): COA {
   return a.severity === "critical" ? "COA3" : a.severity === "medium" ? "COA2" : "COA1";
 }
 
-function coaRGB(a: Anomaly): [number, number, number] {
+function coaRGB(a: ReportAnomaly): [number, number, number] {
   const key =
     a.severity === "critical" ? "critical" : a.severity === "medium" ? "medium" : "normal";
   return SEVERITY[key].textRGB as [number, number, number];
@@ -109,13 +117,13 @@ function coaRGB(a: Anomaly): [number, number, number] {
 
 /** The faulty-module register only (matches the sample's Table 6 — normal-severity
  *  rows are healthy panels, not defects, and don't belong in a defect register). */
-function faultyModules(anomalies: readonly Anomaly[]): Anomaly[] {
+function faultyModules(anomalies: readonly ReportAnomaly[]): ReportAnomaly[] {
   return anomalies.filter((a) => a.severity !== "normal" && a.severity !== "nodata");
 }
 
 /** "Table-347" -> "347"; falls back to the raw string field for surveys that
  *  didn't use the Table- prefix convention. */
-function tableNumber(a: Anomaly): string {
+function tableNumber(a: ReportAnomaly): string {
   const m = /table-?(\d+)/i.exec(a.string);
   return m ? m[1] : a.string;
 }
@@ -123,7 +131,7 @@ function tableNumber(a: Anomaly): string {
 /** Mirrors the sample report's "Block: 20, Inv: A, Table: 3, Str: B, Mod: A - 8"
  *  — composed from whatever this survey actually captured (see mock-data.ts's
  *  Anomaly.block docblock: the asset-register fields are optional per survey). */
-function layoutLocation(a: Anomaly): string {
+function layoutLocation(a: ReportAnomaly): string {
   const parts: string[] = [];
   if (a.block) parts.push(`Block: ${a.block}`);
   parts.push(`Inv: ${a.inverter.replace(/^INV-?/i, "")}`);
@@ -133,7 +141,7 @@ function layoutLocation(a: Anomaly): string {
   return parts.join(", ");
 }
 
-function mapLocation(a: Anomaly): string {
+function mapLocation(a: ReportAnomaly): string {
   return `${a.gps.lat}, ${a.gps.lng}`;
 }
 
@@ -435,7 +443,7 @@ function pieChart(
 
 export function generateThermographyPDF(
   meta: ReportMetadata,
-  allAnomalies: readonly Anomaly[],
+  allAnomalies: readonly ReportAnomaly[],
   plant: Pick<PlantSummary, "name" | "location"> & { totalPanels: number },
 ) {
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
@@ -786,7 +794,7 @@ function drawFaultyModuleTable(
   doc: jsPDF,
   headers: string[],
   widths: number[],
-  rows: Anomaly[],
+  rows: ReportAnomaly[],
   footerLabel: string,
   addPageFn: (doc: jsPDF, label: string) => void,
 ) {
@@ -844,7 +852,7 @@ function drawFaultyModuleTable(
 
 // ─── CSV export — the same faulty-module register as Table 6 ───────────────
 
-export function generateThermographyCSV(meta: ReportMetadata, allAnomalies: readonly Anomaly[]) {
+export function generateThermographyCSV(meta: ReportMetadata, allAnomalies: readonly ReportAnomaly[]) {
   const faulty = faultyModules(allAnomalies);
   const header = [
     "SL No",

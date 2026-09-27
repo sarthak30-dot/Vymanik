@@ -110,18 +110,20 @@ function Dashboard() {
   const { selectedPlantId, setSelectedPlantId, selectedPlant: selectedSummary, plants } = usePlantContext();
 
   const { data: fetchedPlant, isLoading: plantLoading, isError: plantError } = usePlant();
-  const { data: anomalies = [], isLoading: anomaliesLoading, isError: anomaliesError } = useAnomalies();
+  const { data: anomalies = [], isLoading: anomaliesLoading, isError: anomaliesError } = useAnomalies(selectedSummary.id);
   const { data: history = [], isLoading: historyLoading } = useInspectionHistory();
 
-  // Only plant-001 has survey data behind it (anomalies/history are its
-  // mock). Admin always reads the fleet summary for the selected plant; a
-  // plant owner does too once they're on any other plant — e.g. one added
-  // through Control Center — instead of being shown plant-001's name and data.
-  const hasSurveyData = selectedSummary.id === allPlants[0].id;
-  const usesSummary = isAdmin || !hasSurveyData;
+  const isPrimaryPlant = selectedSummary.id === allPlants[0].id;
+  // "Has survey data" = there are defects to show for this plant: the baked
+  // mock for plant-001, or an uploaded survey (DB anomalies) for any other.
+  const hasSurveyData = anomalies.length > 0;
+  // Plant identity (name/capacity/health) comes from the fleet summary for the
+  // primary plant only when NOT admin — admin and every other plant read the
+  // summary. History is only meaningful for the primary plant's mock.
+  const usesSummary = isAdmin || !isPrimaryPlant;
   const plant: PlantDTO | undefined = usesSummary ? summaryToDTO(selectedSummary) : fetchedPlant;
-  const isLoading = usesSummary ? false : (plantLoading || anomaliesLoading || historyLoading);
-  const isError = !usesSummary && (plantError || anomaliesError);
+  const isLoading = (usesSummary ? false : (plantLoading || historyLoading)) || (!isPrimaryPlant && anomaliesLoading);
+  const isError = (!usesSummary && plantError) || (!isPrimaryPlant && anomaliesError);
 
   // After 7 s of unresolved loading, show a retry prompt instead of infinite skeleton
   const [timedOut, setTimedOut] = useState(false);
@@ -176,17 +178,18 @@ function Dashboard() {
   const critical = anomalies.filter(a => a.severity === "critical");
   const medium = anomalies.filter(a => a.severity === "medium");
 
-  // Fleet summary counts for the selected plant; else live anomaly counts
-  const severityCounts = usesSummary
+  // Live anomaly counts whenever this plant has a survey (mock for plant-001,
+  // uploaded rows for any other); otherwise the fleet summary's own counts.
+  const severityCounts = hasSurveyData
     ? {
+        critical: critical.length,
+        medium: medium.length,
+        normal: Math.max(0, plant.totalPanels - critical.length - medium.length),
+      }
+    : {
         critical: selectedSummary.criticalCount,
         medium: selectedSummary.mediumCount,
         normal: selectedSummary.totalPanels - selectedSummary.criticalCount - selectedSummary.mediumCount,
-      }
-    : {
-        critical: critical.length,
-        medium: medium.length,
-        normal: plant.totalPanels - critical.length - medium.length,
       };
 
   const last = history[history.length - 1];
@@ -206,9 +209,9 @@ function Dashboard() {
   // Total findings across every severity — matches the count the anomalies
   // list and equipment-audit records already show, so a prospect never sees
   // two different "how many defects" numbers between screens.
-  const totalDefectCount = usesSummary
-    ? (selectedSummary.anomalyCount ?? selectedSummary.criticalCount + selectedSummary.mediumCount)
-    : anomalies.length;
+  const totalDefectCount = hasSurveyData
+    ? (isPrimaryPlant ? (selectedSummary.anomalyCount ?? anomalies.length) : anomalies.length)
+    : (selectedSummary.anomalyCount ?? selectedSummary.criticalCount + selectedSummary.mediumCount);
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">
@@ -481,7 +484,7 @@ function Dashboard() {
       )}
 
       {/* History chart — only for plants with inspection history data */}
-      {hasSurveyData && chartData.length > 0 && (
+      {isPrimaryPlant && chartData.length > 0 && (
         <section className="bg-card border border-border p-5">
           <h2 className="font-semibold text-foreground flex items-center gap-2 mb-4 text-sm">
             <TrendingUp size={16} className="text-ochre" /> Inspection History

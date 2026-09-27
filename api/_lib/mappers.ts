@@ -49,6 +49,14 @@ export function toAnomalyDTO(row: Record<string, unknown>): AnomalyDTO {
     moduleSerial:   row.module_serial != null ? String(row.module_serial) : undefined,
     dailyLossINR:   row.daily_loss_inr != null ? Number(row.daily_loss_inr) : undefined,
     dailyLossKWh:   row.daily_loss_kwh != null ? Number(row.daily_loss_kwh) : undefined,
+    // Survey fields (migration 007) — undefined for rows without them, or
+    // before the migration has been run.
+    block:          row.block       != null ? String(row.block)       : undefined,
+    smb:            row.smb         != null ? String(row.smb)         : undefined,
+    stringSide:     row.string_side != null ? String(row.string_side) : undefined,
+    module:         row.module      != null ? String(row.module)      : undefined,
+    defectCode:     row.defect_code != null ? String(row.defect_code) : undefined,
+    footprint:      Array.isArray(row.footprint) ? (row.footprint as [number, number][]) : undefined,
   };
 }
 

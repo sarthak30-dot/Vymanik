@@ -1,11 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Download, ArrowRight, Award, Loader2, FileSpreadsheet, ChevronDown, ChevronUp } from "lucide-react";
-import { inspectionHistory, plant, anomalies, severityCounts } from "@/lib/mock-data";
+import { inspectionHistory, plant, anomalies, severityCounts, type PlantSummary } from "@/lib/mock-data";
 import { toast } from "sonner";
 import { jsPDF } from "jspdf";
 import { SEVERITY } from "@/lib/severity-tokens";
 import { usePlantContext } from "@/lib/plant-context";
+import { useAnomalies, usePlantSurvey } from "@/lib/queries";
 import {
   defaultReportMetadata, generateThermographyPDF, generateThermographyCSV,
   type ReportMetadata,
@@ -271,24 +272,12 @@ function ReportsPage() {
   const resolved = Math.max(0, fromI.critical - toI.critical) + Math.max(0, fromI.medium - toI.medium);
   const newAnom = Math.max(0, toI.critical - fromI.critical) + Math.max(0, toI.medium - fromI.medium);
 
-  // Every report on this page is built from plant-001's survey (the mock
-  // inspection history and anomalies). For any other plant — e.g. one just
-  // added in Control Center — show nothing rather than another plant's
-  // inspections and downloadable reports under this plant's name.
+  // The history table, comparison and exec/tech/warranty PDFs below are built
+  // from plant-001's baked survey. Any other plant renders its own uploaded
+  // survey through UploadedPlantReports instead of that mock data.
   const { selectedPlant } = usePlantContext();
   if (selectedPlant.id !== "plant-001") {
-    return (
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">
-        <header>
-          <h1 className="text-2xl md:text-3xl font-bold">Inspection Reports — {selectedPlant.name}</h1>
-        </header>
-        <section className="bg-card border border-border p-8 text-center">
-          <p className="text-sm text-muted-foreground">
-            No inspection reports yet for <span className="font-semibold text-foreground">{selectedPlant.name}</span>. Reports will appear here once its first inspection is processed.
-          </p>
-        </section>
-      </div>
-    );
+    return <UploadedPlantReports plant={selectedPlant} />;
   }
 
   return (
@@ -532,6 +521,117 @@ function CompareCard({ color, label, value, sub }: { color: "critical" | "medium
       </p>
       <p className={`mono text-4xl font-bold ${textColor} mt-1`}>{value > 0 ? "+" : ""}{value}</p>
       <p className="text-xs text-muted-foreground mt-1">{sub}</p>
+    </div>
+  );
+}
+
+
+/**
+ * Reports for a plant whose survey was uploaded through Control Center (not
+ * the baked plant-001 mock): the full IEC thermography PDF/CSV, generated
+ * from that plant's own anomaly rows. The plant-001 page's history table,
+ * comparison and exec/tech/warranty PDFs don't apply here — those are mock.
+ */
+function UploadedPlantReports({ plant: summary }: { plant: PlantSummary }) {
+  const { data: rows = [], isLoading } = useAnomalies(summary.id);
+  const { data: survey } = usePlantSurvey(summary.id);
+  const [meta, setMeta] = useState<ReportMetadata>(() =>
+    defaultReportMetadata(
+      { name: summary.name, location: summary.location, capacityMW: summary.capacityMW, totalPanels: summary.totalPanels },
+      survey?.inspectionDate ?? "",
+    ),
+  );
+  const [showMetaForm, setShowMetaForm] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [csvBusy, setCsvBusy] = useState(false);
+
+  // Fill the inspection date in once the survey record loads.
+  useEffect(() => {
+    if (survey?.inspectionDate) {
+      setMeta((m) => (m.dateOfTestingFrom ? m : { ...m, dateOfTestingFrom: survey.inspectionDate, dateOfTestingTo: survey.inspectionDate, dateOfIssue: survey.inspectionDate }));
+    }
+  }, [survey?.inspectionDate]);
+
+  function patchMeta<K extends keyof ReportMetadata>(key: K, value: ReportMetadata[K]) {
+    setMeta((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function genPdf() {
+    setPdfBusy(true);
+    try {
+      generateThermographyPDF(meta, rows, { name: summary.name, location: summary.location, totalPanels: summary.totalPanels });
+      toast.success("PDF downloaded successfully", { description: "Check your Downloads folder." });
+    } catch (e) {
+      toast.error("PDF generation failed", { description: String(e) });
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+  function genCsv() {
+    setCsvBusy(true);
+    try {
+      generateThermographyCSV(meta, rows);
+      toast.success("CSV downloaded successfully", { description: "Check your Downloads folder." });
+    } catch (e) {
+      toast.error("CSV generation failed", { description: String(e) });
+    } finally {
+      setCsvBusy(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">
+      <header>
+        <h1 className="text-2xl md:text-3xl font-bold">Inspection Reports — {summary.name}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">IEC 62446-3 thermography report from this plant&apos;s uploaded survey.</p>
+      </header>
+
+      {isLoading ? (
+        <section className="bg-card border border-border p-8 text-center">
+          <Loader2 size={16} className="animate-spin inline" /> <span className="text-sm text-muted-foreground">Loading survey…</span>
+        </section>
+      ) : rows.length === 0 ? (
+        <section className="bg-card border border-border p-8 text-center">
+          <p className="text-sm text-muted-foreground">
+            No inspection reports yet for <span className="font-semibold text-foreground">{summary.name}</span>. Upload a survey from the Control Center, then its report will appear here.
+          </p>
+        </section>
+      ) : (
+        <section className="bg-card border border-border p-5 md:p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="font-semibold flex items-center gap-2 text-sm"><FileSpreadsheet size={15} className="text-ochre" /> Full Thermography Report (IEC 62446-3)</h2>
+              <p className="text-xs text-muted-foreground mt-1">{rows.length} defects{survey?.inspectionDate ? ` from the ${survey.inspectionDate} survey` : ""}.</p>
+            </div>
+            <button onClick={() => setShowMetaForm((v) => !v)} className="shrink-0 h-8 px-3 border border-border text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted">
+              {showMetaForm ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              {showMetaForm ? "Hide details" : "Edit details"}
+            </button>
+          </div>
+
+          {showMetaForm && (
+            <div className="mt-4 space-y-5">
+              <MetaGroup title="General">
+                <MetaField label="Report No" value={meta.reportNo} onChange={(v) => patchMeta("reportNo", v)} />
+                <MetaField label="Customer Name" value={meta.customerName} onChange={(v) => patchMeta("customerName", v)} />
+                <MetaField label="Address" value={meta.address} onChange={(v) => patchMeta("address", v)} />
+                <MetaField label="Testing Engineer" value={meta.testingEngineer} onChange={(v) => patchMeta("testingEngineer", v)} placeholder="e.g. Harsh Vardhan" />
+                <MetaField label="Report Reviewed By" value={meta.reportReviewedBy} onChange={(v) => patchMeta("reportReviewedBy", v)} />
+                <MetaField label="Report Approved By" value={meta.reportApprovedBy} onChange={(v) => patchMeta("reportApprovedBy", v)} />
+              </MetaGroup>
+            </div>
+          )}
+
+          <div className="mt-5 flex flex-col sm:flex-row gap-3">
+            <button onClick={genPdf} disabled={pdfBusy} className="h-10 px-5 bg-ochre hover:bg-ochre-light disabled:opacity-60 text-ochre-fg font-semibold text-sm inline-flex items-center gap-2">
+              {pdfBusy ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Download PDF
+            </button>
+            <button onClick={genCsv} disabled={csvBusy} className="h-10 px-5 border border-border bg-card hover:bg-muted disabled:opacity-60 font-semibold text-sm inline-flex items-center gap-2">
+              {csvBusy ? <Loader2 size={14} className="animate-spin" /> : <FileSpreadsheet size={14} />} Download CSV
+            </button>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

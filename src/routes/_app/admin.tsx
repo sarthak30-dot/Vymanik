@@ -4,7 +4,7 @@ import { getUser } from "@/lib/auth";
 import { requireOperatorRoute } from "@/lib/route-guards";
 import {
   Building2, Users, AlertTriangle, CheckCircle2, Clock, Plane,
-  ChevronRight, Wifi, WifiOff, Activity, Shield, UserPlus, PlusCircle, KeyRound, Grid3x3, Copy,
+  ChevronRight, Wifi, WifiOff, Activity, Shield, UserPlus, PlusCircle, KeyRound, Grid3x3, Copy, UploadCloud,
 } from "lucide-react";
 import {
   teamMembers as seedTeamMembers, reviewQueue,
@@ -17,6 +17,7 @@ import {
 import type { NewPlantLayoutInput, InviteClientResult } from "@/lib/api";
 import { toast } from "sonner";
 import { usePlantContext } from "@/lib/plant-context";
+import { UploadSurveyModal } from "@/components/UploadSurveyModal";
 
 interface ClientAccount {
   name: string;
@@ -557,7 +558,7 @@ function ControlCenter() {
 
   // Mock plants + every plant saved through Add Plant (useFleetPlants) —
   // was a local copy of the mock list, so added plants vanished on reload.
-  const { plants } = usePlantContext();
+  const { plants, selectedPlantId } = usePlantContext();
   const [members, setMembers] = useState<TeamMember[]>(seedTeamMembers);
   const [clients, setClients] = useState<ClientAccount[]>([]);
 
@@ -565,6 +566,7 @@ function ControlCenter() {
   const [showAddMember, setShowAddMember] = useState(false);
   const [showInviteClient, setShowInviteClient] = useState(false);
   const [showPlantLayout, setShowPlantLayout] = useState(false);
+  const [showUploadSurvey, setShowUploadSurvey] = useState(false);
   const [editMember, setEditMember] = useState<TeamMember | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteResult, setInviteResult] = useState<InviteClientResult | null>(null);
@@ -870,6 +872,13 @@ function ControlCenter() {
           </div>
           <div className="flex gap-2 shrink-0">
             <button
+              onClick={() => setShowUploadSurvey(true)}
+              className="h-8 px-3 border border-border bg-card text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted"
+              title="Upload a new inspection's defect KML and orthomosaic"
+            >
+              <UploadCloud size={13} /> Upload Survey
+            </button>
+            <button
               onClick={() => setShowPlantLayout(true)}
               className="h-8 px-3 border border-border bg-card text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted"
               title="Define the Block / Inverter / String hierarchy for a plant"
@@ -1106,6 +1115,15 @@ function ControlCenter() {
           onClose={() => setShowPlantLayout(false)}
           onSubmit={handlePlantLayout}
           isPending={generatePlantLayout.isPending}
+        />
+      )}
+
+      {showUploadSurvey && (
+        <UploadSurveyModal
+          plants={plants}
+          defaultPlantId={selectedPlantId}
+          onClose={() => setShowUploadSurvey(false)}
+          onUploaded={() => { /* survey queries invalidate in useUploadSurvey */ }}
         />
       )}
 

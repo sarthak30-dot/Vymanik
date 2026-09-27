@@ -136,8 +136,8 @@ function AnomalyDetail() {
   // thing on both surfaces. Computed from the route `id`, not the loaded
   // `anomaly`, so these hooks run before the loading/error early-returns below
   // and the hook order stays stable. Keys mirror the map: [ / ] and j / k.
-  const { data: allAnomalies = [] } = useAnomalies();
   const { selectedPlant } = usePlantContext();
+  const { data: allAnomalies = [] } = useAnomalies(selectedPlant.id);
   const ordered = useMemo(
     () => orderForStepping(
       allAnomalies.filter(a =>

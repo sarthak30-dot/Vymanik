@@ -89,4 +89,12 @@ export interface AnomalyDTO {
   moduleSerial?: string;
   dailyLossINR?: number;
   dailyLossKWh?: number;
+  /** Asset-register fields + surveyed outline from an uploaded survey KML
+   *  (migration 007). Absent for hand-entered / CSV rows. */
+  block?: string;
+  smb?: string;
+  stringSide?: string;
+  module?: string;
+  defectCode?: string;
+  footprint?: [number, number][];
 }

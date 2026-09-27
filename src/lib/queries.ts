@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { getToken } from "./auth";
-import type { AnomalyStatusPatch, PlantDTO, AnomalyDTO, PlantLayout, NewPlantLayoutInput, TeamMemberRole, EditTeamMemberInput } from "./api";
+import type { AnomalyStatusPatch, PlantDTO, AnomalyDTO, PlantLayout, NewPlantLayoutInput, TeamMemberRole, EditTeamMemberInput, PlantSurvey } from "./api";
 import { plant as mockPlant, anomalies as mockAnomalies, inspectionHistory as mockHistory, allPlants, type PlantSummary } from "./mock-data";
 
 const DEFAULT_PLANT_ID = "plant-001"; // matches allPlants[0].id in mock-data.ts
@@ -100,15 +100,21 @@ export function useFleetPlants(): PlantSummary[] {
 
 export function useAnomalies(
   plantId = DEFAULT_PLANT_ID,
-  inspectionId = DEFAULT_INSPECTION_ID,
+  inspectionId?: string,
 ) {
   return useQuery({
-    queryKey: ["anomalies", plantId, inspectionId],
+    queryKey: ["anomalies", plantId, inspectionId ?? "all"],
     queryFn: async () => {
+      // The demo plant's 1,249-defect survey is baked into the frontend and
+      // is not a set of rows in the DB, so it's the source of truth for
+      // plant-001 whether or not a backend is reachable. Any other plant's
+      // defects come from an uploaded survey via the API; an empty list there
+      // is a real answer (no survey yet), not a reason to show the demo data.
+      if (plantId === DEFAULT_PLANT_ID) return mockAnomalies as AnomalyDTO[];
       try {
         return await api.anomalies.list(plantId, inspectionId, getToken()!);
       } catch {
-        return mockAnomalies as AnomalyDTO[];
+        return [];
       }
     },
     enabled: !!getToken(),
@@ -142,7 +148,7 @@ export function usePatchAnomaly() {
       } catch {
         // API unavailable — apply change locally using cached data
         const cached = queryClient.getQueryData<AnomalyDTO[]>(
-          ["anomalies", DEFAULT_PLANT_ID, DEFAULT_INSPECTION_ID],
+          ["anomalies", DEFAULT_PLANT_ID, "all"],
         ) ?? (mockAnomalies as AnomalyDTO[]);
         const found = cached.find(a => a.id === id);
         if (!found) throw new Error("Anomaly not found");
@@ -153,7 +159,7 @@ export function usePatchAnomaly() {
       queryClient.setQueryData(["anomaly", updated.id], updated);
       // Update list cache in-place without refetch to preserve local changes
       queryClient.setQueryData<AnomalyDTO[]>(
-        ["anomalies", DEFAULT_PLANT_ID, DEFAULT_INSPECTION_ID],
+        ["anomalies", DEFAULT_PLANT_ID, "all"],
         (old = []) => old.map(a => a.id === updated.id ? updated : a),
       );
     },
@@ -451,5 +457,97 @@ export function useInspectionHistory() {
     enabled: !!getToken(),
     staleTime: 5 * 60 * 1000,
     retry: 1,
+  });
+}
+
+// ─── Survey upload (Control Center) ──────────────────────────────────────────
+
+/** The plant's current uploaded survey, or null (also null before migration
+ *  007, and whenever the API is unreachable — the app then falls back to its
+ *  built-in mock survey, so a missing row is not an error). */
+export function usePlantSurvey(plantId: string) {
+  return useQuery({
+    queryKey: ["survey", plantId],
+    queryFn: async (): Promise<PlantSurvey | null> => {
+      try {
+        return (await api.survey.get(plantId, getToken()!)).survey;
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!getToken() && !!plantId,
+    staleTime: 60 * 1000,
+    retry: 1,
+  });
+}
+
+/** Rows per request to POST /api/survey — well under Vercel's 4.5 MB body
+ *  limit even with per-defect footprint rings (~0.5 KB/row). */
+const SURVEY_UPLOAD_CHUNK = 300;
+
+export interface SurveyUploadInput {
+  plantId: string;
+  inspectionDate: string;
+  /** Parsed defect rows (src/lib/survey-import.ts parseDefectFile). */
+  rows: import("./api").SurveyDefectRow[];
+  /** Composited orthomosaic, if the admin included one. */
+  overlay?: { blob: Blob; bounds: { west: number; north: number; east: number; south: number } } | null;
+  onProgress?: (stage: string, done: number, total: number) => void;
+}
+
+/**
+ * Persists a parsed survey: defects in chunks (first chunk replaces the same
+ * inspection so a re-upload doesn't double up), then the orthomosaic straight
+ * to Supabase Storage via a signed URL, then the survey record. Ordering
+ * matters — the survey row is written last, so a survey only "exists" once its
+ * data is actually in place.
+ */
+export function useUploadSurvey() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: SurveyUploadInput): Promise<PlantSurvey> => {
+      const token = getToken()!;
+      const { plantId, inspectionDate, rows, overlay, onProgress } = input;
+      // Stable inspection id for this survey (date-derived, so re-uploading the
+      // same day's corrected file replaces it rather than stacking).
+      const inspectionId = `survey-${plantId}-${inspectionDate.replace(/\s+/g, "-").toLowerCase()}`;
+
+      for (let i = 0; i < rows.length; i += SURVEY_UPLOAD_CHUNK) {
+        const chunk = rows.slice(i, i + SURVEY_UPLOAD_CHUNK);
+        await api.survey.importDefects(
+          { plantId, inspectionId, inspectionDate, rows: chunk, replace: i === 0 },
+          token,
+        );
+        onProgress?.("defects", Math.min(i + chunk.length, rows.length), rows.length);
+      }
+      // A survey with no defect rows still clears the previous upload.
+      if (rows.length === 0) {
+        await api.survey.importDefects({ plantId, inspectionId, inspectionDate, rows: [], replace: true }, token);
+      }
+
+      let overlayRec: PlantSurvey["overlay"] = null;
+      if (overlay) {
+        onProgress?.("overlay", 0, 1);
+        const contentType = overlay.blob.type || "image/webp";
+        const { signedUrl, publicUrl } = await api.survey.signOverlay({ plantId, inspectionId, contentType }, token);
+        // Straight to Supabase Storage — the file never passes through the API
+        // function (Vercel caps request bodies at 4.5 MB; an ortho is bigger).
+        const put = await fetch(signedUrl, { method: "PUT", headers: { "Content-Type": contentType }, body: overlay.blob });
+        if (!put.ok) throw new Error(`Uploading the orthomosaic failed (${put.status}).`);
+        overlayRec = { url: publicUrl, ...overlay.bounds };
+        onProgress?.("overlay", 1, 1);
+      }
+
+      const { survey } = await api.survey.saveSurvey(
+        { plantId, inspectionId, inspectionDate, defectCount: rows.length, overlay: overlayRec },
+        token,
+      );
+      return survey;
+    },
+    onSuccess: (_survey, input) => {
+      queryClient.invalidateQueries({ queryKey: ["survey", input.plantId] });
+      queryClient.invalidateQueries({ queryKey: ["anomalies"] });
+      queryClient.invalidateQueries({ queryKey: ["plants"] });
+    },
   });
 }

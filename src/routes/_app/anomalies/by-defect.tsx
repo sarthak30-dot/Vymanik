@@ -115,8 +115,8 @@ function DefectTooltip({ active, payload }: { active?: boolean; payload?: { payl
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 function DefectwiseAnomaly() {
-  const { data: allAnomalies = [], isLoading } = useAnomalies();
   const { selectedPlant } = usePlantContext();
+  const { data: allAnomalies = [], isLoading } = useAnomalies(selectedPlant.id);
   const navigate = useNavigate();
 
   const anomalies = useMemo(

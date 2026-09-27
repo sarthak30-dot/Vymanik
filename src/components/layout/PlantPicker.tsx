@@ -76,7 +76,7 @@ function PlantThumb({ plant, px }: { plant: PlantSummary; px: number }) {
  *  derivation anomalies/by-block.tsx uses, so the chips shown here always
  *  match what that page actually has to drill into. */
 function useBlocksForPlant(plantId: string): { block: string; count: number }[] {
-  const { data: allAnomalies = [] } = useAnomalies();
+  const { data: allAnomalies = [] } = useAnomalies(plantId);
   const grouped = new Map<string, number>();
   for (const a of allAnomalies) {
     if (a.plantId !== plantId && !(!a.plantId && plantId === "plant-001")) continue;
