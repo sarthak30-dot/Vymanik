@@ -35,6 +35,7 @@ function summaryToDTO(p: typeof allPlants[0]): PlantDTO {
     feedInTariff: 4.5,
     lat: p.gps.lat,
     lng: p.gps.lng,
+    client: p.client,
   };
 }
 
@@ -106,16 +107,23 @@ function Dashboard() {
   const tour = useGuidedTour(DASHBOARD_TOUR, "urjascan.tour.dashboard.v1");
 
   // Plant selection from shared context (driven by header dropdown)
-  const { selectedPlantId, setSelectedPlantId, selectedPlant: selectedSummary } = usePlantContext();
+  const { selectedPlantId, setSelectedPlantId, selectedPlant: selectedSummary, plants } = usePlantContext();
 
   const { data: fetchedPlant, isLoading: plantLoading, isError: plantError } = usePlant();
-  const { data: anomalies = [], isLoading: anomaliesLoading, isError: anomaliesError } = useAnomalies();
+  const { data: anomalies = [], isLoading: anomaliesLoading, isError: anomaliesError } = useAnomalies(selectedSummary.id);
   const { data: history = [], isLoading: historyLoading } = useInspectionHistory();
 
-  // For admin: use allPlants data for the selected plant; anomalies/history remain Rajpur mock
-  const plant: PlantDTO | undefined = isAdmin ? summaryToDTO(selectedSummary) : fetchedPlant;
-  const isLoading = isAdmin ? false : (plantLoading || anomaliesLoading || historyLoading);
-  const isError = !isAdmin && (plantError || anomaliesError);
+  const isPrimaryPlant = selectedSummary.id === allPlants[0].id;
+  // "Has survey data" = there are defects to show for this plant: the baked
+  // mock for plant-001, or an uploaded survey (DB anomalies) for any other.
+  const hasSurveyData = anomalies.length > 0;
+  // Plant identity (name/capacity/health) comes from the fleet summary for the
+  // primary plant only when NOT admin — admin and every other plant read the
+  // summary. History is only meaningful for the primary plant's mock.
+  const usesSummary = isAdmin || !isPrimaryPlant;
+  const plant: PlantDTO | undefined = usesSummary ? summaryToDTO(selectedSummary) : fetchedPlant;
+  const isLoading = (usesSummary ? false : (plantLoading || historyLoading)) || (!isPrimaryPlant && anomaliesLoading);
+  const isError = (!usesSummary && plantError) || (!isPrimaryPlant && anomaliesError);
 
   // After 7 s of unresolved loading, show a retry prompt instead of infinite skeleton
   const [timedOut, setTimedOut] = useState(false);
@@ -170,17 +178,18 @@ function Dashboard() {
   const critical = anomalies.filter(a => a.severity === "critical");
   const medium = anomalies.filter(a => a.severity === "medium");
 
-  // For admin: use allPlants summary counts for selected plant; else use live anomaly counts
-  const severityCounts = isAdmin
+  // Live anomaly counts whenever this plant has a survey (mock for plant-001,
+  // uploaded rows for any other); otherwise the fleet summary's own counts.
+  const severityCounts = hasSurveyData
     ? {
+        critical: critical.length,
+        medium: medium.length,
+        normal: Math.max(0, plant.totalPanels - critical.length - medium.length),
+      }
+    : {
         critical: selectedSummary.criticalCount,
         medium: selectedSummary.mediumCount,
         normal: selectedSummary.totalPanels - selectedSummary.criticalCount - selectedSummary.mediumCount,
-      }
-    : {
-        critical: critical.length,
-        medium: medium.length,
-        normal: plant.totalPanels - critical.length - medium.length,
       };
 
   const last = history[history.length - 1];
@@ -200,9 +209,9 @@ function Dashboard() {
   // Total findings across every severity — matches the count the anomalies
   // list and equipment-audit records already show, so a prospect never sees
   // two different "how many defects" numbers between screens.
-  const totalDefectCount = isAdmin
-    ? (selectedSummary.anomalyCount ?? selectedSummary.criticalCount + selectedSummary.mediumCount)
-    : anomalies.length;
+  const totalDefectCount = hasSurveyData
+    ? (isPrimaryPlant ? (selectedSummary.anomalyCount ?? anomalies.length) : anomalies.length)
+    : (selectedSummary.anomalyCount ?? selectedSummary.criticalCount + selectedSummary.mediumCount);
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">
@@ -234,7 +243,7 @@ function Dashboard() {
                 onChange={e => setSelectedPlantId(e.target.value)}
                 className="appearance-none h-9 pl-3 pr-8 border border-border bg-card text-foreground text-sm font-semibold focus:outline-none focus:ring-1 focus:ring-ochre cursor-pointer"
               >
-                {allPlants.map(p => (
+                {plants.map(p => (
                   <option key={p.id} value={p.id}>
                     {p.name} — {p.client}
                   </option>
@@ -280,7 +289,7 @@ function Dashboard() {
       </section>
 
       {/* ── Quick Anomaly Overview charts ── */}
-      {anomalies.length > 0 && (() => {
+      {hasSurveyData && anomalies.length > 0 && (() => {
         const critCount = anomalies.filter(a => a.severity === "critical").length;
         const medCount  = anomalies.filter(a => a.severity === "medium").length;
         const normCount = anomalies.filter(a => a.severity === "normal").length;
@@ -434,7 +443,7 @@ function Dashboard() {
       </section>
 
       {/* Critical anomalies — only shown when anomaly detail data is available */}
-      {isAdmin && selectedSummary.id !== allPlants[0].id ? (
+      {!hasSurveyData ? (
         <section className="bg-card border border-border p-5 text-center">
           <p className="text-sm text-muted-foreground">
             Detailed panel-level anomaly data for <span className="font-semibold text-foreground">{selectedSummary.name}</span> will appear here after the first inspection is processed.
@@ -475,7 +484,7 @@ function Dashboard() {
       )}
 
       {/* History chart — only for plants with inspection history data */}
-      {(!isAdmin || selectedSummary.id === allPlants[0].id) && chartData.length > 0 && (
+      {isPrimaryPlant && chartData.length > 0 && (
         <section className="bg-card border border-border p-5">
           <h2 className="font-semibold text-foreground flex items-center gap-2 mb-4 text-sm">
             <TrendingUp size={16} className="text-ochre" /> Inspection History

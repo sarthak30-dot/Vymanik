@@ -4,18 +4,20 @@ import { getUser } from "@/lib/auth";
 import { requireOperatorRoute } from "@/lib/route-guards";
 import {
   Building2, Users, AlertTriangle, CheckCircle2, Clock, Plane,
-  ChevronRight, Wifi, WifiOff, Activity, Shield, UserPlus, PlusCircle, KeyRound, Grid3x3,
+  ChevronRight, Wifi, WifiOff, Activity, Shield, UserPlus, PlusCircle, KeyRound, Grid3x3, Copy, UploadCloud,
 } from "lucide-react";
 import {
-  allPlants as seedPlants, teamMembers as seedTeamMembers, reviewQueue,
-  type TeamMember, type PlantSummary,
+  teamMembers as seedTeamMembers, reviewQueue,
+  type TeamMember, type PlantSummary, type TeamMemberRole,
 } from "@/lib/mock-data";
 import {
-  useCreatePlant, useCreateTeamMember, useInviteClient, useGeneratePlantLayout,
+  useCreatePlant, useCreateTeamMember, useInviteClient, useGeneratePlantLayout, useEditTeamMember,
   type NewPlantFormInput, type NewTeamMemberFormInput,
 } from "@/lib/queries";
-import type { NewPlantLayoutInput } from "@/lib/api";
+import type { NewPlantLayoutInput, InviteClientResult } from "@/lib/api";
 import { toast } from "sonner";
+import { usePlantContext } from "@/lib/plant-context";
+import { UploadSurveyModal } from "@/components/UploadSurveyModal";
 
 interface ClientAccount {
   name: string;
@@ -132,6 +134,52 @@ function AssignModal({
   );
 }
 
+// ─── Edit team member role/task modal ───────────────────────────────────────
+
+function EditMemberModal({
+  member,
+  onClose,
+  onSubmit,
+  isPending,
+}: {
+  member: TeamMember;
+  onClose: () => void;
+  onSubmit: (input: { role: TeamMemberRole; currentTask: string }) => void;
+  isPending: boolean;
+}) {
+  const [role, setRole] = useState<TeamMemberRole>(member.role);
+  const [currentTask, setCurrentTask] = useState(member.currentTask ?? "");
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    onSubmit({ role, currentTask });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-card border border-border w-full max-w-sm">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-grey-200">
+          <p className="font-semibold text-sm">Edit Role — {member.name}</p>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none">×</button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-5 space-y-3">
+          <Field label="Role">
+            <select value={role} onChange={e => setRole(e.target.value as TeamMemberRole)} className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre">
+              {TEAM_MEMBER_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </Field>
+          <Field label="Current Task">
+            <input value={currentTask} onChange={e => setCurrentTask(e.target.value)} placeholder="e.g. Block 24 anomaly review" className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre" />
+          </Field>
+          <button type="submit" disabled={isPending} className="w-full h-9 bg-ochre hover:bg-ochre-light text-ochre-fg font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+            {isPending ? "Saving…" : "Save"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ─── Form field wrapper (shared by the Add/Invite modals) ──────────────────
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -231,11 +279,13 @@ function AddTeamMemberModal({
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [droneModel, setDroneModel] = useState("");
+  const [role, setRole] = useState<TeamMemberRole>("Drone Pilot");
+  const [currentTask, setCurrentTask] = useState("");
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name || !email) return;
-    onSubmit({ name, email, phone, droneModel });
+    onSubmit({ name, email, phone, droneModel, role, currentTask });
   }
 
   return (
@@ -258,6 +308,14 @@ function AddTeamMemberModal({
           <Field label="Drone Model">
             <input value={droneModel} onChange={e => setDroneModel(e.target.value)} placeholder="e.g. DJI Matrice 30T" className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre" />
           </Field>
+          <Field label="Role">
+            <select value={role} onChange={e => setRole(e.target.value as TeamMemberRole)} className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre">
+              {TEAM_MEMBER_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </Field>
+          <Field label="Current Task (optional)">
+            <input value={currentTask} onChange={e => setCurrentTask(e.target.value)} placeholder="e.g. Blocks 06-122 thermal survey" className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre" />
+          </Field>
           <button type="submit" disabled={isPending} className="w-full h-9 bg-ochre hover:bg-ochre-light text-ochre-fg font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed">
             {isPending ? "Adding…" : "Add Team Member"}
           </button>
@@ -267,18 +325,62 @@ function AddTeamMemberModal({
   );
 }
 
+const TEAM_MEMBER_ROLES: TeamMemberRole[] = ["Drone Pilot", "Data Processor", "Pilot & Processor", "Supervisor"];
+
+function RoleBadge({ role }: { role: TeamMemberRole }) {
+  return (
+    <span className="inline-flex items-center text-[11px] font-semibold border border-grey-200 bg-grey-100 text-muted-foreground px-2 py-0.5">
+      {role}
+    </span>
+  );
+}
+
 // ─── Invite client modal ─────────────────────────────────────────────────────
+
+function CopyField({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard API unavailable (e.g. insecure context) — the value is still
+      // visible on screen to copy by hand.
+    }
+  }
+  return (
+    <div>
+      <label className="text-[11px] font-semibold uppercase tracking-widest text-grey-400">{label}</label>
+      <div className="mt-1.5 flex items-stretch gap-2">
+        <div className="flex-1 h-9 px-3 border border-border bg-muted flex items-center text-sm mono truncate">{value}</div>
+        <button
+          type="button"
+          onClick={copy}
+          title={`Copy ${label.toLowerCase()}`}
+          className="h-9 w-9 shrink-0 border border-border hover:bg-muted flex items-center justify-center"
+        >
+          {copied ? <CheckCircle2 size={14} className="text-normal" /> : <Copy size={14} />}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function InviteClientModal({
   plants,
   onClose,
   onSubmit,
   isPending,
+  error,
+  result,
 }: {
   plants: PlantSummary[];
   onClose: () => void;
   onSubmit: (input: { name: string; email: string; plantIds: string[] }) => void;
   isPending: boolean;
+  error: string | null;
+  result: InviteClientResult | null;
 }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -294,6 +396,32 @@ function InviteClientModal({
     onSubmit({ name, email, plantIds: selectedPlantIds });
   }
 
+  // Success state: keep the one-time password on screen (with copy buttons)
+  // instead of only in a toast that disappears — there's no email delivery
+  // configured, so this is the admin's only chance to grab it.
+  if (result) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="bg-card border border-border w-full max-w-md">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-grey-200">
+            <p className="font-semibold text-sm flex items-center gap-2"><CheckCircle2 size={15} className="text-normal" /> Login Created</p>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none">×</button>
+          </div>
+          <div className="p-5 space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Share these with the client directly — there's no email delivery configured yet, so this is shown only once. They should change the password after first login.
+            </p>
+            <CopyField label="Email" value={result.email} />
+            <CopyField label="Temporary Password" value={result.tempPassword} />
+            <button onClick={onClose} className="w-full h-9 bg-ochre hover:bg-ochre-light text-ochre-fg font-semibold text-sm">
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="bg-card border border-border w-full max-w-md">
@@ -302,6 +430,12 @@ function InviteClientModal({
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none">×</button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-3">
+          {error && (
+            <div className="flex items-start gap-2 border border-critical/30 bg-critical/10 text-critical px-3 py-2 text-xs">
+              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
           <Field label="Client Contact Name">
             <input required value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Rohit Mehta" className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre" />
           </Field>
@@ -323,6 +457,9 @@ function InviteClientModal({
                 </label>
               ))}
             </div>
+            {selectedPlantIds.length === 0 && (
+              <p className="mt-1.5 text-[11px] text-muted-foreground">Select at least one plant — the button stays disabled until you do.</p>
+            )}
           </div>
           <button
             type="submit"
@@ -419,7 +556,9 @@ function ControlCenter() {
   const user = getUser();
   const [assignPlant, setAssignPlant] = useState<PlantSummary | null>(null);
 
-  const [plants, setPlants] = useState<PlantSummary[]>(seedPlants);
+  // Mock plants + every plant saved through Add Plant (useFleetPlants) —
+  // was a local copy of the mock list, so added plants vanished on reload.
+  const { plants, selectedPlantId } = usePlantContext();
   const [members, setMembers] = useState<TeamMember[]>(seedTeamMembers);
   const [clients, setClients] = useState<ClientAccount[]>([]);
 
@@ -427,16 +566,22 @@ function ControlCenter() {
   const [showAddMember, setShowAddMember] = useState(false);
   const [showInviteClient, setShowInviteClient] = useState(false);
   const [showPlantLayout, setShowPlantLayout] = useState(false);
+  const [showUploadSurvey, setShowUploadSurvey] = useState(false);
+  const [editMember, setEditMember] = useState<TeamMember | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteResult, setInviteResult] = useState<InviteClientResult | null>(null);
 
   const createPlant = useCreatePlant();
   const createTeamMember = useCreateTeamMember();
+  const editTeamMember = useEditTeamMember();
   const inviteClient = useInviteClient();
   const generatePlantLayout = useGeneratePlantLayout();
 
   function handleAddPlant(input: NewPlantFormInput) {
     createPlant.mutate(input, {
       onSuccess: (plant) => {
-        setPlants(prev => [plant, ...prev]);
+        // useCreatePlant refreshes the fleet query; the new plant arrives
+        // through usePlantContext() with no local list to update here.
         setShowAddPlant(false);
         toast.success(`${plant.name} added to fleet`, {
           description: "Now visible across the Control Center and client portal.",
@@ -459,6 +604,25 @@ function ControlCenter() {
     });
   }
 
+  function handleEditMember(input: { role: TeamMemberRole; currentTask: string }) {
+    if (!editMember) return;
+    editTeamMember.mutate(
+      { id: editMember.id, role: input.role, currentTask: input.currentTask || null },
+      {
+        onSuccess: (updated) => {
+          setMembers(prev => prev.map(m => m.id === editMember.id
+            ? { ...m, role: updated.role, currentTask: updated.currentTask }
+            : m));
+          setEditMember(null);
+          toast.success(`${editMember.name}'s role updated`, {
+            description: `${input.role}${input.currentTask ? ` · ${input.currentTask}` : ""}`,
+          });
+        },
+        onError: (err: Error) => toast.error(err.message || "Failed to update team member"),
+      },
+    );
+  }
+
   function handlePlantLayout(input: NewPlantLayoutInput) {
     generatePlantLayout.mutate(input, {
       onSuccess: (result) => {
@@ -472,19 +636,20 @@ function ControlCenter() {
   }
 
   function handleInviteClient(input: { name: string; email: string; plantIds: string[] }) {
+    setInviteError(null);
     inviteClient.mutate(input, {
       onSuccess: (result) => {
         setClients(prev => [
           { name: input.name, email: result.email, plantIds: input.plantIds, invitedAt: "Just now" },
           ...prev,
         ]);
-        setShowInviteClient(false);
-        toast.success(`Login created for ${input.name}`, {
-          description: `${result.email} · Temporary password: ${result.tempPassword} — share this securely; they should change it after first login.`,
-          duration: 20000,
-        });
+        // Modal switches to its success view (see InviteClientModal) and stays
+        // open so the one-time password is visible until the admin copies it —
+        // there's no email delivery configured, so a toast that auto-dismisses
+        // isn't enough here.
+        setInviteResult(result);
       },
-      onError: (err: Error) => toast.error(err.message || "Failed to invite client"),
+      onError: (err: Error) => setInviteError(err.message || "Failed to invite client. Please try again."),
     });
   }
 
@@ -583,6 +748,7 @@ function ControlCenter() {
               <tr>
                 <th className="text-left px-5 py-3 font-semibold">Inspector</th>
                 <th className="text-left px-4 py-3 font-semibold">Status</th>
+                <th className="text-left px-4 py-3 font-semibold">Role / Task</th>
                 <th className="text-left px-4 py-3 font-semibold">Assigned Plant</th>
                 <th className="text-left px-4 py-3 font-semibold">Drone</th>
                 <th className="text-left px-4 py-3 font-semibold">Inspections</th>
@@ -608,6 +774,10 @@ function ControlCenter() {
                     </td>
                     <td className="px-4 py-4"><MemberStatusBadge status={m.status} /></td>
                     <td className="px-4 py-4">
+                      <RoleBadge role={m.role} />
+                      {m.currentTask && <p className="text-xs text-muted-foreground mt-1 max-w-[180px] truncate">{m.currentTask}</p>}
+                    </td>
+                    <td className="px-4 py-4">
                       {plant ? (
                         <div>
                           <p className="font-medium text-sm">{plant.name}</p>
@@ -626,15 +796,23 @@ function ControlCenter() {
                     </td>
                     <td className="px-4 py-4 text-xs text-muted-foreground mono">{m.lastActive}</td>
                     <td className="px-4 py-4 text-right">
-                      <button
-                        onClick={() => {
-                          const plant = plants.find(p => p.assignedInspectorId === m.id) ?? plants[0];
-                          setAssignPlant(plant);
-                        }}
-                        className="h-7 px-3 border border-grey-200 text-xs font-medium hover:bg-muted"
-                      >
-                        Reassign
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setEditMember(m)}
+                          className="h-7 px-3 border border-grey-200 text-xs font-medium hover:bg-muted"
+                        >
+                          Edit Role
+                        </button>
+                        <button
+                          onClick={() => {
+                            const plant = plants.find(p => p.assignedInspectorId === m.id) ?? plants[0];
+                            setAssignPlant(plant);
+                          }}
+                          className="h-7 px-3 border border-grey-200 text-xs font-medium hover:bg-muted"
+                        >
+                          Reassign
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -658,6 +836,8 @@ function ControlCenter() {
                     <MemberStatusBadge status={m.status} />
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">{m.email}</p>
+                  <div className="mt-1.5"><RoleBadge role={m.role} /></div>
+                  {m.currentTask && <p className="text-xs text-muted-foreground mt-1">{m.currentTask}</p>}
                   {plant ? (
                     <p className="text-xs mt-1">→ <span className="font-medium">{plant.name}</span></p>
                   ) : (
@@ -666,6 +846,12 @@ function ControlCenter() {
                   <p className="text-[10px] text-muted-foreground mono mt-1">
                     {m.inspectionsCompleted} inspections · {m.anomaliesFound} anomalies
                   </p>
+                  <button
+                    onClick={() => setEditMember(m)}
+                    className="mt-2 h-7 px-3 border border-grey-200 text-xs font-medium hover:bg-muted"
+                  >
+                    Edit Role
+                  </button>
                 </div>
               </div>
             );
@@ -685,6 +871,13 @@ function ControlCenter() {
             </p>
           </div>
           <div className="flex gap-2 shrink-0">
+            <button
+              onClick={() => setShowUploadSurvey(true)}
+              className="h-8 px-3 border border-border bg-card text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted"
+              title="Upload a new inspection's defect KML and orthomosaic"
+            >
+              <UploadCloud size={13} /> Upload Survey
+            </button>
             <button
               onClick={() => setShowPlantLayout(true)}
               className="h-8 px-3 border border-border bg-card text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted"
@@ -887,6 +1080,16 @@ function ControlCenter() {
         <AssignModal plant={assignPlant} members={members} onClose={() => setAssignPlant(null)} />
       )}
 
+      {/* Edit member role/task modal */}
+      {editMember && (
+        <EditMemberModal
+          member={editMember}
+          onClose={() => setEditMember(null)}
+          onSubmit={handleEditMember}
+          isPending={editTeamMember.isPending}
+        />
+      )}
+
       {/* Add plant modal */}
       {showAddPlant && (
         <AddPlantModal
@@ -915,13 +1118,28 @@ function ControlCenter() {
         />
       )}
 
+      {showUploadSurvey && (
+        <UploadSurveyModal
+          plants={plants}
+          defaultPlantId={selectedPlantId}
+          onClose={() => setShowUploadSurvey(false)}
+          onUploaded={() => { /* survey queries invalidate in useUploadSurvey */ }}
+        />
+      )}
+
       {/* Invite client modal */}
       {showInviteClient && (
         <InviteClientModal
           plants={plants}
-          onClose={() => setShowInviteClient(false)}
+          onClose={() => {
+            setShowInviteClient(false);
+            setInviteError(null);
+            setInviteResult(null);
+          }}
           onSubmit={handleInviteClient}
           isPending={inviteClient.isPending}
+          error={inviteError}
+          result={inviteResult}
         />
       )}
     </div>

@@ -34,9 +34,18 @@ export interface PlantDTO {
   feedInTariff: number;
   lat: number;
   lng: number;
+  /** Client / plant owner name (migration 006) — null for rows saved before it. */
+  client: string | null;
 }
 
 export type TeamMemberStatus = "On Mission" | "Active" | "Off Duty";
+
+/**
+ * What this person actually does — added in migration 005 so the Control
+ * Center can record who flies vs. who processes the captured data, instead
+ * of everyone added showing up as an undifferentiated "team member".
+ */
+export type TeamMemberRole = "Drone Pilot" | "Data Processor" | "Pilot & Processor" | "Supervisor";
 
 export interface TeamMemberDTO {
   id: string;
@@ -48,6 +57,8 @@ export interface TeamMemberDTO {
   certifications: string[];
   assignedPlantId: string | null;
   status: TeamMemberStatus;
+  role: TeamMemberRole;
+  currentTask: string | null;
   inspectionsCompleted: number;
   anomaliesFound: number;
   lastActive: string;
@@ -78,4 +89,12 @@ export interface AnomalyDTO {
   moduleSerial?: string;
   dailyLossINR?: number;
   dailyLossKWh?: number;
+  /** Asset-register fields + surveyed outline from an uploaded survey KML
+   *  (migration 007). Absent for hand-entered / CSV rows. */
+  block?: string;
+  smb?: string;
+  stringSide?: string;
+  module?: string;
+  defectCode?: string;
+  footprint?: [number, number][];
 }

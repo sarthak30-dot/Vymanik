@@ -1,10 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
-import { Download, ArrowRight, Award, Loader2 } from "lucide-react";
-import { inspectionHistory, plant, anomalies, severityCounts } from "@/lib/mock-data";
+import { useEffect, useState } from "react";
+import { Download, ArrowRight, Award, Loader2, FileSpreadsheet, ChevronDown, ChevronUp } from "lucide-react";
+import { inspectionHistory, plant, anomalies, severityCounts, type PlantSummary } from "@/lib/mock-data";
 import { toast } from "sonner";
 import { jsPDF } from "jspdf";
 import { SEVERITY } from "@/lib/severity-tokens";
+import { usePlantContext } from "@/lib/plant-context";
+import { useAnomalies, usePlantSurvey } from "@/lib/queries";
+import {
+  defaultReportMetadata, generateThermographyPDF, generateThermographyCSV,
+  type ReportMetadata,
+} from "@/lib/thermography-report";
 
 // ─── IEC 62446-3 PDF Generator ───────────────────────────────────────────────
 // Generates a fully branded, IEC-compliant inspection report client-side.
@@ -215,6 +221,16 @@ function ReportsPage() {
   const [reportType, setReportType] = useState<"exec" | "tech" | "warranty">("exec");
   const [generating, setGenerating] = useState(false);
 
+  // ── Full IEC thermography report (matches the client's reference PDF) ──
+  const [meta, setMeta] = useState<ReportMetadata>(() => defaultReportMetadata(plant, inspectionHistory[0].date));
+  const [showMetaForm, setShowMetaForm] = useState(true);
+  const [generatingThermoPDF, setGeneratingThermoPDF] = useState(false);
+  const [generatingThermoCSV, setGeneratingThermoCSV] = useState(false);
+
+  function patchMeta<K extends keyof ReportMetadata>(key: K, value: ReportMetadata[K]) {
+    setMeta(prev => ({ ...prev, [key]: value }));
+  }
+
   async function handleGenerate() {
     setGenerating(true);
     try {
@@ -227,10 +243,42 @@ function ReportsPage() {
     }
   }
 
+  function handleGenerateThermoPDF() {
+    setGeneratingThermoPDF(true);
+    try {
+      generateThermographyPDF(meta, anomalies, plant);
+      toast.success("PDF downloaded successfully", { description: "Check your Downloads folder." });
+    } catch (e) {
+      toast.error("PDF generation failed", { description: String(e) });
+    } finally {
+      setGeneratingThermoPDF(false);
+    }
+  }
+
+  function handleGenerateThermoCSV() {
+    setGeneratingThermoCSV(true);
+    try {
+      generateThermographyCSV(meta, anomalies);
+      toast.success("CSV downloaded successfully", { description: "Check your Downloads folder." });
+    } catch (e) {
+      toast.error("CSV generation failed", { description: String(e) });
+    } finally {
+      setGeneratingThermoCSV(false);
+    }
+  }
+
   const fromI = inspectionHistory.find(i => i.date === from)!;
   const toI = inspectionHistory.find(i => i.date === to)!;
   const resolved = Math.max(0, fromI.critical - toI.critical) + Math.max(0, fromI.medium - toI.medium);
   const newAnom = Math.max(0, toI.critical - fromI.critical) + Math.max(0, toI.medium - fromI.medium);
+
+  // The history table, comparison and exec/tech/warranty PDFs below are built
+  // from plant-001's baked survey. Any other plant renders its own uploaded
+  // survey through UploadedPlantReports instead of that mock data.
+  const { selectedPlant } = usePlantContext();
+  if (selectedPlant.id !== "plant-001") {
+    return <UploadedPlantReports plant={selectedPlant} />;
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">
@@ -348,6 +396,108 @@ function ReportsPage() {
           {generating ? "Generating PDF…" : `Download ${reportType === "exec" ? "Executive Summary" : reportType === "tech" ? "Technical Report" : "Warranty Package"}`}
         </button>
       </section>
+
+      {/* Full IEC thermography report — matches the client's reference PDF format:
+          cover page, IEC defect-category tables, computed charts, the full
+          faulty-module register (every row), recommendations and conclusion. */}
+      <section className="bg-card border border-border p-5 md:p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="font-semibold flex items-center gap-2 text-sm"><FileSpreadsheet size={15} className="text-ochre" /> Full Thermography Report (IEC 62446-3)</h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              The complete PV module thermography report — general plant details, equipment &amp; flight summary, defect-category tables, charts, the full faulty-module register, recommendations and conclusion.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowMetaForm(v => !v)}
+            className="shrink-0 h-8 px-3 border border-border text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted"
+          >
+            {showMetaForm ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            {showMetaForm ? "Hide details" : "Edit details"}
+          </button>
+        </div>
+
+        {showMetaForm && (
+          <div className="mt-4 space-y-5">
+            <MetaGroup title="General">
+              <MetaField label="Report No" value={meta.reportNo} onChange={v => patchMeta("reportNo", v)} />
+              <MetaField label="Customer Name" value={meta.customerName} onChange={v => patchMeta("customerName", v)} />
+              <MetaField label="Address" value={meta.address} onChange={v => patchMeta("address", v)} />
+              <MetaField label="Test Location" value={meta.testLocation} onChange={v => patchMeta("testLocation", v)} />
+              <MetaField label="AC Capacity" value={meta.acCapacity} onChange={v => patchMeta("acCapacity", v)} />
+              <MetaField label="Sample Under Test" value={meta.sampleUnderTest} onChange={v => patchMeta("sampleUnderTest", v)} />
+              <MetaField label="Type/Make/Rating" value={meta.typeMakeRating} onChange={v => patchMeta("typeMakeRating", v)} />
+              <MetaField label="No. of Modules in Series" value={meta.modulesConnectedInSeries} onChange={v => patchMeta("modulesConnectedInSeries", v)} />
+              <MetaField label="Plant COD" value={meta.plantCOD} onChange={v => patchMeta("plantCOD", v)} />
+              <MetaField label="Sample on Received" value={meta.sampleOnReceived} onChange={v => patchMeta("sampleOnReceived", v)} />
+              <MetaField label="Testing Agency" value={meta.testingAgency} onChange={v => patchMeta("testingAgency", v)} />
+              <MetaField label="Testing Agency Address" value={meta.testingAgencyAddress} onChange={v => patchMeta("testingAgencyAddress", v)} />
+            </MetaGroup>
+
+            <MetaGroup title="Flight &amp; Equipment">
+              <MetaField label="Date of Testing — From" value={meta.dateOfTestingFrom} onChange={v => patchMeta("dateOfTestingFrom", v)} />
+              <MetaField label="Date of Testing — To" value={meta.dateOfTestingTo} onChange={v => patchMeta("dateOfTestingTo", v)} />
+              <MetaField label="Date of Issue" value={meta.dateOfIssue} onChange={v => patchMeta("dateOfIssue", v)} />
+              <MetaField label="Data Acquisition Time" value={meta.dataAcquisitionTime} onChange={v => patchMeta("dataAcquisitionTime", v)} />
+              <MetaField label="Wind Speed" value={meta.windSpeed} onChange={v => patchMeta("windSpeed", v)} />
+              <MetaField label="Flight Altitude" value={meta.flightAltitude} onChange={v => patchMeta("flightAltitude", v)} />
+              <MetaField label="Payload Angle of Inclination" value={meta.payloadAngle} onChange={v => patchMeta("payloadAngle", v)} />
+              <MetaField label="Image Resolution" value={meta.imageResolution} onChange={v => patchMeta("imageResolution", v)} />
+              <MetaField label="Drone Details" value={meta.droneDetails} onChange={v => patchMeta("droneDetails", v)} />
+              <MetaField label="Controller Used" value={meta.controllerUsed} onChange={v => patchMeta("controllerUsed", v)} />
+            </MetaGroup>
+
+            <MetaGroup title="Sign-off">
+              <MetaField label="Testing Engineer" value={meta.testingEngineer} onChange={v => patchMeta("testingEngineer", v)} placeholder="e.g. Harsh Vardhan" />
+              <MetaField label="Report Reviewed By" value={meta.reportReviewedBy} onChange={v => patchMeta("reportReviewedBy", v)} placeholder="e.g. Sushil Pandey" />
+              <MetaField label="Report Approved By" value={meta.reportApprovedBy} onChange={v => patchMeta("reportApprovedBy", v)} placeholder="e.g. Akhand Pratap Singh" />
+              <MetaField label="Remark" value={meta.remark} onChange={v => patchMeta("remark", v)} />
+            </MetaGroup>
+          </div>
+        )}
+
+        <div className="mt-5 flex flex-col sm:flex-row gap-3">
+          <button
+            onClick={handleGenerateThermoPDF}
+            disabled={generatingThermoPDF}
+            className="h-10 px-5 bg-ochre hover:bg-ochre-light disabled:opacity-60 disabled:cursor-not-allowed text-ochre-fg font-semibold text-sm inline-flex items-center gap-2"
+          >
+            {generatingThermoPDF ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            {generatingThermoPDF ? "Generating PDF…" : "Download PDF"}
+          </button>
+          <button
+            onClick={handleGenerateThermoCSV}
+            disabled={generatingThermoCSV}
+            className="h-10 px-5 border border-border bg-card hover:bg-muted disabled:opacity-60 disabled:cursor-not-allowed font-semibold text-sm inline-flex items-center gap-2"
+          >
+            {generatingThermoCSV ? <Loader2 size={14} className="animate-spin" /> : <FileSpreadsheet size={14} />}
+            {generatingThermoCSV ? "Generating CSV…" : "Download CSV"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function MetaGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <h3 className="text-[11px] font-semibold uppercase tracking-widest text-grey-400 mb-2">{title}</h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{children}</div>
+    </div>
+  );
+}
+
+function MetaField({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <div>
+      <label className="text-[11px] text-grey-400">{label}</label>
+      <input
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="mt-1 w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+      />
     </div>
   );
 }
@@ -371,6 +521,117 @@ function CompareCard({ color, label, value, sub }: { color: "critical" | "medium
       </p>
       <p className={`mono text-4xl font-bold ${textColor} mt-1`}>{value > 0 ? "+" : ""}{value}</p>
       <p className="text-xs text-muted-foreground mt-1">{sub}</p>
+    </div>
+  );
+}
+
+
+/**
+ * Reports for a plant whose survey was uploaded through Control Center (not
+ * the baked plant-001 mock): the full IEC thermography PDF/CSV, generated
+ * from that plant's own anomaly rows. The plant-001 page's history table,
+ * comparison and exec/tech/warranty PDFs don't apply here — those are mock.
+ */
+function UploadedPlantReports({ plant: summary }: { plant: PlantSummary }) {
+  const { data: rows = [], isLoading } = useAnomalies(summary.id);
+  const { data: survey } = usePlantSurvey(summary.id);
+  const [meta, setMeta] = useState<ReportMetadata>(() =>
+    defaultReportMetadata(
+      { name: summary.name, location: summary.location, capacityMW: summary.capacityMW, totalPanels: summary.totalPanels },
+      survey?.inspectionDate ?? "",
+    ),
+  );
+  const [showMetaForm, setShowMetaForm] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [csvBusy, setCsvBusy] = useState(false);
+
+  // Fill the inspection date in once the survey record loads.
+  useEffect(() => {
+    if (survey?.inspectionDate) {
+      setMeta((m) => (m.dateOfTestingFrom ? m : { ...m, dateOfTestingFrom: survey.inspectionDate, dateOfTestingTo: survey.inspectionDate, dateOfIssue: survey.inspectionDate }));
+    }
+  }, [survey?.inspectionDate]);
+
+  function patchMeta<K extends keyof ReportMetadata>(key: K, value: ReportMetadata[K]) {
+    setMeta((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function genPdf() {
+    setPdfBusy(true);
+    try {
+      generateThermographyPDF(meta, rows, { name: summary.name, location: summary.location, totalPanels: summary.totalPanels });
+      toast.success("PDF downloaded successfully", { description: "Check your Downloads folder." });
+    } catch (e) {
+      toast.error("PDF generation failed", { description: String(e) });
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+  function genCsv() {
+    setCsvBusy(true);
+    try {
+      generateThermographyCSV(meta, rows);
+      toast.success("CSV downloaded successfully", { description: "Check your Downloads folder." });
+    } catch (e) {
+      toast.error("CSV generation failed", { description: String(e) });
+    } finally {
+      setCsvBusy(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">
+      <header>
+        <h1 className="text-2xl md:text-3xl font-bold">Inspection Reports — {summary.name}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">IEC 62446-3 thermography report from this plant&apos;s uploaded survey.</p>
+      </header>
+
+      {isLoading ? (
+        <section className="bg-card border border-border p-8 text-center">
+          <Loader2 size={16} className="animate-spin inline" /> <span className="text-sm text-muted-foreground">Loading survey…</span>
+        </section>
+      ) : rows.length === 0 ? (
+        <section className="bg-card border border-border p-8 text-center">
+          <p className="text-sm text-muted-foreground">
+            No inspection reports yet for <span className="font-semibold text-foreground">{summary.name}</span>. Upload a survey from the Control Center, then its report will appear here.
+          </p>
+        </section>
+      ) : (
+        <section className="bg-card border border-border p-5 md:p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="font-semibold flex items-center gap-2 text-sm"><FileSpreadsheet size={15} className="text-ochre" /> Full Thermography Report (IEC 62446-3)</h2>
+              <p className="text-xs text-muted-foreground mt-1">{rows.length} defects{survey?.inspectionDate ? ` from the ${survey.inspectionDate} survey` : ""}.</p>
+            </div>
+            <button onClick={() => setShowMetaForm((v) => !v)} className="shrink-0 h-8 px-3 border border-border text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted">
+              {showMetaForm ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              {showMetaForm ? "Hide details" : "Edit details"}
+            </button>
+          </div>
+
+          {showMetaForm && (
+            <div className="mt-4 space-y-5">
+              <MetaGroup title="General">
+                <MetaField label="Report No" value={meta.reportNo} onChange={(v) => patchMeta("reportNo", v)} />
+                <MetaField label="Customer Name" value={meta.customerName} onChange={(v) => patchMeta("customerName", v)} />
+                <MetaField label="Address" value={meta.address} onChange={(v) => patchMeta("address", v)} />
+                <MetaField label="Testing Engineer" value={meta.testingEngineer} onChange={(v) => patchMeta("testingEngineer", v)} placeholder="e.g. Harsh Vardhan" />
+                <MetaField label="Report Reviewed By" value={meta.reportReviewedBy} onChange={(v) => patchMeta("reportReviewedBy", v)} />
+                <MetaField label="Report Approved By" value={meta.reportApprovedBy} onChange={(v) => patchMeta("reportApprovedBy", v)} />
+              </MetaGroup>
+            </div>
+          )}
+
+          <div className="mt-5 flex flex-col sm:flex-row gap-3">
+            <button onClick={genPdf} disabled={pdfBusy} className="h-10 px-5 bg-ochre hover:bg-ochre-light disabled:opacity-60 text-ochre-fg font-semibold text-sm inline-flex items-center gap-2">
+              {pdfBusy ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Download PDF
+            </button>
+            <button onClick={genCsv} disabled={csvBusy} className="h-10 px-5 border border-border bg-card hover:bg-muted disabled:opacity-60 font-semibold text-sm inline-flex items-center gap-2">
+              {csvBusy ? <Loader2 size={14} className="animate-spin" /> : <FileSpreadsheet size={14} />} Download CSV
+            </button>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

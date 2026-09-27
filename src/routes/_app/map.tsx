@@ -12,6 +12,7 @@ import {
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { SeverityShape } from "@/components/SeverityShape";
 import { usePlantContext } from "@/lib/plant-context";
+import { usePlantSurvey } from "@/lib/queries";
 import { getUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { buildAnomaliesKML, downloadKML } from "@/lib/kml";
@@ -348,6 +349,10 @@ function loadLayerPrefs(): LayerPrefs {
 function SiteMap() {
   const { selectedPlant } = usePlantContext();
   const isRajpur = selectedPlant.id === "plant-001";
+  // Non-primary plants render their survey on the Dashboard / Anomalies
+  // views (the map's georeferenced overlay tooling is built around the
+  // primary plant's baked baseline); this just makes the placeholder honest.
+  const { data: uploadedSurvey } = usePlantSurvey(isRajpur ? "" : selectedPlant.id);
 
   // Survey tooling — KML view, KML export, and hand-alignment — is for the people
   // who flew the site, not the people reading the result. A plant owner opening
@@ -1882,7 +1887,11 @@ function SiteMap() {
                 <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/95 border border-grey-200 px-4 py-2.5 text-xs shadow text-center max-w-xs">
                   <p className="font-semibold text-foreground">{selectedPlant.name}</p>
                   <p className="text-muted-foreground mt-0.5">{selectedPlant.location} · {selectedPlant.capacityMW} MW</p>
-                  <p className="text-muted-foreground mt-1">Panel-level GPS data available after first inspection.</p>
+                  <p className="text-muted-foreground mt-1">
+                    {uploadedSurvey
+                      ? `${uploadedSurvey.defectCount} defects from the ${uploadedSurvey.inspectionDate} survey — see the Dashboard and Anomalies views.`
+                      : "Panel-level GPS data available after first inspection."}
+                  </p>
                 </div>
               )}
             </div>

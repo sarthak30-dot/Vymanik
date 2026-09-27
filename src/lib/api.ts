@@ -66,10 +66,13 @@ export interface PlantDTO {
   feedInTariff: number;
   lat: number;
   lng: number;
+  /** Client / plant owner name (migration 006) — null for rows saved before it. */
+  client: string | null;
 }
 
 export interface NewPlantInput {
   name: string;
+  client?: string;
   location: string;
   capacityMW: number;
   totalPanels: number;
@@ -78,6 +81,9 @@ export interface NewPlantInput {
 }
 
 // ─── Team members ──────────────────────────────────────────────────────────
+
+/** What this person actually does — added in migration 005. */
+export type TeamMemberRole = "Drone Pilot" | "Data Processor" | "Pilot & Processor" | "Supervisor";
 
 export interface TeamMemberDTO {
   id: string;
@@ -89,6 +95,8 @@ export interface TeamMemberDTO {
   certifications: string[];
   assignedPlantId: string | null;
   status: "On Mission" | "Active" | "Off Duty";
+  role: TeamMemberRole;
+  currentTask: string | null;
   inspectionsCompleted: number;
   anomaliesFound: number;
   lastActive: string;
@@ -99,6 +107,14 @@ export interface NewTeamMemberInput {
   email: string;
   phone?: string;
   droneModel?: string;
+  role?: TeamMemberRole;
+  currentTask?: string;
+}
+
+export interface EditTeamMemberInput {
+  role?: TeamMemberRole;
+  currentTask?: string | null;
+  assignedPlantId?: string | null;
 }
 
 // ─── Client accounts ───────────────────────────────────────────────────────
@@ -200,6 +216,8 @@ export interface AnomalyDTO {
   stringSide?: string;
   module?: string;
   defectCode?: string;
+  /** Surveyed panel outline, [lng, lat] closed ring (migration 007). */
+  footprint?: [number, number][];
 }
 
 // ─── Plant layout (asset hierarchy) ────────────────────────────────────────
@@ -311,6 +329,44 @@ async function req<T>(
   return res.json() as Promise<T>;
 }
 
+// ─── Survey upload (Control Center) ──────────────────────────────────────────
+
+export interface SurveyOverlay {
+  url: string;
+  west: number;
+  north: number;
+  east: number;
+  south: number;
+}
+
+export interface PlantSurvey {
+  plantId: string;
+  inspectionId: string;
+  inspectionDate: string;
+  defectCount: number;
+  uploadedAt: string;
+  overlay: SurveyOverlay | null;
+}
+
+/** One defect row as POST /api/survey (action "import-defects") expects it. */
+export interface SurveyDefectRow {
+  panelId: string;
+  row: number;
+  col: number;
+  type: string;
+  severity: "critical" | "medium" | "normal";
+  string: string;
+  inverter: string;
+  rgbNote: string;
+  gps: { lat: number; lng: number };
+  block?: string;
+  smb?: string;
+  stringSide?: string;
+  module?: string;
+  defectCode?: string;
+  footprint?: [number, number][];
+}
+
 export const api = {
   auth: {
     login: (body: LoginRequest) => req<AuthToken>("POST", "/auth/login", body),
@@ -328,11 +384,30 @@ export const api = {
     list: (token: string) => req<TeamMemberDTO[]>("GET", "/team-members", undefined, token),
     create: (body: NewTeamMemberInput, token: string) =>
       req<TeamMemberDTO>("POST", "/team-members", body, token),
+    edit: (id: string, body: EditTeamMemberInput, token: string) =>
+      req<TeamMemberDTO>("PATCH", `/team-members/${id}`, body, token),
   },
 
   admin: {
     inviteClient: (body: InviteClientInput, token: string) =>
       req<InviteClientResult>("POST", "/admin/invite-client", body, token),
+  },
+
+  survey: {
+    get: (plantId: string, token: string) =>
+      req<{ survey: PlantSurvey | null }>("GET", `/survey?plantId=${encodeURIComponent(plantId)}`, undefined, token),
+    importDefects: (
+      body: { plantId: string; inspectionId: string; inspectionDate: string; rows: SurveyDefectRow[]; replace: boolean },
+      token: string,
+    ) => req<{ inserted: number }>("POST", "/survey", { action: "import-defects", ...body }, token),
+    signOverlay: (
+      body: { plantId: string; inspectionId: string; contentType: string },
+      token: string,
+    ) => req<{ signedUrl: string; publicUrl: string }>("POST", "/survey", { action: "sign-overlay", ...body }, token),
+    saveSurvey: (
+      body: { plantId: string; inspectionId: string; inspectionDate: string; defectCount: number; overlay: SurveyOverlay | null },
+      token: string,
+    ) => req<{ survey: PlantSurvey }>("POST", "/survey", { action: "save-survey", ...body }, token),
   },
 
   plantLayout: {
@@ -359,8 +434,15 @@ export const api = {
   },
 
   anomalies: {
-    list: (plantId: string, inspectionId: string, token: string) =>
-      req<AnomalyDTO[]>("GET", `/anomalies?plantId=${plantId}&inspectionId=${inspectionId}`, undefined, token),
+    list: (plantId: string, inspectionId: string | undefined, token: string) =>
+      req<AnomalyDTO[]>(
+        "GET",
+        inspectionId
+          ? `/anomalies?plantId=${encodeURIComponent(plantId)}&inspectionId=${encodeURIComponent(inspectionId)}`
+          : `/anomalies?plantId=${encodeURIComponent(plantId)}`,
+        undefined,
+        token,
+      ),
     get: (id: string, token: string) =>
       req<AnomalyDTO>("GET", `/anomalies/${id}`, undefined, token),
     patch: (id: string, body: AnomalyStatusPatch, token: string) =>

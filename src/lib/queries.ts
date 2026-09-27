@@ -1,8 +1,9 @@
+import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { getToken } from "./auth";
-import type { AnomalyStatusPatch, PlantDTO, AnomalyDTO, PlantLayout, NewPlantLayoutInput } from "./api";
-import { plant as mockPlant, anomalies as mockAnomalies, inspectionHistory as mockHistory } from "./mock-data";
+import type { AnomalyStatusPatch, PlantDTO, AnomalyDTO, PlantLayout, NewPlantLayoutInput, TeamMemberRole, EditTeamMemberInput, PlantSurvey } from "./api";
+import { plant as mockPlant, anomalies as mockAnomalies, inspectionHistory as mockHistory, allPlants, type PlantSummary } from "./mock-data";
 
 const DEFAULT_PLANT_ID = "plant-001"; // matches allPlants[0].id in mock-data.ts
 const DEFAULT_INSPECTION_ID = "insp-may-2026";
@@ -22,6 +23,7 @@ function mockPlantDTO(id = DEFAULT_PLANT_ID): PlantDTO {
     feedInTariff: mockPlant.feedInTariff,
     lat: 26.4521,
     lng: 73.0192,
+    client: null,
   };
 }
 
@@ -41,33 +43,78 @@ export function usePlant(id = DEFAULT_PLANT_ID) {
   });
 }
 
-export function usePlants() {
-  return useQuery({
-    queryKey: ["plants"],
-    queryFn: async () => {
-      try {
-        return await api.plants.list(getToken()!);
-      } catch {
-        return [mockPlantDTO()];
-      }
-    },
+/**
+ * DB plant ids the frontend already represents with a richer mock entry.
+ * `plant-rajpur-1` is the original seed plant (packages/db/seed.sql) — its
+ * survey has since been replaced by plant-001's Blocks 06-122 data, and it's
+ * also the placeholder id /api/auth/login hands any login with no plantIds.
+ * Listing it would show an empty "Rajpur Solar Plant" beside the real one
+ * and move the demo owner onto it.
+ */
+const SUPERSEDED_PLANT_IDS = new Set(["plant-rajpur-1"]);
+
+function plantDTOToSummary(p: PlantDTO): PlantSummary {
+  return {
+    id: p.id,
+    name: p.name,
+    client: p.client || "—",
+    location: p.location,
+    capacityMW: p.capacityMW,
+    totalPanels: p.totalPanels,
+    healthScore: p.healthScore,
+    lastInspection: p.lastInspection ?? "—",
+    nextInspection: p.nextInspection ?? "Not scheduled",
+    assignedInspectorId: null,
+    criticalCount: 0,
+    mediumCount: 0,
+    status: "Operational",
+    gps: { lat: p.lat, lng: p.lng },
+  };
+}
+
+/**
+ * Every plant in the fleet: the mock-backed plants (which carry the survey
+ * data the dashboard and map are built on) plus every plant saved to the
+ * database through Control Center's Add Plant, so a plant added there is
+ * still listed after a reload — in Control Center, the header picker, the
+ * dashboard and the Inspector Portal. Falls back to the mock plants alone
+ * when the API is unreachable, same as before.
+ */
+export function useFleetPlants(): PlantSummary[] {
+  const { data } = useQuery({
+    queryKey: ["plants", "fleet"],
+    queryFn: () => api.plants.list(getToken()!),
     enabled: !!getToken(),
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
+  return useMemo(() => {
+    if (!data) return allPlants;
+    const known = new Set(allPlants.map((p) => p.id));
+    const saved = data
+      .filter((p) => !known.has(p.id) && !SUPERSEDED_PLANT_IDS.has(p.id))
+      .map(plantDTOToSummary);
+    return [...allPlants, ...saved];
+  }, [data]);
 }
 
 export function useAnomalies(
   plantId = DEFAULT_PLANT_ID,
-  inspectionId = DEFAULT_INSPECTION_ID,
+  inspectionId?: string,
 ) {
   return useQuery({
-    queryKey: ["anomalies", plantId, inspectionId],
+    queryKey: ["anomalies", plantId, inspectionId ?? "all"],
     queryFn: async () => {
+      // The demo plant's 1,249-defect survey is baked into the frontend and
+      // is not a set of rows in the DB, so it's the source of truth for
+      // plant-001 whether or not a backend is reachable. Any other plant's
+      // defects come from an uploaded survey via the API; an empty list there
+      // is a real answer (no survey yet), not a reason to show the demo data.
+      if (plantId === DEFAULT_PLANT_ID) return mockAnomalies as AnomalyDTO[];
       try {
         return await api.anomalies.list(plantId, inspectionId, getToken()!);
       } catch {
-        return mockAnomalies as AnomalyDTO[];
+        return [];
       }
     },
     enabled: !!getToken(),
@@ -101,7 +148,7 @@ export function usePatchAnomaly() {
       } catch {
         // API unavailable — apply change locally using cached data
         const cached = queryClient.getQueryData<AnomalyDTO[]>(
-          ["anomalies", DEFAULT_PLANT_ID, DEFAULT_INSPECTION_ID],
+          ["anomalies", DEFAULT_PLANT_ID, "all"],
         ) ?? (mockAnomalies as AnomalyDTO[]);
         const found = cached.find(a => a.id === id);
         if (!found) throw new Error("Anomaly not found");
@@ -112,7 +159,7 @@ export function usePatchAnomaly() {
       queryClient.setQueryData(["anomaly", updated.id], updated);
       // Update list cache in-place without refetch to preserve local changes
       queryClient.setQueryData<AnomalyDTO[]>(
-        ["anomalies", DEFAULT_PLANT_ID, DEFAULT_INSPECTION_ID],
+        ["anomalies", DEFAULT_PLANT_ID, "all"],
         (old = []) => old.map(a => a.id === updated.id ? updated : a),
       );
     },
@@ -246,50 +293,32 @@ export interface NewPlantFormInput {
 }
 
 /**
- * Creates a plant via the real API when Supabase is configured; either way,
- * returns a fully-shaped fleet-view row (Control Center needs fields like
- * `client` and `status` that don't live in the plants table) so it can be
- * added to the on-screen list immediately.
+ * Saves a plant through the API and refreshes the fleet list so it shows up
+ * everywhere that reads useFleetPlants(). No local fallback: this used to
+ * swallow API errors and return an unsaved plant that looked added but was
+ * gone on reload. A failure now reaches the form's error toast instead.
  */
 export function useCreatePlant() {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: NewPlantFormInput) => {
-      let id = `plant-${Date.now()}`;
-      try {
-        const dto = await api.plants.create(
-          {
-            name: input.name,
-            location: input.location,
-            capacityMW: input.capacityMW,
-            totalPanels: input.totalPanels,
-            lat: input.lat,
-            lng: input.lng,
-          },
-          getToken()!,
-        );
-        id = dto.id;
-      } catch {
-        // Supabase not reachable/configured in this environment — the plant
-        // still appears in this session's Control Center view.
-      }
-
-      return {
-        id,
-        name: input.name,
-        client: input.client,
-        location: input.location,
-        capacityMW: input.capacityMW,
-        totalPanels: input.totalPanels,
-        healthScore: 100,
-        lastInspection: "—",
-        nextInspection: "Not scheduled",
-        assignedInspectorId: null,
-        criticalCount: 0,
-        mediumCount: 0,
-        status: "Operational" as const,
-        gps: { lat: input.lat, lng: input.lng },
-      };
+    mutationFn: async (input: NewPlantFormInput): Promise<PlantSummary> => {
+      const dto = await api.plants.create(
+        {
+          name: input.name,
+          client: input.client,
+          location: input.location,
+          capacityMW: input.capacityMW,
+          totalPanels: input.totalPanels,
+          lat: input.lat,
+          lng: input.lng,
+        },
+        getToken()!,
+      );
+      // The client name only round-trips once migration 006 has been run;
+      // keep what the admin typed for this session's toast either way.
+      return { ...plantDTOToSummary(dto), client: dto.client || input.client || "—" };
     },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["plants"] }),
   });
 }
 
@@ -299,6 +328,8 @@ export interface NewTeamMemberFormInput {
   email: string;
   phone: string;
   droneModel: string;
+  role: TeamMemberRole;
+  currentTask: string;
 }
 
 export function useCreateTeamMember() {
@@ -307,7 +338,10 @@ export function useCreateTeamMember() {
       let id = `tm-${Date.now()}`;
       try {
         const dto = await api.teamMembers.create(
-          { name: input.name, email: input.email, phone: input.phone, droneModel: input.droneModel },
+          {
+            name: input.name, email: input.email, phone: input.phone, droneModel: input.droneModel,
+            role: input.role, currentTask: input.currentTask || undefined,
+          },
           getToken()!,
         );
         id = dto.id;
@@ -332,11 +366,25 @@ export function useCreateTeamMember() {
         certifications: [] as string[],
         assignedPlantId: null,
         status: "Off Duty" as const,
+        role: input.role,
+        currentTask: input.currentTask || null,
         inspectionsCompleted: 0,
         anomaliesFound: 0,
         lastActive: "Just added",
       };
     },
+  });
+}
+
+/**
+ * Edits an existing team member's role/task/plant assignment. No local
+ * fallback (same reasoning as useInviteClient) — the whole point of editing
+ * is that the change is real and will still be there on reload.
+ */
+export function useEditTeamMember() {
+  return useMutation({
+    mutationFn: (input: { id: string } & EditTeamMemberInput) =>
+      api.teamMembers.edit(input.id, input, getToken()!),
   });
 }
 
@@ -409,5 +457,97 @@ export function useInspectionHistory() {
     enabled: !!getToken(),
     staleTime: 5 * 60 * 1000,
     retry: 1,
+  });
+}
+
+// ─── Survey upload (Control Center) ──────────────────────────────────────────
+
+/** The plant's current uploaded survey, or null (also null before migration
+ *  007, and whenever the API is unreachable — the app then falls back to its
+ *  built-in mock survey, so a missing row is not an error). */
+export function usePlantSurvey(plantId: string) {
+  return useQuery({
+    queryKey: ["survey", plantId],
+    queryFn: async (): Promise<PlantSurvey | null> => {
+      try {
+        return (await api.survey.get(plantId, getToken()!)).survey;
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!getToken() && !!plantId,
+    staleTime: 60 * 1000,
+    retry: 1,
+  });
+}
+
+/** Rows per request to POST /api/survey — well under Vercel's 4.5 MB body
+ *  limit even with per-defect footprint rings (~0.5 KB/row). */
+const SURVEY_UPLOAD_CHUNK = 300;
+
+export interface SurveyUploadInput {
+  plantId: string;
+  inspectionDate: string;
+  /** Parsed defect rows (src/lib/survey-import.ts parseDefectFile). */
+  rows: import("./api").SurveyDefectRow[];
+  /** Composited orthomosaic, if the admin included one. */
+  overlay?: { blob: Blob; bounds: { west: number; north: number; east: number; south: number } } | null;
+  onProgress?: (stage: string, done: number, total: number) => void;
+}
+
+/**
+ * Persists a parsed survey: defects in chunks (first chunk replaces the same
+ * inspection so a re-upload doesn't double up), then the orthomosaic straight
+ * to Supabase Storage via a signed URL, then the survey record. Ordering
+ * matters — the survey row is written last, so a survey only "exists" once its
+ * data is actually in place.
+ */
+export function useUploadSurvey() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: SurveyUploadInput): Promise<PlantSurvey> => {
+      const token = getToken()!;
+      const { plantId, inspectionDate, rows, overlay, onProgress } = input;
+      // Stable inspection id for this survey (date-derived, so re-uploading the
+      // same day's corrected file replaces it rather than stacking).
+      const inspectionId = `survey-${plantId}-${inspectionDate.replace(/\s+/g, "-").toLowerCase()}`;
+
+      for (let i = 0; i < rows.length; i += SURVEY_UPLOAD_CHUNK) {
+        const chunk = rows.slice(i, i + SURVEY_UPLOAD_CHUNK);
+        await api.survey.importDefects(
+          { plantId, inspectionId, inspectionDate, rows: chunk, replace: i === 0 },
+          token,
+        );
+        onProgress?.("defects", Math.min(i + chunk.length, rows.length), rows.length);
+      }
+      // A survey with no defect rows still clears the previous upload.
+      if (rows.length === 0) {
+        await api.survey.importDefects({ plantId, inspectionId, inspectionDate, rows: [], replace: true }, token);
+      }
+
+      let overlayRec: PlantSurvey["overlay"] = null;
+      if (overlay) {
+        onProgress?.("overlay", 0, 1);
+        const contentType = overlay.blob.type || "image/webp";
+        const { signedUrl, publicUrl } = await api.survey.signOverlay({ plantId, inspectionId, contentType }, token);
+        // Straight to Supabase Storage — the file never passes through the API
+        // function (Vercel caps request bodies at 4.5 MB; an ortho is bigger).
+        const put = await fetch(signedUrl, { method: "PUT", headers: { "Content-Type": contentType }, body: overlay.blob });
+        if (!put.ok) throw new Error(`Uploading the orthomosaic failed (${put.status}).`);
+        overlayRec = { url: publicUrl, ...overlay.bounds };
+        onProgress?.("overlay", 1, 1);
+      }
+
+      const { survey } = await api.survey.saveSurvey(
+        { plantId, inspectionId, inspectionDate, defectCount: rows.length, overlay: overlayRec },
+        token,
+      );
+      return survey;
+    },
+    onSuccess: (_survey, input) => {
+      queryClient.invalidateQueries({ queryKey: ["survey", input.plantId] });
+      queryClient.invalidateQueries({ queryKey: ["anomalies"] });
+      queryClient.invalidateQueries({ queryKey: ["plants"] });
+    },
   });
 }

@@ -1,11 +1,11 @@
 import { Link, useNavigate, useLocation } from "@tanstack/react-router";
-import { Bell, X, ChevronDown, Sun, Moon, Monitor, MonitorPlay } from "lucide-react";
+import { Bell, X, Sun, Moon, Monitor, MonitorPlay } from "lucide-react";
 import { useState } from "react";
 import { UrjaScanLogo } from "@/components/UrjaScanLogo";
+import { PlantPicker } from "@/components/layout/PlantPicker";
 import { useI18n } from "@/lib/i18n";
-import { plant, allPlants } from "@/lib/mock-data";
+import { plant } from "@/lib/mock-data";
 import { getUser, clearAuth } from "@/lib/auth";
-import { usePlantContext } from "@/lib/plant-context";
 import { useTheme } from "@/hooks/use-theme";
 import type { Theme } from "@/hooks/use-theme";
 import { usePresenting, useDensity } from "@/hooks/use-presentation";
@@ -47,7 +47,6 @@ export function AppHeader() {
   const navigate = useNavigate();
   const loc = useLocation();
   const user = getUser();
-  const { selectedPlant, setSelectedPlantId } = usePlantContext();
   const { theme, setTheme } = useTheme();
   const isAdmin = user?.role === "admin";
   const isTeam = user?.role === "team";
@@ -89,26 +88,15 @@ export function AppHeader() {
           <UrjaScanLogo size="sm" />
         </Link>
 
-        {/* Plant chip — hidden on Control Center; dropdown for admin/team, static for client.
-            Keyed on showOperatorChrome rather than isAdmin/isTeam directly: while
-            presenting, an admin/team viewer sees the same static chip a client
-            would — nothing here says "you can switch plants," which is exactly
-            what a prospect looking at their own plant should see. */}
+        {/* Plant picker — hidden on Control Center. Admin/team get every plant;
+            a plant owner gets the picker too, scoped to the plants on their own
+            login (PlantContext's `plants`), so they can move plant → block the
+            same way. Only an admin/team viewer in Presentation Mode keeps the
+            static chip: they're showing a prospect one plant, and nothing there
+            should suggest the operator's whole fleet is one click away. */}
         {!onControlCenter && (
-          showOperatorChrome ? (
-            <div className="hidden md:flex items-center relative shrink-0">
-              <select
-                value={selectedPlant.id}
-                onChange={e => setSelectedPlantId(e.target.value)}
-                className="appearance-none h-8 pl-3 pr-7 border border-grey-200 bg-grey-50 text-sm font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-ochre cursor-pointer"
-                title="Switch plant"
-              >
-                {allPlants.map(p => (
-                  <option key={p.id} value={p.id}>{p.name} — {p.capacityMW} MW</option>
-                ))}
-              </select>
-              <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-            </div>
+          showOperatorChrome || user?.role === "client" ? (
+            <PlantPicker />
           ) : (
             <div className="hidden md:flex items-center gap-2 text-sm border border-grey-200 px-3 py-1.5 bg-grey-50 cursor-default select-none shrink-0">
               <span className="font-medium text-foreground">{plant.name}</span>

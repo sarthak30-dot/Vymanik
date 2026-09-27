@@ -5,7 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { useAnomalies } from "@/lib/queries";
 import { usePlantContext } from "@/lib/plant-context";
-import { SEVERITY_LABEL_FULL } from "@/lib/mock-data";
+import { SEVERITY_LABEL_FULL, clientDefectType } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 
 export const Route = createFileRoute("/_app/anomalies/by-defect")({
@@ -48,6 +48,8 @@ function AnomalyTabNav() {
 
 interface DefectStats {
   type: string;
+  /** Client-facing IEC name for `type` (see clientDefectType). */
+  label: string;
   defects: AnomalyDTO[];
   count: number;
   pct: number;
@@ -78,6 +80,7 @@ function computeDefectStats(anomalies: AnomalyDTO[]): DefectStats[] {
         .map(([b]) => `Block ${b}`);
       return {
         type,
+        label: clientDefectType(type),
         defects,
         count: defects.length,
         pct: Math.round((defects.length / total) * 1000) / 10,
@@ -103,7 +106,7 @@ function DefectTooltip({ active, payload }: { active?: boolean; payload?: { payl
   const d = payload[0].payload;
   return (
     <div className="bg-card border border-border shadow p-3 text-xs space-y-1 max-w-[200px]">
-      <p className="font-semibold text-foreground leading-snug">{d.type}</p>
+      <p className="font-semibold text-foreground leading-snug">{d.label}</p>
       <p className="text-muted-foreground"><span className="mono font-semibold text-foreground">{d.count}</span> defects ({d.pct}%)</p>
       {d.topBlocks.length > 0 && (
         <p className="text-muted-foreground">Top: {d.topBlocks.join(", ")}</p>
@@ -115,8 +118,8 @@ function DefectTooltip({ active, payload }: { active?: boolean; payload?: { payl
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 function DefectwiseAnomaly() {
-  const { data: allAnomalies = [], isLoading } = useAnomalies();
   const { selectedPlant } = usePlantContext();
+  const { data: allAnomalies = [], isLoading } = useAnomalies(selectedPlant.id);
   const navigate = useNavigate();
 
   const anomalies = useMemo(
@@ -195,7 +198,7 @@ function DefectwiseAnomaly() {
                   barCategoryGap="30%"
                 >
                   <XAxis
-                    dataKey="type"
+                    dataKey="label"
                     tick={{ fontSize: 10, fill: "var(--muted-foreground,#888)" }}
                     angle={-35}
                     textAnchor="end"
@@ -261,7 +264,7 @@ function DefectwiseAnomaly() {
                               backgroundColor: CHART_COLORS[i % CHART_COLORS.length],
                             }}
                           />
-                          <span className="font-medium text-sm">{ds.type}</span>
+                          <span className="font-medium text-sm">{ds.label}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3 mono font-semibold tabular-nums">{ds.count}</td>

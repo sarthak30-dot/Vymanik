@@ -4,7 +4,7 @@ import { getUser, setDisplayName } from "@/lib/auth";
 import { requireOperatorRoute } from "@/lib/route-guards";
 import { usePlantContext } from "@/lib/plant-context";
 import { Upload, UploadCloud, Image as ImageIcon, Plane, ClipboardCheck, Send, Layers, Cpu, AlertTriangle, User2, MapPin, Pencil, Check, X } from "lucide-react";
-import { reviewQueue, teamMembers, allPlants, anomalyTypes, getTeamMemberByEmail, type QueueEntry } from "@/lib/mock-data";
+import { reviewQueue, teamMembers, anomalyTypes, getTeamMemberByEmail, type QueueEntry } from "@/lib/mock-data";
 import type { ProcessingStage } from "@/lib/api";
 import { useAddAnomaly, usePlantLayout } from "@/lib/queries";
 import { DEFECT_TYPES, CATEGORY_CODES } from "@/lib/taxonomy";
@@ -194,7 +194,7 @@ function PipelineDiagram() {
 // ─── Report Anomaly form ────────────────────────────────────────────────────
 
 function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
-  const { selectedPlant, setSelectedPlantId } = usePlantContext();
+  const { selectedPlant, setSelectedPlantId, plants } = usePlantContext();
   const [plantId, setPlantId] = useState(selectedPlant.id);
   const [panelId, setPanelId] = useState("");
   const [type, setType] = useState("");
@@ -233,7 +233,7 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
     e.preventDefault();
     if (!plantId || !panelId || !type || !defectType || !categoryCode) return;
 
-    const plant = allPlants.find(p => p.id === plantId);
+    const plant = plants.find(p => p.id === plantId);
     const deltaTNum = deltaT ? parseFloat(deltaT) : null;
     const selectedString = stringsInInverter.find(s => s.id === stringId);
     const selectedInverter = invertersInBlock.find(i => i.id === inverterId);
@@ -287,7 +287,7 @@ function ReportAnomalyForm({ inspectorName }: { inspectorName: string }) {
               }}
               className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
             >
-              {allPlants.map(p => (
+              {plants.map(p => (
                 <option key={p.id} value={p.id}>{p.name} — {p.client}</option>
               ))}
             </select>
@@ -426,7 +426,7 @@ function TeamDashboard() {
   const navigate = useNavigate();
   const user = getUser();
   const [dragOver, setDragOver] = useState(false);
-  const { selectedPlant: csvPlant } = usePlantContext();
+  const { selectedPlant: csvPlant, plants } = usePlantContext();
   const [csvWizardOpen, setCsvWizardOpen] = useState(false);
 
   // Display name: member name > saved displayName > "Vymanik" default
@@ -460,7 +460,7 @@ function TeamDashboard() {
   }
 
   const assignedPlant = member?.assignedPlantId
-    ? allPlants.find(p => p.id === member.assignedPlantId)
+    ? plants.find(p => p.id === member.assignedPlantId)
     : null;
 
   // Initials from display name (first letter of each word, max 2)
@@ -616,7 +616,7 @@ function TeamDashboard() {
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
           <Field label="Plant">
             <select className="w-full h-9 px-3 border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-ochre">
-              {allPlants.map(p => (
+              {plants.map(p => (
                 <option key={p.id} value={p.id}>{p.name} — {p.location}</option>
               ))}
             </select>
