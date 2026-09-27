@@ -66,10 +66,13 @@ export interface PlantDTO {
   feedInTariff: number;
   lat: number;
   lng: number;
+  /** Client / plant owner name (migration 006) — null for rows saved before it. */
+  client: string | null;
 }
 
 export interface NewPlantInput {
   name: string;
+  client?: string;
   location: string;
   capacityMW: number;
   totalPanels: number;

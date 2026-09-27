@@ -7,7 +7,7 @@ import {
   ChevronRight, Wifi, WifiOff, Activity, Shield, UserPlus, PlusCircle, KeyRound, Grid3x3, Copy,
 } from "lucide-react";
 import {
-  allPlants as seedPlants, teamMembers as seedTeamMembers, reviewQueue,
+  teamMembers as seedTeamMembers, reviewQueue,
   type TeamMember, type PlantSummary, type TeamMemberRole,
 } from "@/lib/mock-data";
 import {
@@ -16,6 +16,7 @@ import {
 } from "@/lib/queries";
 import type { NewPlantLayoutInput, InviteClientResult } from "@/lib/api";
 import { toast } from "sonner";
+import { usePlantContext } from "@/lib/plant-context";
 
 interface ClientAccount {
   name: string;
@@ -554,7 +555,9 @@ function ControlCenter() {
   const user = getUser();
   const [assignPlant, setAssignPlant] = useState<PlantSummary | null>(null);
 
-  const [plants, setPlants] = useState<PlantSummary[]>(seedPlants);
+  // Mock plants + every plant saved through Add Plant (useFleetPlants) —
+  // was a local copy of the mock list, so added plants vanished on reload.
+  const { plants } = usePlantContext();
   const [members, setMembers] = useState<TeamMember[]>(seedTeamMembers);
   const [clients, setClients] = useState<ClientAccount[]>([]);
 
@@ -575,7 +578,8 @@ function ControlCenter() {
   function handleAddPlant(input: NewPlantFormInput) {
     createPlant.mutate(input, {
       onSuccess: (plant) => {
-        setPlants(prev => [plant, ...prev]);
+        // useCreatePlant refreshes the fleet query; the new plant arrives
+        // through usePlantContext() with no local list to update here.
         setShowAddPlant(false);
         toast.success(`${plant.name} added to fleet`, {
           description: "Now visible across the Control Center and client portal.",

@@ -15,6 +15,8 @@ export function toPlantDTO(row: Record<string, unknown>): PlantDTO {
     feedInTariff:   Number(row.feed_in_tariff),
     lat:            Number(row.lat),
     lng:            Number(row.lng),
+    // null when migration 006 hasn't been run (no column) or the row predates it.
+    client:         (row.client as string | null | undefined) ?? null,
   };
 }
 

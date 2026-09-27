@@ -17,28 +17,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!user) return res.status(401).json({ error: "Unauthorized" });
     if (user.role !== "admin") return res.status(403).json({ error: "Only admins can add plants" });
 
-    const { name, location, capacityMW, totalPanels, lat, lng } = (req.body ?? {}) as {
-      name?: string; location?: string; capacityMW?: number; totalPanels?: number; lat?: number; lng?: number;
+    const { name, client, location, capacityMW, totalPanels, lat, lng } = (req.body ?? {}) as {
+      name?: string; client?: string; location?: string; capacityMW?: number; totalPanels?: number; lat?: number; lng?: number;
     };
     if (!name || !location || !capacityMW || !totalPanels || lat == null || lng == null) {
       return res.status(400).json({ error: "name, location, capacityMW, totalPanels, lat and lng are required" });
     }
 
     const id = `plant-${slugify(name)}-${Date.now().toString(36)}`;
-    const { data, error } = await supabase
+    const row = {
+      id, name, location,
+      capacity_mw: capacityMW,
+      total_panels: totalPanels,
+      health_score: 100,
+      daily_loss_inr: 0,
+      daily_loss_kwh: 0,
+      feed_in_tariff: 4.5,
+      lat, lng,
+    };
+    let { data, error } = await supabase
       .from("plants")
-      .insert({
-        id, name, location,
-        capacity_mw: capacityMW,
-        total_panels: totalPanels,
-        health_score: 100,
-        daily_loss_inr: 0,
-        daily_loss_kwh: 0,
-        feed_in_tariff: 4.5,
-        lat, lng,
-      })
+      .insert({ ...row, client: client?.trim() || null })
       .select()
       .single();
+
+    // Migration 006 (plants.client) not run on this project yet — save the
+    // plant without the client name rather than failing Add Plant outright.
+    if (error && (error.code === "PGRST204" || error.code === "42703")) {
+      ({ data, error } = await supabase.from("plants").insert(row).select().single());
+    }
 
     if (error || !data) return res.status(500).json({ error: error?.message ?? "Failed to create plant" });
     return res.status(201).json(toPlantDTO(data));

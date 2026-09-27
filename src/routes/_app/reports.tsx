@@ -5,6 +5,7 @@ import { inspectionHistory, plant, anomalies, severityCounts } from "@/lib/mock-
 import { toast } from "sonner";
 import { jsPDF } from "jspdf";
 import { SEVERITY } from "@/lib/severity-tokens";
+import { usePlantContext } from "@/lib/plant-context";
 import {
   defaultReportMetadata, generateThermographyPDF, generateThermographyCSV,
   type ReportMetadata,
@@ -269,6 +270,26 @@ function ReportsPage() {
   const toI = inspectionHistory.find(i => i.date === to)!;
   const resolved = Math.max(0, fromI.critical - toI.critical) + Math.max(0, fromI.medium - toI.medium);
   const newAnom = Math.max(0, toI.critical - fromI.critical) + Math.max(0, toI.medium - fromI.medium);
+
+  // Every report on this page is built from plant-001's survey (the mock
+  // inspection history and anomalies). For any other plant — e.g. one just
+  // added in Control Center — show nothing rather than another plant's
+  // inspections and downloadable reports under this plant's name.
+  const { selectedPlant } = usePlantContext();
+  if (selectedPlant.id !== "plant-001") {
+    return (
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">
+        <header>
+          <h1 className="text-2xl md:text-3xl font-bold">Inspection Reports — {selectedPlant.name}</h1>
+        </header>
+        <section className="bg-card border border-border p-8 text-center">
+          <p className="text-sm text-muted-foreground">
+            No inspection reports yet for <span className="font-semibold text-foreground">{selectedPlant.name}</span>. Reports will appear here once its first inspection is processed.
+          </p>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">

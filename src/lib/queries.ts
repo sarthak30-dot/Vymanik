@@ -1,8 +1,9 @@
+import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { getToken } from "./auth";
 import type { AnomalyStatusPatch, PlantDTO, AnomalyDTO, PlantLayout, NewPlantLayoutInput, TeamMemberRole, EditTeamMemberInput } from "./api";
-import { plant as mockPlant, anomalies as mockAnomalies, inspectionHistory as mockHistory } from "./mock-data";
+import { plant as mockPlant, anomalies as mockAnomalies, inspectionHistory as mockHistory, allPlants, type PlantSummary } from "./mock-data";
 
 const DEFAULT_PLANT_ID = "plant-001"; // matches allPlants[0].id in mock-data.ts
 const DEFAULT_INSPECTION_ID = "insp-may-2026";
@@ -22,6 +23,7 @@ function mockPlantDTO(id = DEFAULT_PLANT_ID): PlantDTO {
     feedInTariff: mockPlant.feedInTariff,
     lat: 26.4521,
     lng: 73.0192,
+    client: null,
   };
 }
 
@@ -41,20 +43,59 @@ export function usePlant(id = DEFAULT_PLANT_ID) {
   });
 }
 
-export function usePlants() {
-  return useQuery({
-    queryKey: ["plants"],
-    queryFn: async () => {
-      try {
-        return await api.plants.list(getToken()!);
-      } catch {
-        return [mockPlantDTO()];
-      }
-    },
+/**
+ * DB plant ids the frontend already represents with a richer mock entry.
+ * `plant-rajpur-1` is the original seed plant (packages/db/seed.sql) — its
+ * survey has since been replaced by plant-001's Blocks 06-122 data, and it's
+ * also the placeholder id /api/auth/login hands any login with no plantIds.
+ * Listing it would show an empty "Rajpur Solar Plant" beside the real one
+ * and move the demo owner onto it.
+ */
+const SUPERSEDED_PLANT_IDS = new Set(["plant-rajpur-1"]);
+
+function plantDTOToSummary(p: PlantDTO): PlantSummary {
+  return {
+    id: p.id,
+    name: p.name,
+    client: p.client || "—",
+    location: p.location,
+    capacityMW: p.capacityMW,
+    totalPanels: p.totalPanels,
+    healthScore: p.healthScore,
+    lastInspection: p.lastInspection ?? "—",
+    nextInspection: p.nextInspection ?? "Not scheduled",
+    assignedInspectorId: null,
+    criticalCount: 0,
+    mediumCount: 0,
+    status: "Operational",
+    gps: { lat: p.lat, lng: p.lng },
+  };
+}
+
+/**
+ * Every plant in the fleet: the mock-backed plants (which carry the survey
+ * data the dashboard and map are built on) plus every plant saved to the
+ * database through Control Center's Add Plant, so a plant added there is
+ * still listed after a reload — in Control Center, the header picker, the
+ * dashboard and the Inspector Portal. Falls back to the mock plants alone
+ * when the API is unreachable, same as before.
+ */
+export function useFleetPlants(): PlantSummary[] {
+  const { data } = useQuery({
+    queryKey: ["plants", "fleet"],
+    queryFn: () => api.plants.list(getToken()!),
     enabled: !!getToken(),
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
+  return useMemo(() => {
+    if (!data) return allPlants;
+    const known = new Set(allPlants.map((p) => p.id));
+    const saved = data
+      .filter((p) => !known.has(p.id) && !SUPERSEDED_PLANT_IDS.has(p.id))
+      .map(plantDTOToSummary);
+    return [...allPlants, ...saved];
+  }, [data]);
 }
 
 export function useAnomalies(
@@ -246,50 +287,32 @@ export interface NewPlantFormInput {
 }
 
 /**
- * Creates a plant via the real API when Supabase is configured; either way,
- * returns a fully-shaped fleet-view row (Control Center needs fields like
- * `client` and `status` that don't live in the plants table) so it can be
- * added to the on-screen list immediately.
+ * Saves a plant through the API and refreshes the fleet list so it shows up
+ * everywhere that reads useFleetPlants(). No local fallback: this used to
+ * swallow API errors and return an unsaved plant that looked added but was
+ * gone on reload. A failure now reaches the form's error toast instead.
  */
 export function useCreatePlant() {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: NewPlantFormInput) => {
-      let id = `plant-${Date.now()}`;
-      try {
-        const dto = await api.plants.create(
-          {
-            name: input.name,
-            location: input.location,
-            capacityMW: input.capacityMW,
-            totalPanels: input.totalPanels,
-            lat: input.lat,
-            lng: input.lng,
-          },
-          getToken()!,
-        );
-        id = dto.id;
-      } catch {
-        // Supabase not reachable/configured in this environment — the plant
-        // still appears in this session's Control Center view.
-      }
-
-      return {
-        id,
-        name: input.name,
-        client: input.client,
-        location: input.location,
-        capacityMW: input.capacityMW,
-        totalPanels: input.totalPanels,
-        healthScore: 100,
-        lastInspection: "—",
-        nextInspection: "Not scheduled",
-        assignedInspectorId: null,
-        criticalCount: 0,
-        mediumCount: 0,
-        status: "Operational" as const,
-        gps: { lat: input.lat, lng: input.lng },
-      };
+    mutationFn: async (input: NewPlantFormInput): Promise<PlantSummary> => {
+      const dto = await api.plants.create(
+        {
+          name: input.name,
+          client: input.client,
+          location: input.location,
+          capacityMW: input.capacityMW,
+          totalPanels: input.totalPanels,
+          lat: input.lat,
+          lng: input.lng,
+        },
+        getToken()!,
+      );
+      // The client name only round-trips once migration 006 has been run;
+      // keep what the admin typed for this session's toast either way.
+      return { ...plantDTOToSummary(dto), client: dto.client || input.client || "—" };
     },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["plants"] }),
   });
 }
 

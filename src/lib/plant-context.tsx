@@ -1,6 +1,7 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { allPlants, type PlantSummary } from "./mock-data";
 import { getUser, type StoredUser } from "./auth";
+import { useFleetPlants } from "./queries";
 
 interface PlantContextValue {
   selectedPlantId: string;
@@ -21,21 +22,28 @@ const PlantContext = createContext<PlantContextValue | null>(null);
  * exactly what the static header chip showed them before, rather than every
  * plant in the fleet.
  */
-function plantsForUser(user: StoredUser | null): PlantSummary[] {
-  if (!user || user.role !== "client") return allPlants;
-  const mine = allPlants.filter((p) => user.plantIds?.includes(p.id));
+function plantsForUser(user: StoredUser | null, fleet: PlantSummary[]): PlantSummary[] {
+  if (!user || user.role !== "client") return fleet;
+  const mine = fleet.filter((p) => user.plantIds?.includes(p.id));
   return mine.length > 0 ? mine : allPlants.slice(0, 1);
 }
 
 export function PlantProvider({ children }: { children: ReactNode }) {
-  const [plants] = useState(() => plantsForUser(getUser()));
-  const [selectedPlantId, setSelectedPlantId] = useState(plants[0].id);
+  // Mock plants plus every plant saved through Add Plant — see useFleetPlants.
+  const fleet = useFleetPlants();
+  const [user] = useState(getUser);
+  const plants = useMemo(() => plantsForUser(user, fleet), [user, fleet]);
+  const [requestedId, setSelectedPlantId] = useState(plants[0].id);
   // Falls back to the user's own first plant, never allPlants[0] — so an id
-  // outside a plant owner's access can't be selected into view.
-  const selectedPlant = plants.find((p) => p.id === selectedPlantId) ?? plants[0];
+  // outside a plant owner's access can't be selected into view. The fleet
+  // list can also change under us (it loads after the mock plants render),
+  // so the selected id is always read back off the resolved plant.
+  const selectedPlant = plants.find((p) => p.id === requestedId) ?? plants[0];
 
   return (
-    <PlantContext.Provider value={{ selectedPlantId, setSelectedPlantId, selectedPlant, plants }}>
+    <PlantContext.Provider
+      value={{ selectedPlantId: selectedPlant.id, setSelectedPlantId, selectedPlant, plants }}
+    >
       {children}
     </PlantContext.Provider>
   );
