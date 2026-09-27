@@ -8,7 +8,7 @@ import { useAnomalies, usePatchAnomaly } from "@/lib/queries";
 import { usePlantContext } from "@/lib/plant-context";
 import { getUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
-import { SEVERITY_LABEL, SEVERITY_LABEL_FULL } from "@/lib/mock-data";
+import { SEVERITY_LABEL, SEVERITY_LABEL_FULL, clientDefectType } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 
 /**
@@ -85,7 +85,7 @@ function MapLocationLink({
 function exportCSV(rows: AnomalyDTO[], plantName: string) {
   const header = ["SL No","Block","Layout Location","Map Location","Defect Type","Delta_T","Severity","Status","Date","Image Ref"];
   const lines = rows.map((a, i) => [
-    i + 1, blockNumber(a, plantName), layoutLocation(a, plantName), mapLocation(a), a.type,
+    i + 1, blockNumber(a, plantName), layoutLocation(a, plantName), mapLocation(a), clientDefectType(a.type),
     a.deltaTNorm ?? a.deltaT ?? "", SEVERITY_LABEL[a.severity], a.status, a.date, a.rgbNote ?? "",
   ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(","));
   const csv = [header.join(","), ...lines].join("\n");
@@ -262,7 +262,7 @@ function AnomalyList() {
       .filter(a => {
         if (!search) return true;
         const q = search.toLowerCase();
-        return a.panelId.toLowerCase().includes(q) || a.type.toLowerCase().includes(q);
+        return a.panelId.toLowerCase().includes(q) || a.type.toLowerCase().includes(q) || clientDefectType(a.type).toLowerCase().includes(q);
       })
       .sort((a, b) => {
         if (SEVERITY_RANK[a.severity] !== SEVERITY_RANK[b.severity]) return SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
@@ -475,7 +475,7 @@ function AnomalyList() {
                   <td className="px-4 py-3 mono text-xs">
                     <MapLocationLink a={a} />
                   </td>
-                  <td className="px-4 py-3 text-sm">{a.type}</td>
+                  <td className="px-4 py-3 text-sm">{clientDefectType(a.type)}</td>
                   <td className="px-4 py-3 mono font-semibold text-sm">
                     {a.deltaTNorm ? (
                       <span className="text-critical">{a.deltaTNorm.toFixed(2)}°C</span>
@@ -552,7 +552,7 @@ function AnomalyList() {
                 <div>
                   <p className="mono text-[11px] text-muted-foreground">SL {i + 1}</p>
                   <p className="mono font-bold text-sm mt-0.5">{layoutLocation(a, plantName)}</p>
-                  <p className="text-sm mt-1 text-muted-foreground">{a.type}</p>
+                  <p className="text-sm mt-1 text-muted-foreground">{clientDefectType(a.type)}</p>
                 </div>
               </div>
               <SeverityBadge severity={a.severity} />

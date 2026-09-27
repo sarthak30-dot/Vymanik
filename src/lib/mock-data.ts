@@ -1519,6 +1519,44 @@ export const anomalyTypeDefs: Record<string, string> = {
   "Cold Spot":                     "Below-ambient cell temperature — possible delamination or moisture ingress",
 };
 
+// ─── Client-facing defect-type names ─────────────────────────────────────────
+
+/**
+ * The names a CLIENT sees for each defect type — the IEC 62446-3 category
+ * vocabulary from the reference report (Table 3 / Table 5: "Single Cell
+ * Hotspot", "Multi Cell Hotspot", "Diode Failure", "Bypass Diode", "Module
+ * Offline", "Local Hotspot", …). The internal `type` strings on each Anomaly
+ * are left exactly as the survey/KML produced them — severity, the map's
+ * defect layers, the type search and every filter key off them — so this is
+ * purely a presentation layer for the anomalies table, the CSV export and the
+ * defect-wise graphs. The map is one-to-one (no two internal types collapse
+ * to one client name), so grouping a chart by the client name gives the same
+ * buckets as grouping by the internal type. Anything not listed passes
+ * through unchanged.
+ */
+const CLIENT_DEFECT_NAMES: Record<string, string> = {
+  // Survey/KML types (scripts/import_defect_kml.py CODE_MAP)
+  "Multi-Module Hotspot": "Multi-Module Hotspot",
+  "Multi-Cell Hotspot": "Multi Cell Hotspot",
+  "Cell Hotspot": "Single Cell Hotspot",
+  "Diode Failure": "Diode Failure",
+  "Bypassed Substring": "Bypass Diode",
+  "Module Open Circuit": "Module Offline",
+  "Soiling": "Local Hotspot",
+  "Shading": "Shading",
+  // Controlled-vocabulary types (manual entry / CSV import, packages/types taxonomy)
+  "Single-cell Hotspot": "Single Cell Hotspot",
+  "Multi-cell Hotspot": "Multi Cell Hotspot",
+  "Full-module Hotspot": "Multi-Module Hotspot",
+  "Cracked Cell": "Broken Module",
+  "Junction Box Fault": "Module Short Circuit",
+};
+
+/** Map an internal defect `type` to the client-facing IEC name (see above). */
+export function clientDefectType(type: string): string {
+  return CLIENT_DEFECT_NAMES[type] ?? type;
+}
+
 // ─── Severity counts (derived) ───────────────────────────────────────────────
 
 /**

@@ -15,7 +15,7 @@
 import { jsPDF } from "jspdf";
 import { SEVERITY } from "./severity-tokens";
 import { downloadTextFile } from "./csv";
-import type { Anomaly, PlantSummary } from "./mock-data";
+import { clientDefectType, type Anomaly, type PlantSummary } from "./mock-data";
 
 /**
  * The fields the report actually reads — a structural subset satisfied by
@@ -674,7 +674,10 @@ export function generateThermographyPDF(
     doc,
     ["Defect Type", "Total No. of Defected Modules"],
     [130, 55],
-    [...typeRows.map(([t, c]) => [t, String(c)]), ["Cumulative Total", String(faulty.length)]],
+    [
+      ...typeRows.map(([t, c]) => [clientDefectType(t), String(c)]),
+      ["Cumulative Total", String(faulty.length)],
+    ],
     y,
     15,
   );
@@ -684,11 +687,12 @@ export function generateThermographyPDF(
   // beyond that the tail folds into one "Other" bar so no defect is dropped
   // from the total the chart represents.
   const MAX_TYPE_BARS = 12;
-  let figure1Rows = typeRows;
-  if (typeRows.length > MAX_TYPE_BARS) {
-    const head = typeRows.slice(0, MAX_TYPE_BARS - 1);
-    const tail = typeRows.slice(MAX_TYPE_BARS - 1);
-    const otherCount = tail.reduce((s, [, c]) => s + c, 0);
+  const namedRows: [string, number][] = typeRows.map(([t, c]) => [clientDefectType(t), c]);
+  let figure1Rows = namedRows;
+  if (namedRows.length > MAX_TYPE_BARS) {
+    const head = namedRows.slice(0, MAX_TYPE_BARS - 1);
+    const tail = namedRows.slice(MAX_TYPE_BARS - 1);
+    const otherCount = tail.reduce((sum, [, c]) => sum + c, 0);
     figure1Rows = [...head, [`Other (${tail.length} types)`, otherCount]];
   }
   newPage(doc, label);
@@ -767,7 +771,8 @@ export function generateThermographyPDF(
   y += 8;
   const recRows = typeRows.map(([type]) => {
     const rec = recommendationFor(type);
-    return [type, rec.recommendation, rec.responsibility];
+    const clientType = clientDefectType(type);
+    return [clientType, rec.recommendation, rec.responsibility];
   });
   drawTable(
     doc,
@@ -785,7 +790,7 @@ export function generateThermographyPDF(
   doc.setFontSize(9.5);
   for (const [type, count] of typeRows) {
     doc.text(
-      `• ${count} Module${count === 1 ? "" : "s"} ${count === 1 ? "is" : "are"} affected by ${type}`,
+      `• ${count} Module${count === 1 ? "" : "s"} ${count === 1 ? "is" : "are"} affected by ${clientDefectType(type)}`,
       18,
       y,
     );
@@ -883,7 +888,7 @@ function drawFaultyModuleTable(
       a.block ?? "—",
       layoutLocation(a),
       mapLocation(a),
-      a.type,
+      clientDefectType(a.type),
       a.deltaT != null ? a.deltaT.toFixed(2) : "—",
       coaLabel(a),
     ];
@@ -937,7 +942,7 @@ export function generateThermographyCSV(
         esc(layoutLocation(a)),
         String(a.gps.lat),
         String(a.gps.lng),
-        esc(a.type),
+        esc(clientDefectType(a.type)),
         a.deltaT != null ? a.deltaT.toFixed(2) : "",
         coaLabel(a),
       ].join(","),

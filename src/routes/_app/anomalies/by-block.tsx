@@ -5,7 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveCont
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { useAnomalies } from "@/lib/queries";
 import { usePlantContext } from "@/lib/plant-context";
-import { plant, SEVERITY_LABEL_FULL } from "@/lib/mock-data";
+import { plant, SEVERITY_LABEL_FULL, clientDefectType } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 
 export const Route = createFileRoute("/_app/anomalies/by-block")({
@@ -430,7 +430,7 @@ function BlockwiseAnomaly() {
                       {drillRows.map(a => (
                         <tr key={a.id} className="hover:bg-grey-25 transition">
                           <td className="px-4 py-3 mono font-semibold text-sm">{a.panelId}</td>
-                          <td className="px-4 py-3 text-sm">{a.type}</td>
+                          <td className="px-4 py-3 text-sm">{clientDefectType(a.type)}</td>
                           <td className="px-4 py-3 mono text-xs text-muted-foreground">
                             {a.string} · {a.inverter.replace(/^INV-/i, "Inv-")}
                           </td>
@@ -472,7 +472,7 @@ function BlockwiseAnomaly() {
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="mono font-bold text-sm">{a.panelId}</p>
-                          <p className="text-sm text-muted-foreground mt-0.5">{a.type}</p>
+                          <p className="text-sm text-muted-foreground mt-0.5">{clientDefectType(a.type)}</p>
                           <p className="mono text-xs text-muted-foreground mt-0.5">{a.string} · {a.inverter}</p>
                         </div>
                         <SeverityBadge severity={a.severity} />

@@ -14,7 +14,7 @@ const PanelMiniMap = lazy(() =>
   import("@/components/PanelMiniMap").then(m => ({ default: m.PanelMiniMap })),
 );
 import { useAnomaly, useAnomalies, usePatchAnomaly } from "@/lib/queries";
-import { anomalyTypeDefs, plant, SEVERITY_LABEL_FULL } from "@/lib/mock-data";
+import { anomalyTypeDefs, plant, SEVERITY_LABEL_FULL, clientDefectType } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 import { parseDefectImage } from "@/lib/defect-image";
 import { tokenFor } from "@/lib/severity-tokens";
@@ -62,7 +62,7 @@ async function generateFaultCardPDF(anomaly: AnomalyDTO): Promise<void> {
     const [r, g, b] = token.textRGB;
     doc.setTextColor(r, g, b);
     doc.setFontSize(11);
-    doc.text(anomaly.type, 14, y + 7);
+    doc.text(clientDefectType(anomaly.type), 14, y + 7);
   }
   y += 18;
 
@@ -198,7 +198,7 @@ function AnomalyDetail() {
 `🔴 FAULT ALERT — UrjaScan
 Plant: ${plant.name}
 Panel: ${anomaly.panelId} (Row ${anomaly.row}, Module ${anomaly.col})
-Type: ${anomaly.type}${anomaly.deltaT ? ` | ΔT: +${anomaly.deltaT}°C` : ""}
+Type: ${clientDefectType(anomaly.type)}${anomaly.deltaT ? ` | ΔT: +${anomaly.deltaT}°C` : ""}
 Severity: ${SEVERITY_LABEL_FULL[anomaly.severity]}
 Action: ${actionText}
 GPS: ${anomaly.gps.lat}°N, ${anomaly.gps.lng}°E
@@ -230,7 +230,7 @@ Ref: ${anomaly.rgbNote}`
             <ArrowLeft size={12} /> Back
           </Link>
           <h1 className="text-3xl md:text-4xl font-bold">Panel <span className="mono">{anomaly.panelId}</span></h1>
-          <p className="text-muted-foreground mt-1 text-sm">{anomaly.type} · {anomaly.string} · {anomaly.inverter}</p>
+          <p className="text-muted-foreground mt-1 text-sm">{clientDefectType(anomaly.type)} · {anomaly.string} · {anomaly.inverter}</p>
         </div>
         <div className="flex flex-col items-end gap-3">
           {/* Adjacent-defect stepper — walk the survey without a list round-trip.
@@ -273,7 +273,7 @@ Ref: ${anomaly.rgbNote}`
       <section className="bg-card border border-border p-5 md:p-6">
         <h2 className="font-semibold mb-4 text-sm uppercase tracking-widest text-grey-400">Inspection Data</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
-          <Detail label="Anomaly Type" value={anomaly.type} tooltip={anomalyTypeDefs[anomaly.type]} />
+          <Detail label="Anomaly Type" value={clientDefectType(anomaly.type)} tooltip={anomalyTypeDefs[anomaly.type]} />
           <Detail label="GPS Coordinates" value={`${anomaly.gps.lat}° N, ${anomaly.gps.lng}° E`} mono extra={
             <div className="flex items-center gap-3 mt-1.5">
               <a href={`https://www.google.com/maps?q=${anomaly.gps.lat},${anomaly.gps.lng}`} target="_blank" rel="noreferrer" className="text-ochre hover:underline text-xs inline-flex items-center gap-1">
