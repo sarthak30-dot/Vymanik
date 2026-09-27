@@ -88,13 +88,14 @@ export function AppHeader() {
           <UrjaScanLogo size="sm" />
         </Link>
 
-        {/* Plant chip — hidden on Control Center; dropdown for admin/team, static for client.
-            Keyed on showOperatorChrome rather than isAdmin/isTeam directly: while
-            presenting, an admin/team viewer sees the same static chip a client
-            would — nothing here says "you can switch plants," which is exactly
-            what a prospect looking at their own plant should see. */}
+        {/* Plant picker — hidden on Control Center. Admin/team get every plant;
+            a plant owner gets the picker too, scoped to the plants on their own
+            login (PlantContext's `plants`), so they can move plant → block the
+            same way. Only an admin/team viewer in Presentation Mode keeps the
+            static chip: they're showing a prospect one plant, and nothing there
+            should suggest the operator's whole fleet is one click away. */}
         {!onControlCenter && (
-          showOperatorChrome ? (
+          showOperatorChrome || user?.role === "client" ? (
             <PlantPicker />
           ) : (
             <div className="hidden md:flex items-center gap-2 text-sm border border-grey-200 px-3 py-1.5 bg-grey-50 cursor-default select-none shrink-0">

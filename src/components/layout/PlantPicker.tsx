@@ -12,11 +12,15 @@
  * that block's drill-down via by-block's `?block=` search param instead of
  * landing the operator on the whole-plant chart and making them find it
  * again by hand.
+ *
+ * Lists only the plants in PlantContext's `plants` — every plant for
+ * team/admin, just the ones a plant owner's login was granted for a client
+ * (see plantsForUser in lib/plant-context.tsx).
  */
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronDown, LayoutGrid } from "lucide-react";
-import { allPlants, type PlantSummary } from "@/lib/mock-data";
+import type { PlantSummary } from "@/lib/mock-data";
 import { usePlantContext } from "@/lib/plant-context";
 import { useAnomalies } from "@/lib/queries";
 
@@ -86,7 +90,7 @@ function useBlocksForPlant(plantId: string): { block: string; count: number }[] 
 }
 
 export function PlantPicker() {
-  const { selectedPlant, setSelectedPlantId } = usePlantContext();
+  const { selectedPlant, setSelectedPlantId, plants } = usePlantContext();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -134,7 +138,7 @@ export function PlantPicker() {
 
       {open && (
         <div className="absolute left-0 mt-1 w-80 max-h-[70vh] overflow-y-auto bg-card border border-border shadow-lg z-50">
-          {allPlants.map((p) => {
+          {plants.map((p) => {
             const isSelected = p.id === selectedPlant.id;
             const isExpanded = p.id === expandedId;
             return (
