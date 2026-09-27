@@ -396,10 +396,12 @@ function barChart(
   }
 }
 
-/** A solid pie (not a hollow donut, unlike the sample's Figure 3) — jsPDF has
- *  no native arc primitive, and approximating a true donut with hand-built
- *  wedge polygons added real risk for no information gained: a filled pie
- *  conveys the same COA1/2/3 split just as legibly. */
+/**
+ * A hollow donut, matching the sample report's Figure 3. jsPDF has no arc
+ * primitive, so each segment is a filled annular wedge: the outer arc forward
+ * then the inner arc back, closed, drawn with doc.lines(). The count sits on
+ * each slice (as in the sample), the category + percentage in the legend below.
+ */
 function pieChart(
   doc: jsPDF,
   title: string,
@@ -412,32 +414,59 @@ function pieChart(
   doc.setFontSize(11);
   doc.setTextColor(90, 90, 90);
   doc.text(title, cx - r, cy - r - 6);
+
   const total = Math.max(
     1,
     segments.reduce((s, seg) => s + seg.value, 0),
   );
+  const rInner = r * 0.55; // the hole — same proportion as the sample donut
+  const rLabel = (r + rInner) / 2; // where the count sits, centred in the ring
   let angle = -90; // start at 12 o'clock
+
   for (const seg of segments) {
     if (seg.value === 0) continue;
     const sweep = (seg.value / total) * 360;
+    const a0 = (angle * Math.PI) / 180;
+    const a1 = ((angle + sweep) * Math.PI) / 180;
     const steps = Math.max(2, Math.ceil(sweep / 4));
-    const points: [number, number][] = [];
+
+    // Annular wedge: outer arc a0→a1, then inner arc a1→a0, as one closed ring.
+    const ring: [number, number][] = [];
     for (let i = 0; i <= steps; i++) {
-      const a = ((angle + (sweep * i) / steps) * Math.PI) / 180;
-      points.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+      const a = a0 + ((a1 - a0) * i) / steps;
+      ring.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+    }
+    for (let i = steps; i >= 0; i--) {
+      const a = a0 + ((a1 - a0) * i) / steps;
+      ring.push([cx + rInner * Math.cos(a), cy + rInner * Math.sin(a)]);
+    }
+
+    const rel: [number, number][] = [];
+    for (let i = 1; i < ring.length; i++) {
+      rel.push([ring[i][0] - ring[i - 1][0], ring[i][1] - ring[i - 1][1]]);
     }
     doc.setFillColor(...seg.color);
     doc.setDrawColor(255, 255, 255);
-    const relLines: [number, number][] = [[points[0][0] - cx, points[0][1] - cy]];
-    for (let i = 0; i < points.length - 1; i++) {
-      relLines.push([points[i + 1][0] - points[i][0], points[i + 1][1] - points[i][1]]);
+    doc.setLineWidth(0.7);
+    doc.lines(rel, ring[0][0], ring[0][1], [1, 1], "FD", true);
+
+    // Count on the slice, only when the slice is wide enough to hold it.
+    if (sweep >= 18) {
+      const mid = (a0 + a1) / 2;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(255, 255, 255);
+      doc.text(String(seg.value), cx + rLabel * Math.cos(mid), cy + rLabel * Math.sin(mid) + 1, {
+        align: "center",
+      });
+      doc.setFont("helvetica", "normal");
     }
-    relLines.push([cx - points[points.length - 1][0], cy - points[points.length - 1][1]]);
-    doc.lines(relLines, cx, cy, [1, 1], "FD", true);
     angle += sweep;
   }
-  // Legend
-  let ly = cy + r + 10;
+  doc.setLineWidth(0.2);
+
+  // Legend below the donut.
+  let ly = cy + r + 12;
   doc.setFontSize(8);
   for (const seg of segments) {
     doc.setFillColor(...seg.color);
