@@ -10,6 +10,12 @@ import type { AnomalyDTO } from "@/lib/api";
 
 export const Route = createFileRoute("/_app/anomalies/by-block")({
   head: () => ({ meta: [{ title: "Block-wise Anomaly — UrjaScan" }] }),
+  // Optional ?block=<id> — lets the header's plant/block picker land straight
+  // on a block's drill-down instead of the whole-plant chart. Absent for the
+  // normal in-app tab click, same as map.tsx's own `focus` search param.
+  validateSearch: (search: Record<string, unknown>): { block?: string } => ({
+    block: typeof search.block === "string" ? search.block : undefined,
+  }),
   component: BlockwiseAnomaly,
 });
 
@@ -153,6 +159,7 @@ function BlockwiseAnomaly() {
   const { data: allAnomalies = [], isLoading } = useAnomalies();
   const { selectedPlant } = usePlantContext();
   const navigate = useNavigate();
+  const { block: blockParam } = Route.useSearch();
 
   const anomalies = useMemo(
     () => allAnomalies.filter(a =>
@@ -163,7 +170,10 @@ function BlockwiseAnomaly() {
 
   const [sortKey, setSortKey] = useState<SortKey>("defects");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [selectedBlock, setSelectedBlock] = useState<string | null>(null);
+  // Seeded from ?block=<id> (the header's plant/block picker) — only read
+  // once on mount, same as map.tsx's own `focus` param handling, so sorting
+  // or clearing the drill-down afterwards doesn't fight the URL.
+  const [selectedBlock, setSelectedBlock] = useState<string | null>(blockParam ?? null);
   const [drillDefectFilter, setDrillDefectFilter] = useState<string>("all");
   const [drillSevFilter, setDrillSevFilter] = useState<string>("all");
 
