@@ -22,7 +22,10 @@ import type { Anomaly, PlantSummary } from "./mock-data";
  * both mock-data's Anomaly (the baked plant-001 survey) and api's AnomalyDTO
  * (an uploaded survey's rows from the DB), so the same generator serves both.
  */
-export type ReportAnomaly = Pick<Anomaly, "panelId" | "type" | "deltaT" | "severity" | "string" | "inverter" | "gps"> &
+export type ReportAnomaly = Pick<
+  Anomaly,
+  "panelId" | "type" | "deltaT" | "severity" | "string" | "inverter" | "gps"
+> &
   Partial<Pick<Anomaly, "block" | "smb" | "stringSide" | "module">>;
 
 // ─── Report metadata (the admin-entered inputs the client asked for) ───────
@@ -115,10 +118,17 @@ function coaRGB(a: ReportAnomaly): [number, number, number] {
   return SEVERITY[key].textRGB as [number, number, number];
 }
 
-/** The faulty-module register only (matches the sample's Table 6 — normal-severity
- *  rows are healthy panels, not defects, and don't belong in a defect register). */
+/**
+ * Every reported defect in the survey. `normal` severity here is the COA1
+ * tier (soiling / shading / local hotspot) — genuine findings the survey
+ * flagged, not the plant's healthy modules (those are never rows in the
+ * anomaly list). They belong in Table 6 and in all three summary graphs,
+ * exactly as the sample report lists its COA1 "Shading" rows and counts them
+ * in Figure 3's Low slice. Only `nodata` (no thermal reading captured) is
+ * excluded.
+ */
 function faultyModules(anomalies: readonly ReportAnomaly[]): ReportAnomaly[] {
-  return anomalies.filter((a) => a.severity !== "normal" && a.severity !== "nodata");
+  return anomalies.filter((a) => a.severity !== "nodata");
 }
 
 /** "Table-347" -> "347"; falls back to the raw string field for surveys that
@@ -623,7 +633,8 @@ export function generateThermographyPDF(
   y = sectionTitle(doc, "Summary Result of Thermographic Inspection of PV Modules", 32);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  const summaryIntro = `As per the defined scope, a total of ${allAnomalies.length.toLocaleString("en-IN")} Nos. of PV modules were tested for aerial thermography. Out of the total inspected modules, ${faulty.length.toLocaleString("en-IN")} modules were found defective. Following is a summary of the test results.`;
+  const totalTested = plant.totalPanels > 0 ? plant.totalPanels : faulty.length;
+  const summaryIntro = `As per the defined scope, a total of ${totalTested.toLocaleString("en-IN")} Nos. of PV modules were tested for aerial thermography. Out of the total inspected modules, ${faulty.length.toLocaleString("en-IN")} modules were found defective. Following is a summary of the test results.`;
   const introLines = doc.splitTextToSize(summaryIntro, W - 30) as string[];
   doc.text(introLines, 15, y);
   y += introLines.length * 4.5 + 6;
@@ -640,9 +651,29 @@ export function generateThermographyPDF(
   );
 
   // ── Figures 1-3 ──
+  // Figure 1 (defect-wise): every defect type. Bars stay readable up to ~12;
+  // beyond that the tail folds into one "Other" bar so no defect is dropped
+  // from the total the chart represents.
+  const MAX_TYPE_BARS = 12;
+  let figure1Rows = typeRows;
+  if (typeRows.length > MAX_TYPE_BARS) {
+    const head = typeRows.slice(0, MAX_TYPE_BARS - 1);
+    const tail = typeRows.slice(MAX_TYPE_BARS - 1);
+    const otherCount = tail.reduce((s, [, c]) => s + c, 0);
+    figure1Rows = [...head, [`Other (${tail.length} types)`, otherCount]];
+  }
   newPage(doc, label);
   y = 32;
-  barChart(doc, "Figure 1 — Defect Summary", typeRows.slice(0, 8), 15, y, W - 30, 55, OCHRE);
+  barChart(
+    doc,
+    "Figure 1 — Defect Summary (by defect type)",
+    figure1Rows,
+    15,
+    y,
+    W - 30,
+    55,
+    OCHRE,
+  );
   y += 75;
 
   const blockCounts = countBy(faulty, (a) => a.block ?? "Unassigned");
@@ -852,7 +883,10 @@ function drawFaultyModuleTable(
 
 // ─── CSV export — the same faulty-module register as Table 6 ───────────────
 
-export function generateThermographyCSV(meta: ReportMetadata, allAnomalies: readonly ReportAnomaly[]) {
+export function generateThermographyCSV(
+  meta: ReportMetadata,
+  allAnomalies: readonly ReportAnomaly[],
+) {
   const faulty = faultyModules(allAnomalies);
   const header = [
     "SL No",
