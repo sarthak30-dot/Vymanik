@@ -47,8 +47,11 @@ function AnomalyTabNav() {
 // ── Data helpers ──────────────────────────────────────────────────────────────
 
 interface DefectStats {
+  /** The client-facing category name (see clientDefectType) — the grouping
+   *  key, so two internal types that read as the same category (e.g. "Diode
+   *  Failure" and "Bypassed Substring" both read "Bypass Diode") merge into
+   *  one bar/row rather than appearing twice under an identical label. */
   type: string;
-  /** Client-facing IEC name for `type` (see clientDefectType). */
   label: string;
   defects: AnomalyDTO[];
   count: number;
@@ -62,8 +65,9 @@ interface DefectStats {
 function computeDefectStats(anomalies: AnomalyDTO[]): DefectStats[] {
   const grouped = new Map<string, AnomalyDTO[]>();
   for (const a of anomalies) {
-    if (!grouped.has(a.type)) grouped.set(a.type, []);
-    grouped.get(a.type)!.push(a);
+    const key = clientDefectType(a.type);
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)!.push(a);
   }
   const total = anomalies.length || 1;
   return Array.from(grouped.entries())
@@ -80,7 +84,7 @@ function computeDefectStats(anomalies: AnomalyDTO[]): DefectStats[] {
         .map(([b]) => `Block ${b}`);
       return {
         type,
-        label: clientDefectType(type),
+        label: type,
         defects,
         count: defects.length,
         pct: Math.round((defects.length / total) * 1000) / 10,

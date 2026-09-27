@@ -14,7 +14,7 @@ const PanelMiniMap = lazy(() =>
   import("@/components/PanelMiniMap").then(m => ({ default: m.PanelMiniMap })),
 );
 import { useAnomaly, useAnomalies, usePatchAnomaly } from "@/lib/queries";
-import { anomalyTypeDefs, plant, SEVERITY_LABEL_FULL, clientDefectType } from "@/lib/mock-data";
+import { plant, SEVERITY_LABEL_FULL, clientDefectType, defectCategoryFor } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 import { parseDefectImage } from "@/lib/defect-image";
 import { tokenFor } from "@/lib/severity-tokens";
@@ -273,7 +273,7 @@ Ref: ${anomaly.rgbNote}`
       <section className="bg-card border border-border p-5 md:p-6">
         <h2 className="font-semibold mb-4 text-sm uppercase tracking-widest text-grey-400">Inspection Data</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
-          <Detail label="Anomaly Type" value={clientDefectType(anomaly.type)} tooltip={anomalyTypeDefs[anomaly.type]} />
+          <Detail label="Anomaly Type" value={clientDefectType(anomaly.type)} tooltip={defectCategoryFor(anomaly.type)?.description} />
           <Detail label="GPS Coordinates" value={`${anomaly.gps.lat}° N, ${anomaly.gps.lng}° E`} mono extra={
             <div className="flex items-center gap-3 mt-1.5">
               <a href={`https://www.google.com/maps?q=${anomaly.gps.lat},${anomaly.gps.lng}`} target="_blank" rel="noreferrer" className="text-ochre hover:underline text-xs inline-flex items-center gap-1">

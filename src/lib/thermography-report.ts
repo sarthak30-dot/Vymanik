@@ -15,7 +15,7 @@
 import { jsPDF } from "jspdf";
 import { SEVERITY } from "./severity-tokens";
 import { downloadTextFile } from "./csv";
-import { clientDefectType, type Anomaly, type PlantSummary } from "./mock-data";
+import { clientDefectType, DEFECT_CATEGORIES, type Anomaly, type PlantSummary } from "./mock-data";
 
 /**
  * The fields the report actually reads — a structural subset satisfied by
@@ -169,52 +169,15 @@ function countBy<T>(items: readonly T[], keyFn: (item: T) => string): Map<string
 // ─── Static IEC reference tables (Tables 3 & 4 — engineering standard text,
 // not per-inspection data, so these don't need admin input) ────────────────
 
-const DEFECT_CATEGORY_REFERENCE: { type: string; description: string; severityLevel: string }[] = [
-  {
-    type: "Single Cell Hotspot",
-    description:
-      "The difference in temperature increases with load, cell efficiency and a single cell in SubString.",
-    severityLevel: "COA1- dT<10 / COA2- 10<dT<40 / COA3- dT>40",
-  },
-  {
-    type: "Multi Cell Hotspot",
-    description:
-      "Differences in temperature increase with load, cell efficiency and more than one cell in SubString.",
-    severityLevel: "COA1- dT<10 / COA2- 10<dT<40 / COA3- dT>40",
-  },
-  {
-    type: "Diode Failure",
-    description:
-      "Part of the module surface is homogeneously heated up and heat dissipation by the Bypass Diodes, that are operating, are visible.",
-    severityLevel: "COA3",
-  },
-  {
-    type: "Module Short Circuit",
-    description: "Similar pattern as with broken front glass, cell defects and mismatch.",
-    severityLevel: "COA2",
-  },
-  {
-    type: "Broken Module",
-    description:
-      "Similar pattern: a module with a multi-cell hotspot, with cell defect, sometimes single broken cells are heated.",
-    severityLevel: "COA3",
-  },
-  {
-    type: "Module Offline",
-    description: "The module surface is homogeneously heated.",
-    severityLevel: "COA3",
-  },
-  {
-    type: "String Offline",
-    description: "All the connected modules in a string are homogeneously heated.",
-    severityLevel: "COA3",
-  },
-  {
-    type: "Local Hotspot",
-    description: "Normal dirt, e.g., dust or bird droppings on modules, vegetation encroachment.",
-    severityLevel: "COA1",
-  },
-];
+// Table 3 is just DEFECT_CATEGORIES (mock-data.ts — the single source of truth
+// for the client's eight defect categories) reshaped for drawTable's
+// [type, description, severityLevel] row format.
+const DEFECT_CATEGORY_REFERENCE: { type: string; description: string; severityLevel: string }[] =
+  DEFECT_CATEGORIES.map(c => ({
+    type: c.name,
+    description: c.description,
+    severityLevel: c.defaultCoa,
+  }));
 
 const ABNORMALITY_CLASSES: { coa: string; recommendation: string }[] = [
   { coa: "COA1 (no-abnormalities)", recommendation: "No imminent action" },
@@ -228,59 +191,64 @@ const ABNORMALITY_CLASSES: { coa: string; recommendation: string }[] = [
   },
 ];
 
-const RECOMMENDATION_BY_TYPE: { match: RegExp; recommendation: string; responsibility: string }[] =
-  [
-    {
-      match: /diode/i,
-      recommendation: "The diode failure needs to be replaced as per OEM guidelines.",
-      responsibility: "OEM",
-    },
-    {
-      match: /hotspot|cell/i,
-      recommendation:
-        "Perform cleaning of the modules, check for any visual defects and check with the thermal imaging equipment. If the hotspot persists, then modules need to be replaced.",
-      responsibility: "O&M / OEM",
-    },
-    {
-      match: /short circuit|crack/i,
-      recommendation:
-        "Check Voc of the module, check for busbar shorting/cell cracks inside the junction box, then the modules need to be replaced.",
-      responsibility: "OEM",
-    },
-    {
-      match: /broken|missing/i,
-      recommendation: "The broken/missing module needs to be replaced.",
-      responsibility: "O&M / OEM",
-    },
-    {
-      match: /module offline|string offline|open circuit|combiner|junction box/i,
-      recommendation:
-        "Check the module current, check the MC4 connector burns, fuse at Y-connectors & SCB/String inverter, and cable for open circuit.",
-      responsibility: "O&M",
-    },
-    {
-      match: /soiling|shad|vegetation/i,
-      recommendation:
-        "Perform module cleaning / grass cutting; if shading is caused by a fixed obstruction, relocate or remove it.",
-      responsibility: "O&M",
-    },
-    {
-      match: /pid/i,
-      recommendation:
-        "Investigate PID mitigation (night-time reverse bias / PID-recovery box) as per OEM guidance.",
-      responsibility: "OEM",
-    },
-  ];
+// Keyed by the exact client-facing category name (see DEFECT_CATEGORIES in
+// mock-data.ts) rather than a regex over the old, more varied internal `type`
+// strings — every call site now passes a category name (typeRows is grouped
+// by clientDefectType before recommendationFor ever sees it), so an exact
+// lookup is both simpler and no longer relies on incidental substring
+// matches (e.g. the old `/hotspot|cell/i` happening to also catch "Multi
+// Cell" post-relabel).
+const RECOMMENDATION_BY_CATEGORY: Record<string, { recommendation: string; responsibility: string }> = {
+  "Single Cell": {
+    recommendation:
+      "Monitor the cell for progressive thermal degradation at future inspections; no immediate replacement required unless the temperature difference increases.",
+    responsibility: "O&M",
+  },
+  "Multi Cell": {
+    recommendation:
+      "Schedule a field inspection to check for cracking, cell mismatch, or mechanical stress; clean the module and re-verify.",
+    responsibility: "O&M / OEM",
+  },
+  "Bypass Diode": {
+    recommendation:
+      "Verify the bypass diode's condition (activated vs. shorted) and replace the diode or module as per OEM guidelines.",
+    responsibility: "OEM",
+  },
+  "String Offline": {
+    recommendation:
+      "Inspect the combiner box, fuses, isolators, and MC4 connectors for the affected string; restore continuity.",
+    responsibility: "O&M",
+  },
+  "Module Offline": {
+    recommendation:
+      "Check module interconnections and continuity within the string; repair or reconnect as needed.",
+    responsibility: "O&M",
+  },
+  "Module Broken": {
+    recommendation:
+      "Isolate the module immediately (safety risk from shattered glass/burnt backsheet) and replace it.",
+    responsibility: "O&M / OEM",
+  },
+  "Shadow": {
+    recommendation:
+      "Clear the shading source (vegetation/structure) or correct tracker alignment; clean the module if soiling is the cause.",
+    responsibility: "O&M",
+  },
+  "Speckled": {
+    recommendation:
+      "Check string grounding and investigate PID mitigation (night-time reverse bias / PID-recovery box) as per OEM guidance.",
+    responsibility: "OEM",
+  },
+};
 
-function recommendationFor(type: string): { recommendation: string; responsibility: string } {
-  const hit = RECOMMENDATION_BY_TYPE.find((r) => r.match.test(type));
-  return hit
-    ? { recommendation: hit.recommendation, responsibility: hit.responsibility }
-    : {
-        recommendation:
-          "Cross-check the finding on site with the thermal imaging equipment and determine root cause before scheduling rectification.",
-        responsibility: "O&M",
-      };
+function recommendationFor(category: string): { recommendation: string; responsibility: string } {
+  return (
+    RECOMMENDATION_BY_CATEGORY[category] ?? {
+      recommendation:
+        "Cross-check the finding on site with the thermal imaging equipment and determine root cause before scheduling rectification.",
+      responsibility: "O&M",
+    }
+  );
 }
 
 // ─── jsPDF drawing helpers ───────────────────────────────────────────────────
@@ -668,14 +636,19 @@ export function generateThermographyPDF(
   doc.text(introLines, 15, y);
   y += introLines.length * 4.5 + 6;
 
-  const typeCounts = countBy(faulty, (a) => a.type);
+  // Grouped by the client-facing category (not the raw internal `type`) —
+  // two internal types that read as the same category (e.g. "Diode Failure"
+  // and "Bypassed Substring" both read "Bypass Diode") merge into one row/bar
+  // rather than appearing twice under an identical label. See
+  // clientDefectType's docblock in mock-data.ts.
+  const typeCounts = countBy(faulty, (a) => clientDefectType(a.type));
   const typeRows = [...typeCounts.entries()].sort((a, b) => b[1] - a[1]);
   y = drawTable(
     doc,
     ["Defect Type", "Total No. of Defected Modules"],
     [130, 55],
     [
-      ...typeRows.map(([t, c]) => [clientDefectType(t), String(c)]),
+      ...typeRows.map(([t, c]) => [t, String(c)]),
       ["Cumulative Total", String(faulty.length)],
     ],
     y,
@@ -683,11 +656,11 @@ export function generateThermographyPDF(
   );
 
   // ── Figures 1-3 ──
-  // Figure 1 (defect-wise): every defect type. Bars stay readable up to ~12;
-  // beyond that the tail folds into one "Other" bar so no defect is dropped
-  // from the total the chart represents.
+  // Figure 1 (defect-wise): every defect category. Bars stay readable up to
+  // ~12; beyond that the tail folds into one "Other" bar so no defect is
+  // dropped from the total the chart represents.
   const MAX_TYPE_BARS = 12;
-  const namedRows: [string, number][] = typeRows.map(([t, c]) => [clientDefectType(t), c]);
+  const namedRows: [string, number][] = typeRows;
   let figure1Rows = namedRows;
   if (namedRows.length > MAX_TYPE_BARS) {
     const head = namedRows.slice(0, MAX_TYPE_BARS - 1);
@@ -771,8 +744,7 @@ export function generateThermographyPDF(
   y += 8;
   const recRows = typeRows.map(([type]) => {
     const rec = recommendationFor(type);
-    const clientType = clientDefectType(type);
-    return [clientType, rec.recommendation, rec.responsibility];
+    return [type, rec.recommendation, rec.responsibility];
   });
   drawTable(
     doc,
@@ -790,7 +762,7 @@ export function generateThermographyPDF(
   doc.setFontSize(9.5);
   for (const [type, count] of typeRows) {
     doc.text(
-      `• ${count} Module${count === 1 ? "" : "s"} ${count === 1 ? "is" : "are"} affected by ${clientDefectType(type)}`,
+      `• ${count} Module${count === 1 ? "" : "s"} ${count === 1 ? "is" : "are"} affected by ${type}`,
       18,
       y,
     );

@@ -1501,60 +1501,137 @@ export const anomalyTypes = [
   "Heated Junction Box", "Combiner Fault", "Broken Glass", "Cold Spot",
 ];
 
-export const anomalyTypeDefs: Record<string, string> = {
-  "Multi-Module Hotspot":          "Multiple entire modules overheating — elevated fire and degradation risk",
-  "Diode Failure":                 "Bypass diode fault — heat pattern follows substring, up to 30% module loss",
-  "Multi-Cell Hotspot":            "Multiple overheated cells in one module — caused by crack or partial shading",
-  "Vegetation / Multi-Cell Hotspot": "Combined shading from vegetation triggering cell-level hotspots",
-  "Cell Hotspot":                  "Single overheated cell — monitor and schedule maintenance",
-  "Module Open Circuit":           "Module not producing output — check wiring and connections",
-  "Soiling":                       "Dust / bird droppings reducing output — schedule cleaning",
-  "Shading":                       "Temporary shadow — no immediate action, monitor periodically",
-  "String Fault":                  "Entire string disconnected — 100% production loss on string",
-  "PID":                           "Potential Induced Degradation — up to 30% power loss if unaddressed",
-  "Bypassed Substring":            "Faulty bypass diode causing heat across 1/3 of module",
-  "Heated Junction Box":           "Abnormally warm terminal box — connection fault indicator",
-  "Combiner Fault":                "All modules on one combiner uniformly overheating",
-  "Broken Glass":                  "Physical damage — immediate replacement required",
-  "Cold Spot":                     "Below-ambient cell temperature — possible delamination or moisture ingress",
-};
-
 // ─── Client-facing defect-type names ─────────────────────────────────────────
 
 /**
- * The names a CLIENT sees for each defect type — the IEC 62446-3 category
- * vocabulary from the reference report (Table 3 / Table 5: "Single Cell
- * Hotspot", "Multi Cell Hotspot", "Diode Failure", "Bypass Diode", "Module
- * Offline", "Local Hotspot", …). The internal `type` strings on each Anomaly
- * are left exactly as the survey/KML produced them — severity, the map's
- * defect layers, the type search and every filter key off them — so this is
- * purely a presentation layer for the anomalies table, the CSV export and the
- * defect-wise graphs. The map is one-to-one (no two internal types collapse
- * to one client name), so grouping a chart by the client name gives the same
- * buckets as grouping by the internal type. Anything not listed passes
- * through unchanged.
+ * The eight defect categories Vymanik's field team actually uses, given
+ * directly by the client (2026-09) to replace the report's earlier ad-hoc
+ * IEC-table wording ("Multi-Module Hotspot", "Local Hotspot", …). Each has a
+ * fixed description and a default IEC 62446-3 Class of Abnormality (COA) —
+ * COA1 = minor/monitor, COA2 = medium/corrective maintenance, COA3 =
+ * critical/immediate action — used for Table 3 in the thermography report
+ * (see lib/thermography-report.ts's DEFECT_CATEGORY_REFERENCE). The actual
+ * COA shown per finding always comes from the anomaly's own `severity` field
+ * (see thermography-report.ts's coaLabel doc), not this default — this is
+ * only the "typical" tier quoted in the static reference table, same as the
+ * client's reference report did for its own eight categories.
+ */
+export interface DefectCategory {
+  name: string;
+  description: string;
+  defaultCoa: "COA1" | "COA2" | "COA3";
+}
+
+export const DEFECT_CATEGORIES: DefectCategory[] = [
+  {
+    name: "Single Cell",
+    description:
+      "Localized hot spot on an individual cell caused by micro-cracks or localized defects; monitor for thermal degradation.",
+    defaultCoa: "COA1",
+  },
+  {
+    name: "Multi Cell",
+    description:
+      "Multiple overheated cells on a single panel indicating severe mechanical stress, cracking, or cell mismatch; schedule for field inspection.",
+    defaultCoa: "COA2",
+  },
+  {
+    name: "Bypass Diode",
+    description:
+      "Heated 1/3 sub-string or hot junction box due to an activated or shorted diode; verify diode condition or replace module.",
+    defaultCoa: "COA3",
+  },
+  {
+    name: "String Offline",
+    description:
+      "Entire series string inactive due to blown fuses, tripped isolators, or disconnected MC4s; inspect combiner box and DC wiring.",
+    defaultCoa: "COA3",
+  },
+  {
+    name: "Module Offline",
+    description:
+      "Full module open-circuited or disconnected within the string; check module interconnections and continuity.",
+    defaultCoa: "COA3",
+  },
+  {
+    name: "Module Broken",
+    description:
+      "Shattered glass, severe impact damage, or burnt backsheet presenting safety risks; isolate and replace immediately.",
+    defaultCoa: "COA3",
+  },
+  {
+    name: "Shadow",
+    description:
+      "External obstruction from vegetation, structures, or tracker errors causing localized yield loss; clear shading or correct tracker alignment.",
+    defaultCoa: "COA1",
+  },
+  {
+    name: "Speckled",
+    description:
+      "Dispersed \"salt-and-pepper\" hot spots across the panel indicating PID (Potential-Induced Degradation) or material degradation; check string grounding and PID mitigation.",
+    defaultCoa: "COA2",
+  },
+];
+
+export const DEFECT_CATEGORY_NAMES = DEFECT_CATEGORIES.map(c => c.name);
+
+/**
+ * Every internal defect `type` string this app has ever produced — from the
+ * March 2026 KML import (scripts/import_defect_kml.py's CODE_MAP), from
+ * lib/taxonomy.ts's manual-entry/CSV vocabulary, and from anomalyTypes above
+ * — mapped onto the eight client categories. The internal `type` strings on
+ * each Anomaly are left exactly as the survey/KML/CSV produced them —
+ * severity, the map's defect layers, the type search and every filter key
+ * off them — so this is purely a presentation layer for the anomalies table,
+ * the CSV export and the defect-wise graphs and report. Several internal
+ * types collapse onto one client category (e.g. both "Diode Failure" and
+ * "Bypassed Substring" read as "Bypass Diode" — both are the same physical
+ * symptom, a substring's bypass diode conducting because it's either
+ * genuinely faulty or correctly responding to a fault upstream of it), which
+ * is why grouping must always happen on the internal `type` first and only
+ * apply this map for display — never group by the client name directly, or
+ * two real defect types would merge into one bucket.
  */
 const CLIENT_DEFECT_NAMES: Record<string, string> = {
   // Survey/KML types (scripts/import_defect_kml.py CODE_MAP)
-  "Multi-Module Hotspot": "Multi-Module Hotspot",
-  "Multi-Cell Hotspot": "Multi Cell Hotspot",
-  "Cell Hotspot": "Single Cell Hotspot",
-  "Diode Failure": "Diode Failure",
+  "Multi-Module Hotspot": "String Offline",
+  "Multi-Cell Hotspot": "Multi Cell",
+  "Vegetation / Multi-Cell Hotspot": "Multi Cell",
+  "Cell Hotspot": "Single Cell",
+  "Diode Failure": "Bypass Diode",
   "Bypassed Substring": "Bypass Diode",
   "Module Open Circuit": "Module Offline",
-  "Soiling": "Local Hotspot",
-  "Shading": "Shading",
+  "Soiling": "Shadow",
+  "Shading": "Shadow",
+  "String Fault": "String Offline",
+  "PID": "Speckled",
+  "Heated Junction Box": "Bypass Diode",
+  "Combiner Fault": "String Offline",
+  "Broken Glass": "Module Broken",
+  "Cold Spot": "Speckled",
   // Controlled-vocabulary types (manual entry / CSV import, packages/types taxonomy)
-  "Single-cell Hotspot": "Single Cell Hotspot",
-  "Multi-cell Hotspot": "Multi Cell Hotspot",
-  "Full-module Hotspot": "Multi-Module Hotspot",
-  "Cracked Cell": "Broken Module",
-  "Junction Box Fault": "Module Short Circuit",
+  "Single-cell Hotspot": "Single Cell",
+  "Multi-cell Hotspot": "Multi Cell",
+  "Full-module Hotspot": "String Offline",
+  "Delamination": "Module Broken",
+  "Cracked Cell": "Module Broken",
+  "PID (Potential Induced Degradation)": "Speckled",
+  "Junction Box Fault": "Bypass Diode",
 };
 
-/** Map an internal defect `type` to the client-facing IEC name (see above). */
+/** Map an internal defect `type` to one of the eight client-facing
+ *  categories (see DEFECT_CATEGORIES above). Anything not listed — "Other",
+ *  or a future code this map hasn't seen yet — passes through unchanged. */
 export function clientDefectType(type: string): string {
   return CLIENT_DEFECT_NAMES[type] ?? type;
+}
+
+/** The client-facing category's own description + default COA, or null for
+ *  an unmapped/"Other" type — used by the report's Table 3 lookup and by
+ *  tooltips that want the category text rather than the per-internal-type one. */
+export function defectCategoryFor(type: string): DefectCategory | null {
+  const name = clientDefectType(type);
+  return DEFECT_CATEGORIES.find(c => c.name === name) ?? null;
 }
 
 // ─── Severity counts (derived) ───────────────────────────────────────────────

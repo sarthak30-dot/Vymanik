@@ -7,7 +7,7 @@ import { ExecutiveOverview } from "@/components/ExecutiveOverview";
 import { useI18n } from "@/lib/i18n";
 import { usePlant, useAnomalies, useInspectionHistory } from "@/lib/queries";
 import { getUser } from "@/lib/auth";
-import { allPlants, teamMembers } from "@/lib/mock-data";
+import { allPlants, teamMembers, clientDefectType } from "@/lib/mock-data";
 import { usePlantContext } from "@/lib/plant-context";
 import { SHOW_LOSS_METRICS } from "@/lib/feature-flags";
 import { useDensity } from "@/hooks/use-presentation";
@@ -470,7 +470,7 @@ function Dashboard() {
             >
               <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-3 items-center">
                 <span className="mono font-semibold text-foreground text-sm">{a.panelId}</span>
-                <span className="text-sm text-foreground">{a.type}</span>
+                <span className="text-sm text-foreground">{clientDefectType(a.type)}</span>
                 <span className="mono text-sm font-semibold text-critical">
                   {a.deltaT ? `+${a.deltaT}°C` : "—"}
                 </span>
