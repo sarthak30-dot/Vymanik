@@ -1591,6 +1591,9 @@ export const digitizationRecords: DigitizationRecord[] = [
 
 export type MemberStatus = "On Mission" | "Active" | "Off Duty";
 
+/** What this person actually does — added in migration 005_team_member_roles.sql. */
+export type TeamMemberRole = "Drone Pilot" | "Data Processor" | "Pilot & Processor" | "Supervisor";
+
 export interface TeamMember {
   id: string;
   name: string;
@@ -1601,6 +1604,8 @@ export interface TeamMember {
   certifications: string[];
   assignedPlantId: string | null;
   status: MemberStatus;
+  role: TeamMemberRole;
+  currentTask: string | null;
   inspectionsCompleted: number;
   anomaliesFound: number;
   lastActive: string;
@@ -1617,6 +1622,8 @@ export const teamMembers: TeamMember[] = [
     certifications: ["DGCA RPAS", "IEC 62446-3"],
     assignedPlantId: "plant-001",
     status: "On Mission",
+    role: "Pilot & Processor",
+    currentTask: "Blocks 06-122 thermal survey",
     inspectionsCompleted: 18,
     anomaliesFound: 347,
     lastActive: "28 May 2026",

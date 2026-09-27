@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { getToken } from "./auth";
-import type { AnomalyStatusPatch, PlantDTO, AnomalyDTO, PlantLayout, NewPlantLayoutInput } from "./api";
+import type { AnomalyStatusPatch, PlantDTO, AnomalyDTO, PlantLayout, NewPlantLayoutInput, TeamMemberRole, EditTeamMemberInput } from "./api";
 import { plant as mockPlant, anomalies as mockAnomalies, inspectionHistory as mockHistory } from "./mock-data";
 
 const DEFAULT_PLANT_ID = "plant-001"; // matches allPlants[0].id in mock-data.ts
@@ -299,6 +299,8 @@ export interface NewTeamMemberFormInput {
   email: string;
   phone: string;
   droneModel: string;
+  role: TeamMemberRole;
+  currentTask: string;
 }
 
 export function useCreateTeamMember() {
@@ -307,7 +309,10 @@ export function useCreateTeamMember() {
       let id = `tm-${Date.now()}`;
       try {
         const dto = await api.teamMembers.create(
-          { name: input.name, email: input.email, phone: input.phone, droneModel: input.droneModel },
+          {
+            name: input.name, email: input.email, phone: input.phone, droneModel: input.droneModel,
+            role: input.role, currentTask: input.currentTask || undefined,
+          },
           getToken()!,
         );
         id = dto.id;
@@ -332,11 +337,25 @@ export function useCreateTeamMember() {
         certifications: [] as string[],
         assignedPlantId: null,
         status: "Off Duty" as const,
+        role: input.role,
+        currentTask: input.currentTask || null,
         inspectionsCompleted: 0,
         anomaliesFound: 0,
         lastActive: "Just added",
       };
     },
+  });
+}
+
+/**
+ * Edits an existing team member's role/task/plant assignment. No local
+ * fallback (same reasoning as useInviteClient) — the whole point of editing
+ * is that the change is real and will still be there on reload.
+ */
+export function useEditTeamMember() {
+  return useMutation({
+    mutationFn: (input: { id: string } & EditTeamMemberInput) =>
+      api.teamMembers.edit(input.id, input, getToken()!),
   });
 }
 

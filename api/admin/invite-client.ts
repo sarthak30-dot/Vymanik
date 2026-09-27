@@ -1,11 +1,15 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { randomInt } from "node:crypto";
+import { supabase } from "../_lib/supabase";
 import { setCors } from "../_lib/cors";
 import { getAuthUser } from "../_lib/auth";
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function generateTempPassword(): string {
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
   let out = "";
-  for (let i = 0; i < 12; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 12; i++) out += chars[randomInt(chars.length)];
   return out;
 }
 
@@ -14,6 +18,10 @@ function generateTempPassword(): string {
  * admin selects (stored in user_metadata.plantIds, read back by /api/auth/login).
  * Returns a one-time temporary password — there's no email delivery configured,
  * so the admin shares it with the client directly.
+ *
+ * Uses the same service-role SDK client as /api/team-members (which works in
+ * production) rather than a hand-rolled fetch to /auth/v1/admin/users, so the
+ * two admin flows can't drift apart on headers or key format.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   setCors(res);
@@ -24,46 +32,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!caller) return res.status(401).json({ error: "Unauthorized" });
   if (caller.role !== "admin") return res.status(403).json({ error: "Only admins can invite clients" });
 
-  const { name, email, plantIds } = (req.body ?? {}) as {
-    name?: string; email?: string; plantIds?: string[];
-  };
-  if (!name || !email || !plantIds?.length) {
-    return res.status(400).json({ error: "name, email and at least one plantId are required" });
+  const body = (req.body ?? {}) as { name?: string; email?: string; plantIds?: string[] };
+  const name = body.name?.trim();
+  const email = body.email?.trim().toLowerCase();
+  const plantIds = Array.isArray(body.plantIds) ? body.plantIds.filter(Boolean) : [];
+
+  if (!name || !email || plantIds.length === 0) {
+    return res.status(400).json({ error: "Name, email and at least one plant are required." });
+  }
+  if (!EMAIL_RE.test(email)) {
+    return res.status(400).json({ error: `"${email}" is not a valid email address.` });
+  }
+  if (email === caller.email?.toLowerCase()) {
+    return res.status(409).json({
+      error: "That's your own admin login. Use the client's email address. Each client needs a separate account.",
+    });
   }
 
   const tempPassword = generateTempPassword();
 
-  let createRes: Response;
-  try {
-    createRes = await fetch(`${process.env.SUPABASE_URL}/auth/v1/admin/users`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "apikey": process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        "Authorization": `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-      body: JSON.stringify({
-        email,
-        password: tempPassword,
-        email_confirm: true,
-        user_metadata: { role: "client", plantIds, name },
-      }),
+  const { data, error } = await supabase.auth.admin.createUser({
+    email,
+    password: tempPassword,
+    email_confirm: true,
+    user_metadata: { role: "client", plantIds, name },
+  });
+
+  if (error || !data?.user) {
+    console.error("invite-client: createUser failed", { status: error?.status, code: error?.code, message: error?.message });
+    const isDuplicate =
+      error?.code === "email_exists" ||
+      error?.status === 422 ||
+      /already (been )?registered|already exists/i.test(error?.message ?? "");
+    if (isDuplicate) {
+      return res.status(409).json({
+        error: `An account for ${email} already exists. Use a different email, or ask us to update that account's plant access.`,
+      });
+    }
+    const status = error?.status && error.status >= 400 && error.status < 500 ? 400 : 500;
+    return res.status(status).json({
+      error: error?.message
+        ? `Could not create client login: ${error.message}`
+        : "Could not create client login. Please try again.",
     });
-  } catch (error) {
-    console.error("Supabase admin create user error:", error);
-    return res.status(500).json({ error: "Authentication service is currently unreachable." });
   }
-
-  if (!createRes.ok) {
-    const body = await createRes.json().catch(() => ({})) as { msg?: string; message?: string };
-    const msg = body.msg ?? body.message ?? "Failed to create client account. The email may already be registered.";
-    return res.status(createRes.status === 422 ? 409 : 500).json({ error: msg });
-  }
-
-  const created = await createRes.json() as { id: string };
 
   return res.status(201).json({
-    userId: created.id,
+    userId: data.user.id,
     email,
     tempPassword,
   });

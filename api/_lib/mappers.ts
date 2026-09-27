@@ -69,6 +69,10 @@ export function toTeamMemberDTO(row: Record<string, unknown>): TeamMemberDTO {
     certifications:        (row.certifications as string[]) ?? [],
     assignedPlantId:       (row.assigned_plant_id as string | null) ?? null,
     status:                row.status as TeamMemberDTO["status"],
+    // Falls back when migration 005_team_member_roles.sql hasn't been run yet
+    // against this Supabase project — the column won't exist on the row.
+    role:                  (row.role as TeamMemberDTO["role"]) ?? "Drone Pilot",
+    currentTask:           (row.current_task as string | null) ?? null,
     inspectionsCompleted:  Number(row.inspections_completed ?? 0),
     anomaliesFound:        Number(row.anomalies_found ?? 0),
     lastActive:            (row.last_active as string) ?? "",

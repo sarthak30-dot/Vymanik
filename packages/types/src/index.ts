@@ -38,6 +38,13 @@ export interface PlantDTO {
 
 export type TeamMemberStatus = "On Mission" | "Active" | "Off Duty";
 
+/**
+ * What this person actually does — added in migration 005 so the Control
+ * Center can record who flies vs. who processes the captured data, instead
+ * of everyone added showing up as an undifferentiated "team member".
+ */
+export type TeamMemberRole = "Drone Pilot" | "Data Processor" | "Pilot & Processor" | "Supervisor";
+
 export interface TeamMemberDTO {
   id: string;
   name: string;
@@ -48,6 +55,8 @@ export interface TeamMemberDTO {
   certifications: string[];
   assignedPlantId: string | null;
   status: TeamMemberStatus;
+  role: TeamMemberRole;
+  currentTask: string | null;
   inspectionsCompleted: number;
   anomaliesFound: number;
   lastActive: string;

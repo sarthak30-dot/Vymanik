@@ -79,6 +79,9 @@ export interface NewPlantInput {
 
 // ─── Team members ──────────────────────────────────────────────────────────
 
+/** What this person actually does — added in migration 005. */
+export type TeamMemberRole = "Drone Pilot" | "Data Processor" | "Pilot & Processor" | "Supervisor";
+
 export interface TeamMemberDTO {
   id: string;
   name: string;
@@ -89,6 +92,8 @@ export interface TeamMemberDTO {
   certifications: string[];
   assignedPlantId: string | null;
   status: "On Mission" | "Active" | "Off Duty";
+  role: TeamMemberRole;
+  currentTask: string | null;
   inspectionsCompleted: number;
   anomaliesFound: number;
   lastActive: string;
@@ -99,6 +104,14 @@ export interface NewTeamMemberInput {
   email: string;
   phone?: string;
   droneModel?: string;
+  role?: TeamMemberRole;
+  currentTask?: string;
+}
+
+export interface EditTeamMemberInput {
+  role?: TeamMemberRole;
+  currentTask?: string | null;
+  assignedPlantId?: string | null;
 }
 
 // ─── Client accounts ───────────────────────────────────────────────────────
@@ -328,6 +341,8 @@ export const api = {
     list: (token: string) => req<TeamMemberDTO[]>("GET", "/team-members", undefined, token),
     create: (body: NewTeamMemberInput, token: string) =>
       req<TeamMemberDTO>("POST", "/team-members", body, token),
+    edit: (id: string, body: EditTeamMemberInput, token: string) =>
+      req<TeamMemberDTO>("PATCH", `/team-members/${id}`, body, token),
   },
 
   admin: {
