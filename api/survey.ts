@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { supabase } from "./_lib/supabase";
-import { setCors } from "./_lib/cors";
-import { getAuthUser } from "./_lib/auth";
+import { supabase } from "./_lib/supabase.js";
+import { setCors } from "./_lib/cors.js";
+import { getAuthUser } from "./_lib/auth.js";
 
 /**
  * Survey upload from Control Center — the server half of what
