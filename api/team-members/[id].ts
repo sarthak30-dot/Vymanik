@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import type { TeamMemberDTO } from "../../packages/types/src/index";
-import { supabase } from "../_lib/supabase";
-import { setCors } from "../_lib/cors";
-import { getAuthUser } from "../_lib/auth";
-import { toTeamMemberDTO } from "../_lib/mappers";
+import { supabase } from "../_lib/supabase.js";
+import { setCors } from "../_lib/cors.js";
+import { getAuthUser } from "../_lib/auth.js";
+import { toTeamMemberDTO } from "../_lib/mappers.js";
 
 const TEAM_MEMBER_ROLES: TeamMemberDTO["role"][] = ["Drone Pilot", "Data Processor", "Pilot & Processor", "Supervisor"];
 

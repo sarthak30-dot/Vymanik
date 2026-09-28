@@ -1,10 +1,10 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { supabase } from "../_lib/supabase";
-import { setCors } from "../_lib/cors";
-import { getAuthUser } from "../_lib/auth";
-import { can } from "../_lib/permissions";
-import { toAnomalyDTO } from "../_lib/mappers";
-import { DEFECT_TYPES } from "../../packages/types/src/taxonomy";
+import { supabase } from "../_lib/supabase.js";
+import { setCors } from "../_lib/cors.js";
+import { getAuthUser } from "../_lib/auth.js";
+import { can } from "../_lib/permissions.js";
+import { toAnomalyDTO } from "../_lib/mappers.js";
+import { DEFECT_TYPES } from "../../packages/types/src/taxonomy.js";
 
 /**
  * Bulk insert for the CSV import wizard — one request in place of one

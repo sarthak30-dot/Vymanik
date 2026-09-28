@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { supabase } from "./_lib/supabase";
-import { setCors } from "./_lib/cors";
-import { verifyAuth, getAuthUser } from "./_lib/auth";
-import { toPlantDTO } from "./_lib/mappers";
+import { supabase } from "./_lib/supabase.js";
+import { setCors } from "./_lib/cors.js";
+import { verifyAuth, getAuthUser } from "./_lib/auth.js";
+import { toPlantDTO } from "./_lib/mappers.js";
 
 function slugify(name: string): string {
   return name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");

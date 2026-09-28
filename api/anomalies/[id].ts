@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { supabase } from "../_lib/supabase";
-import { setCors } from "../_lib/cors";
-import { getAuthUser } from "../_lib/auth";
-import { can } from "../_lib/permissions";
-import { toAnomalyDTO } from "../_lib/mappers";
+import { supabase } from "../_lib/supabase.js";
+import { setCors } from "../_lib/cors.js";
+import { getAuthUser } from "../_lib/auth.js";
+import { can } from "../_lib/permissions.js";
+import { toAnomalyDTO } from "../_lib/mappers.js";
 import type { AnomalyStatus } from "../../packages/types/src/index";
 
 const VALID_STATUSES: AnomalyStatus[] = ["New", "Acknowledged", "In Repair", "Closed"];
