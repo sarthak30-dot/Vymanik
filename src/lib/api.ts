@@ -470,6 +470,8 @@ export const api = {
   },
 
   enquiries: {
+    // POST /api/plants — folded in rather than its own function; see the
+    // comment above handleEnquiry in api/plants.ts for why.
     create: (
       body: {
         plantId: string;
@@ -482,7 +484,7 @@ export const api = {
         message?: string;
       },
       token: string,
-    ) => req<{ id: string; whatsappUrl: string }>("POST", "/enquiries", body, token),
+    ) => req<{ id: string; whatsappUrl: string }>("POST", "/plants", { action: "enquiry", ...body }, token),
   },
 };
 

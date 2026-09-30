@@ -139,15 +139,19 @@ app.get("/api/inspections/history", requireAuth, async (req, res) => {
   res.json(data ?? []);
 });
 
-// ─── Service enquiries (dev mirror — no email here; see api/enquiries.ts) ──
+// ─── Service enquiries (dev mirror — no email here; see api/plants.ts) ─────
+// Same POST /api/plants + {action:"enquiry"} shape as production, since
+// Vercel's Hobby plan function-count limit is what pushed this into
+// api/plants.ts there too — kept in sync so local testing matches.
 
 const WHATSAPP_NUMBER = "918182830960";
 
-app.post("/api/enquiries", requireAuth, async (req, res) => {
-  const { plantId, plantName, serviceId, serviceName, name, phone, email, message } = req.body as {
-    plantId?: string; plantName?: string; serviceId?: string; serviceName?: string;
+app.post("/api/plants", requireAuth, async (req, res) => {
+  const { action, plantId, plantName, serviceId, serviceName, name, phone, email, message } = req.body as {
+    action?: string; plantId?: string; plantName?: string; serviceId?: string; serviceName?: string;
     name?: string; phone?: string; email?: string; message?: string;
   };
+  if (action !== "enquiry") return res.status(400).json({ error: "Unknown action" });
   if (!plantId || !serviceId || !serviceName || !name?.trim() || !phone?.trim()) {
     return res.status(400).json({ error: "plantId, serviceId, serviceName, name and phone are required" });
   }
