@@ -1,9 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import {
   Thermometer, ClipboardCheck, Database, BarChart2, Zap, FileSearch,
   Radio, Eye, MapPin, ArrowRight, Download, ChevronDown, ChevronUp,
-  CheckCircle2, Clock, CalendarClock,
+  CheckCircle2, Clock, CalendarClock, MessageCircle, Loader2, Check,
 } from "lucide-react";
 import {
   anomalies, plant, severityCounts, inspectionHistory,
@@ -11,6 +11,11 @@ import {
   type EquipmentAudit, type AuditStatus,
 } from "@/lib/mock-data";
 import { toast } from "sonner";
+import { getUser, getToken } from "@/lib/auth";
+import { api } from "@/lib/api";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/_app/services")({
   head: () => ({ meta: [{ title: "Inspection Services — UrjaScan" }] }),
@@ -307,9 +312,205 @@ function ComingSoonCard({ svc }: { svc: typeof COMING_SOON[number] }) {
   );
 }
 
+// ─── Enquire card (Plant Owner view of the extra services) ─────────────────
+// Plant Owners get an actionable "Enquire Now" option instead of a dead-end
+// "Coming Soon" badge — submitting the form notifies Vymanik Aerospace
+// directly (see EnquiryDialog + api/enquiries.ts) so they can follow up.
+
+function EnquireCard({
+  svc,
+  onEnquire,
+}: {
+  svc: typeof COMING_SOON[number];
+  onEnquire: (svc: typeof COMING_SOON[number]) => void;
+}) {
+  const Icon = svc.icon;
+  return (
+    <div className="bg-card border border-border p-5 flex flex-col gap-3">
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 flex items-center justify-center bg-ochre-muted shrink-0">
+          <Icon size={16} className="text-ochre" />
+        </div>
+        <h3 className="font-semibold text-foreground text-sm">{svc.title}</h3>
+      </div>
+      <p className="text-xs text-muted-foreground leading-relaxed flex-1">{svc.description}</p>
+      <button
+        onClick={() => onEnquire(svc)}
+        className="inline-flex items-center justify-center gap-1.5 h-8 px-4 bg-ochre hover:bg-ochre-light text-ochre-fg font-semibold text-xs self-start"
+      >
+        <MessageCircle size={13} /> Enquire Now
+      </button>
+    </div>
+  );
+}
+
+// ─── Enquiry dialog ─────────────────────────────────────────────────────────
+
+function EnquiryDialog({
+  svc,
+  onClose,
+}: {
+  svc: typeof COMING_SOON[number] | null;
+  onClose: () => void;
+}) {
+  const user = getUser();
+  const [name, setName] = useState(user?.displayName ?? "");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<{ whatsappUrl: string } | null>(null);
+
+  function handleOpenChange(open: boolean) {
+    if (open) return;
+    onClose();
+    // Reset after the close animation reads `svc` one last time.
+    setTimeout(() => {
+      setName(user?.displayName ?? "");
+      setPhone("");
+      setEmail("");
+      setMessage("");
+      setResult(null);
+    }, 200);
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!svc) return;
+    const token = getToken();
+    if (!token) {
+      toast.error("Please log in again to send an enquiry.");
+      return;
+    }
+    if (!name.trim() || !phone.trim()) {
+      toast.error("Name and phone number are required.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await api.enquiries.create(
+        {
+          // This page currently reads from src/lib/mock-data.ts, which has no
+          // plant id — "plant-001" is this deployment's one real plant in Supabase.
+          plantId: "plant-001",
+          plantName: plant.name,
+          serviceId: svc.id,
+          serviceName: svc.title,
+          name: name.trim(),
+          phone: phone.trim(),
+          email: email.trim() || undefined,
+          message: message.trim() || undefined,
+        },
+        token,
+      );
+      setResult(res);
+      toast.success("Enquiry sent — Vymanik Aerospace will contact you shortly.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to send enquiry");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={svc != null} onOpenChange={handleOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        {svc && !result && (
+          <>
+            <DialogHeader>
+              <DialogTitle>Enquire about {svc.title}</DialogTitle>
+              <DialogDescription>
+                Tell us how to reach you and Vymanik Aerospace will follow up directly.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Name *</label>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                  className="mt-1 w-full h-9 px-3 border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Phone *</label>
+                <input
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  required
+                  type="tel"
+                  className="mt-1 w-full h-9 px-3 border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Email</label>
+                <input
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  type="email"
+                  className="mt-1 w-full h-9 px-3 border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ochre"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Message</label>
+                <textarea
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  rows={3}
+                  className="mt-1 w-full px-3 py-2 border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ochre resize-none"
+                />
+              </div>
+              <DialogFooter>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="inline-flex items-center justify-center gap-1.5 h-9 px-4 bg-ochre hover:bg-ochre-light text-ochre-fg font-semibold text-sm disabled:opacity-60"
+                >
+                  {submitting ? <Loader2 size={14} className="animate-spin" /> : <MessageCircle size={14} />}
+                  Send Enquiry
+                </button>
+              </DialogFooter>
+            </form>
+          </>
+        )}
+
+        {svc && result && (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <span className="w-6 h-6 flex items-center justify-center bg-normal/10 text-normal" style={{ borderRadius: "9999px" }}>
+                  <Check size={14} />
+                </span>
+                Enquiry sent
+              </DialogTitle>
+              <DialogDescription>
+                Vymanik Aerospace has received your enquiry about {svc.title} and will contact you shortly.
+              </DialogDescription>
+            </DialogHeader>
+            <a
+              href={result.whatsappUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center justify-center gap-1.5 h-9 px-4 font-semibold text-sm text-white"
+              style={{ backgroundColor: "#25D366" }}
+            >
+              <MessageCircle size={14} /> Message us on WhatsApp
+            </a>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Main page ─────────────────────────────────────────────────────────────
 
 function ServicesPage() {
+  const user = getUser();
+  const isClient = user?.role === "client";
+  const [enquiryService, setEnquiryService] = useState<typeof COMING_SOON[number] | null>(null);
+
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-8">
 
@@ -335,23 +536,31 @@ function ServicesPage() {
         </div>
       </section>
 
-      {/* Coming Soon */}
+      {/* Coming Soon / Additional Services */}
       <section>
         <div className="flex items-center gap-3 mb-4">
           <span className="inline-block w-2 h-2 bg-grey-300" style={{ borderRadius: "50%" }} />
-          <h2 className="font-semibold text-sm uppercase tracking-widest text-grey-400">Coming Soon</h2>
+          <h2 className="font-semibold text-sm uppercase tracking-widest text-grey-400">
+            {isClient ? "Additional Services" : "Coming Soon"}
+          </h2>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {COMING_SOON.map(svc => (
-            <ComingSoonCard key={svc.id} svc={svc} />
-          ))}
+          {COMING_SOON.map(svc =>
+            isClient
+              ? <EnquireCard key={svc.id} svc={svc} onEnquire={setEnquiryService} />
+              : <ComingSoonCard key={svc.id} svc={svc} />
+          )}
         </div>
-        <p className="text-xs text-muted-foreground mt-4">
-          Interested in any of these services?{" "}
-          <a href="mailto:info@vymanik.com" className="text-ochre font-medium hover:underline">Contact Vymanik Aerospace</a>
-          {" "}to get started.
-        </p>
+        {!isClient && (
+          <p className="text-xs text-muted-foreground mt-4">
+            Interested in any of these services?{" "}
+            <a href="mailto:info@vymanik.com" className="text-ochre font-medium hover:underline">Contact Vymanik Aerospace</a>
+            {" "}to get started.
+          </p>
+        )}
       </section>
+
+      {isClient && <EnquiryDialog svc={enquiryService} onClose={() => setEnquiryService(null)} />}
     </div>
   );
 }
