@@ -139,6 +139,34 @@ app.get("/api/inspections/history", requireAuth, async (req, res) => {
   res.json(data ?? []);
 });
 
+// ─── Service enquiries (dev mirror — no email here; see api/plants.ts) ─────
+// Same POST /api/plants + {action:"enquiry"} shape as production, since
+// Vercel's Hobby plan function-count limit is what pushed this into
+// api/plants.ts there too — kept in sync so local testing matches.
+
+const WHATSAPP_NUMBER = "918182830960";
+
+app.post("/api/plants", requireAuth, async (req, res) => {
+  const { action, plantId, plantName, serviceId, serviceName, name, phone, email, message } = req.body as {
+    action?: string; plantId?: string; plantName?: string; serviceId?: string; serviceName?: string;
+    name?: string; phone?: string; email?: string; message?: string;
+  };
+  if (action !== "enquiry") return res.status(400).json({ error: "Unknown action" });
+  if (!plantId || !serviceId || !serviceName || !name?.trim() || !phone?.trim()) {
+    return res.status(400).json({ error: "plantId, serviceId, serviceName, name and phone are required" });
+  }
+
+  const id = `enq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const { error } = await supabase.from("service_enquiries").insert({
+    id, plant_id: plantId, service_id: serviceId, service_name: serviceName,
+    name: name.trim(), phone: phone.trim(), email: email?.trim() || null, message: message?.trim() || null,
+  });
+  if (error) return res.status(500).json({ error: error.message });
+
+  const text = `Hi, I'm ${name.trim()}, regarding ${plantName ?? plantId}. I'd like to enquire about ${serviceName}.`;
+  res.status(201).json({ id, whatsappUrl: `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}` });
+});
+
 // ─── Health ────────────────────────────────────────────────────────────────
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));

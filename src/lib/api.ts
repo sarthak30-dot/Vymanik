@@ -468,6 +468,24 @@ export const api = {
     generate: (inspectionId: string, type: "exec" | "tech" | "warranty", token: string) =>
       req<{ downloadUrl: string }>("POST", `/reports/${inspectionId}/${type}`, {}, token),
   },
+
+  enquiries: {
+    // POST /api/plants — folded in rather than its own function; see the
+    // comment above handleEnquiry in api/plants.ts for why.
+    create: (
+      body: {
+        plantId: string;
+        plantName?: string;
+        serviceId: string;
+        serviceName: string;
+        name: string;
+        phone: string;
+        email?: string;
+        message?: string;
+      },
+      token: string,
+    ) => req<{ id: string; whatsappUrl: string }>("POST", "/plants", { action: "enquiry", ...body }, token),
+  },
 };
 
 // ─── WebSocket job events ───────────────────────────────────────────────────
