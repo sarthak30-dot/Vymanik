@@ -9,52 +9,32 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AppTeamRouteImport } from './routes/_app/team'
-import { Route as AppSettingsRouteImport } from './routes/_app/settings'
-import { Route as AppServicesRouteImport } from './routes/_app/services'
-import { Route as AppReportsRouteImport } from './routes/_app/reports'
-import { Route as AppMapRouteImport } from './routes/_app/map'
-import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
+import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppAdminRouteImport } from './routes/_app/admin'
+import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
+import { Route as AppMapRouteImport } from './routes/_app/map'
+import { Route as AppReportsRouteImport } from './routes/_app/reports'
+import { Route as AppServicesRouteImport } from './routes/_app/services'
+import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppTeamRouteImport } from './routes/_app/team'
 import { Route as AppAnomaliesIndexRouteImport } from './routes/_app/anomalies/index'
-import { Route as AppAnomaliesByDefectRouteImport } from './routes/_app/anomalies/by-defect'
-import { Route as AppAnomaliesByBlockRouteImport } from './routes/_app/anomalies/by-block'
 import { Route as AppAnomaliesIdRouteImport } from './routes/_app/anomalies/$id'
+import { Route as AppAnomaliesByBlockRouteImport } from './routes/_app/anomalies/by-block'
+import { Route as AppAnomaliesByDefectRouteImport } from './routes/_app/anomalies/by-defect'
 
-const AppRoute = AppRouteImport.update({
-  id: '/_app',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppTeamRoute = AppTeamRouteImport.update({
-  id: '/team',
-  path: '/team',
-  getParentRoute: () => AppRoute,
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const AppSettingsRoute = AppSettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppServicesRoute = AppServicesRouteImport.update({
-  id: '/services',
-  path: '/services',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppReportsRoute = AppReportsRouteImport.update({
-  id: '/reports',
-  path: '/reports',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppMapRoute = AppMapRouteImport.update({
-  id: '/map',
-  path: '/map',
+const AppAdminRoute = AppAdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
   getParentRoute: () => AppRoute,
 } as any)
 const AppDashboardRoute = AppDashboardRouteImport.update({
@@ -62,9 +42,29 @@ const AppDashboardRoute = AppDashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => AppRoute,
 } as any)
-const AppAdminRoute = AppAdminRouteImport.update({
-  id: '/admin',
-  path: '/admin',
+const AppMapRoute = AppMapRouteImport.update({
+  id: '/map',
+  path: '/map',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppReportsRoute = AppReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppServicesRoute = AppServicesRouteImport.update({
+  id: '/services',
+  path: '/services',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTeamRoute = AppTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAnomaliesIndexRoute = AppAnomaliesIndexRouteImport.update({
@@ -72,9 +72,9 @@ const AppAnomaliesIndexRoute = AppAnomaliesIndexRouteImport.update({
   path: '/anomalies/',
   getParentRoute: () => AppRoute,
 } as any)
-const AppAnomaliesByDefectRoute = AppAnomaliesByDefectRouteImport.update({
-  id: '/anomalies/by-defect',
-  path: '/anomalies/by-defect',
+const AppAnomaliesIdRoute = AppAnomaliesIdRouteImport.update({
+  id: '/anomalies/$id',
+  path: '/anomalies/$id',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAnomaliesByBlockRoute = AppAnomaliesByBlockRouteImport.update({
@@ -82,9 +82,9 @@ const AppAnomaliesByBlockRoute = AppAnomaliesByBlockRouteImport.update({
   path: '/anomalies/by-block',
   getParentRoute: () => AppRoute,
 } as any)
-const AppAnomaliesIdRoute = AppAnomaliesIdRouteImport.update({
-  id: '/anomalies/$id',
-  path: '/anomalies/$id',
+const AppAnomaliesByDefectRoute = AppAnomaliesByDefectRouteImport.update({
+  id: '/anomalies/by-defect',
+  path: '/anomalies/by-defect',
   getParentRoute: () => AppRoute,
 } as any)
 
@@ -185,13 +185,6 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/_app': {
-      id: '/_app'
-      path: ''
-      fullPath: '/'
-      preLoaderRoute: typeof AppRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -199,39 +192,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_app/team': {
-      id: '/_app/team'
-      path: '/team'
-      fullPath: '/team'
-      preLoaderRoute: typeof AppTeamRouteImport
-      parentRoute: typeof AppRoute
+    '/_app': {
+      id: '/_app'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/_app/settings': {
-      id: '/_app/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof AppSettingsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/services': {
-      id: '/_app/services'
-      path: '/services'
-      fullPath: '/services'
-      preLoaderRoute: typeof AppServicesRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/reports': {
-      id: '/_app/reports'
-      path: '/reports'
-      fullPath: '/reports'
-      preLoaderRoute: typeof AppReportsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/map': {
-      id: '/_app/map'
-      path: '/map'
-      fullPath: '/map'
-      preLoaderRoute: typeof AppMapRouteImport
+    '/_app/admin': {
+      id: '/_app/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AppAdminRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/dashboard': {
@@ -241,11 +213,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDashboardRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/admin': {
-      id: '/_app/admin'
-      path: '/admin'
-      fullPath: '/admin'
-      preLoaderRoute: typeof AppAdminRouteImport
+    '/_app/map': {
+      id: '/_app/map'
+      path: '/map'
+      fullPath: '/map'
+      preLoaderRoute: typeof AppMapRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/reports': {
+      id: '/_app/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof AppReportsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/services': {
+      id: '/_app/services'
+      path: '/services'
+      fullPath: '/services'
+      preLoaderRoute: typeof AppServicesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/settings': {
+      id: '/_app/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/team': {
+      id: '/_app/team'
+      path: '/team'
+      fullPath: '/team'
+      preLoaderRoute: typeof AppTeamRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/anomalies/': {
@@ -255,11 +255,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAnomaliesIndexRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/anomalies/by-defect': {
-      id: '/_app/anomalies/by-defect'
-      path: '/anomalies/by-defect'
-      fullPath: '/anomalies/by-defect'
-      preLoaderRoute: typeof AppAnomaliesByDefectRouteImport
+    '/_app/anomalies/$id': {
+      id: '/_app/anomalies/$id'
+      path: '/anomalies/$id'
+      fullPath: '/anomalies/$id'
+      preLoaderRoute: typeof AppAnomaliesIdRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/anomalies/by-block': {
@@ -269,11 +269,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAnomaliesByBlockRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/anomalies/$id': {
-      id: '/_app/anomalies/$id'
-      path: '/anomalies/$id'
-      fullPath: '/anomalies/$id'
-      preLoaderRoute: typeof AppAnomaliesIdRouteImport
+    '/_app/anomalies/by-defect': {
+      id: '/_app/anomalies/by-defect'
+      path: '/anomalies/by-defect'
+      fullPath: '/anomalies/by-defect'
+      preLoaderRoute: typeof AppAnomaliesByDefectRouteImport
       parentRoute: typeof AppRoute
     }
   }
