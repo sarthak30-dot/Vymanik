@@ -7,11 +7,12 @@ import {
   ChevronRight, Wifi, WifiOff, Activity, Shield, UserPlus, PlusCircle, KeyRound, Grid3x3, Copy, UploadCloud,
 } from "lucide-react";
 import {
-  teamMembers as seedTeamMembers, reviewQueue,
+  reviewQueue,
   type TeamMember, type PlantSummary, type TeamMemberRole,
 } from "@/lib/mock-data";
 import {
   useCreatePlant, useCreateTeamMember, useInviteClient, useGeneratePlantLayout, useEditTeamMember,
+  useFleetTeamMembers,
   type NewPlantFormInput, type NewTeamMemberFormInput,
 } from "@/lib/queries";
 import type { NewPlantLayoutInput, InviteClientResult } from "@/lib/api";
@@ -75,20 +76,22 @@ function AssignModal({
   plant,
   members,
   onClose,
+  onAssign,
+  isPending,
 }: {
   plant: PlantSummary;
   members: TeamMember[];
   onClose: () => void;
+  onAssign: (memberId: string) => void;
+  isPending: boolean;
 }) {
-  const [selected, setSelected] = useState(plant.assignedInspectorId ?? "");
+  const currentInspector = members.find(m => m.assignedPlantId === plant.id);
+  const [selected, setSelected] = useState(currentInspector?.id ?? "");
   const available = members.filter(m => m.status !== "Off Duty");
 
   function handleAssign() {
-    const member = members.find(m => m.id === selected);
-    toast.success(`${member?.name ?? "Inspector"} assigned to ${plant.name}`, {
-      description: "Plant owner and inspector have been notified.",
-    });
-    onClose();
+    if (!selected) return;
+    onAssign(selected);
   }
 
   return (
@@ -123,10 +126,10 @@ function AssignModal({
           </div>
           <button
             onClick={handleAssign}
-            disabled={!selected}
+            disabled={!selected || isPending}
             className="w-full h-9 bg-ochre hover:bg-ochre-light text-ochre-fg font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Confirm Assignment
+            {isPending ? "Assigning…" : "Confirm Assignment"}
           </button>
         </div>
       </div>
@@ -559,7 +562,10 @@ function ControlCenter() {
   // Mock plants + every plant saved through Add Plant (useFleetPlants) —
   // was a local copy of the mock list, so added plants vanished on reload.
   const { plants, selectedPlantId } = usePlantContext();
-  const [members, setMembers] = useState<TeamMember[]>(seedTeamMembers);
+  // Same pattern for team members (useFleetTeamMembers) — an addition, a
+  // role edit, or an Assign Inspector now all read back from the database
+  // instead of a local list that reset to the seed on every reload.
+  const members = useFleetTeamMembers();
   const [clients, setClients] = useState<ClientAccount[]>([]);
 
   const [showAddPlant, setShowAddPlant] = useState(false);
@@ -594,7 +600,8 @@ function ControlCenter() {
   function handleAddMember(input: NewTeamMemberFormInput) {
     createTeamMember.mutate(input, {
       onSuccess: (member) => {
-        setMembers(prev => [member, ...prev]);
+        // useCreateTeamMember refreshes the fleet query; the new member
+        // arrives through useFleetTeamMembers() with no local list to update.
         setShowAddMember(false);
         toast.success(`${member.name} added to the team`, {
           description: "They can now be assigned to a plant below.",
@@ -609,16 +616,31 @@ function ControlCenter() {
     editTeamMember.mutate(
       { id: editMember.id, role: input.role, currentTask: input.currentTask || null },
       {
-        onSuccess: (updated) => {
-          setMembers(prev => prev.map(m => m.id === editMember.id
-            ? { ...m, role: updated.role, currentTask: updated.currentTask }
-            : m));
+        onSuccess: () => {
           setEditMember(null);
           toast.success(`${editMember.name}'s role updated`, {
             description: `${input.role}${input.currentTask ? ` · ${input.currentTask}` : ""}`,
           });
         },
         onError: (err: Error) => toast.error(err.message || "Failed to update team member"),
+      },
+    );
+  }
+
+  function handleAssignInspector(memberId: string) {
+    if (!assignPlant) return;
+    const plant = assignPlant;
+    const member = members.find(m => m.id === memberId);
+    editTeamMember.mutate(
+      { id: memberId, assignedPlantId: plant.id },
+      {
+        onSuccess: () => {
+          setAssignPlant(null);
+          toast.success(`${member?.name ?? "Inspector"} assigned to ${plant.name}`, {
+            description: "Plant owner and inspector have been notified.",
+          });
+        },
+        onError: (err: Error) => toast.error(err.message || "Failed to assign inspector"),
       },
     );
   }
@@ -805,7 +827,7 @@ function ControlCenter() {
                         </button>
                         <button
                           onClick={() => {
-                            const plant = plants.find(p => p.assignedInspectorId === m.id) ?? plants[0];
+                            const plant = (m.assignedPlantId ? plants.find(p => p.id === m.assignedPlantId) : null) ?? plants[0];
                             setAssignPlant(plant);
                           }}
                           className="h-7 px-3 border border-grey-200 text-xs font-medium hover:bg-muted"
@@ -910,9 +932,7 @@ function ControlCenter() {
             </thead>
             <tbody>
               {plants.map(p => {
-                const inspector = p.assignedInspectorId
-                  ? members.find(m => m.id === p.assignedInspectorId)
-                  : null;
+                const inspector = members.find(m => m.assignedPlantId === p.id) ?? null;
                 return (
                   <tr key={p.id} className="border-b border-grey-200 hover:bg-grey-25">
                     <td className="px-5 py-4">
@@ -957,9 +977,7 @@ function ControlCenter() {
         {/* Mobile cards */}
         <div className="md:hidden divide-y divide-border">
           {plants.map(p => {
-            const inspector = p.assignedInspectorId
-              ? members.find(m => m.id === p.assignedInspectorId)
-              : null;
+            const inspector = members.find(m => m.assignedPlantId === p.id) ?? null;
             return (
               <div key={p.id} className="p-4 space-y-2">
                 <div className="flex items-start justify-between gap-2">
@@ -1077,7 +1095,13 @@ function ControlCenter() {
 
       {/* Assign modal */}
       {assignPlant && (
-        <AssignModal plant={assignPlant} members={members} onClose={() => setAssignPlant(null)} />
+        <AssignModal
+          plant={assignPlant}
+          members={members}
+          onClose={() => setAssignPlant(null)}
+          onAssign={handleAssignInspector}
+          isPending={editTeamMember.isPending}
+        />
       )}
 
       {/* Edit member role/task modal */}

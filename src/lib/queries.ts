@@ -3,7 +3,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { getToken } from "./auth";
 import type { AnomalyStatusPatch, PlantDTO, AnomalyDTO, PlantLayout, NewPlantLayoutInput, TeamMemberRole, EditTeamMemberInput, PlantSurvey } from "./api";
-import { plant as mockPlant, anomalies as mockAnomalies, inspectionHistory as mockHistory, allPlants, type PlantSummary } from "./mock-data";
+import {
+  plant as mockPlant, anomalies as mockAnomalies, inspectionHistory as mockHistory, allPlants,
+  teamMembers as seedTeamMembers, type PlantSummary, type TeamMember,
+} from "./mock-data";
 
 const DEFAULT_PLANT_ID = "plant-001"; // matches allPlants[0].id in mock-data.ts
 const DEFAULT_INSPECTION_ID = "insp-may-2026";
@@ -95,6 +98,30 @@ export function useFleetPlants(): PlantSummary[] {
       .filter((p) => !known.has(p.id) && !SUPERSEDED_PLANT_IDS.has(p.id))
       .map(plantDTOToSummary);
     return [...allPlants, ...saved];
+  }, [data]);
+}
+
+/**
+ * Every team member: the one seed inspector (which carries the baked-in
+ * demo inspection stats) plus every member saved to the database through
+ * Control Center's Add Team Member, so an addition, a role edit, or an
+ * inspector assignment is still there after a reload — same pattern as
+ * useFleetPlants above. Falls back to the seed alone when the API is
+ * unreachable.
+ */
+export function useFleetTeamMembers(): TeamMember[] {
+  const { data } = useQuery({
+    queryKey: ["teamMembers", "fleet"],
+    queryFn: () => api.teamMembers.list(getToken()!),
+    enabled: !!getToken(),
+    staleTime: 60 * 1000,
+    retry: 1,
+  });
+  return useMemo(() => {
+    if (!data) return seedTeamMembers;
+    const known = new Set(seedTeamMembers.map((m) => m.id));
+    const saved = data.filter((m) => !known.has(m.id));
+    return [...seedTeamMembers, ...saved];
   }, [data]);
 }
 
@@ -332,47 +359,24 @@ export interface NewTeamMemberFormInput {
   currentTask: string;
 }
 
+/**
+ * Saves a team member through the API and refreshes the fleet query so they
+ * show up everywhere that reads useFleetTeamMembers(). No local fallback,
+ * same reasoning as useCreatePlant — a silent local-only "success" used to
+ * mean the member vanished again on reload with no sign anything was wrong.
+ */
 export function useCreateTeamMember() {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: NewTeamMemberFormInput) => {
-      let id = `tm-${Date.now()}`;
-      try {
-        const dto = await api.teamMembers.create(
-          {
-            name: input.name, email: input.email, phone: input.phone, droneModel: input.droneModel,
-            role: input.role, currentTask: input.currentTask || undefined,
-          },
-          getToken()!,
-        );
-        id = dto.id;
-      } catch {
-        // Supabase not reachable/configured — member still shows up locally.
-      }
-
-      const initials = input.name
-        .split(" ")
-        .filter(Boolean)
-        .slice(0, 2)
-        .map(w => w[0].toUpperCase())
-        .join("") || "NA";
-
-      return {
-        id,
-        name: input.name,
-        initials,
-        email: input.email,
-        phone: input.phone,
-        droneModel: input.droneModel || "Not specified",
-        certifications: [] as string[],
-        assignedPlantId: null,
-        status: "Off Duty" as const,
-        role: input.role,
-        currentTask: input.currentTask || null,
-        inspectionsCompleted: 0,
-        anomaliesFound: 0,
-        lastActive: "Just added",
-      };
-    },
+    mutationFn: (input: NewTeamMemberFormInput) =>
+      api.teamMembers.create(
+        {
+          name: input.name, email: input.email, phone: input.phone, droneModel: input.droneModel,
+          role: input.role, currentTask: input.currentTask || undefined,
+        },
+        getToken()!,
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["teamMembers"] }),
   });
 }
 
@@ -382,9 +386,11 @@ export function useCreateTeamMember() {
  * is that the change is real and will still be there on reload.
  */
 export function useEditTeamMember() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: { id: string } & EditTeamMemberInput) =>
       api.teamMembers.edit(input.id, input, getToken()!),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["teamMembers"] }),
   });
 }
 
