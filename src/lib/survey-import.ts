@@ -382,7 +382,7 @@ const MASTER_CSV_COLUMNS = [
 /** Parse the Master CSV. Header names are matched exactly (case-insensitive,
  *  trimmed) — it's a machine-produced file, not a free-form spreadsheet. */
 export function parseMasterCsv(text: string): MasterCsv {
-  const cells = parseCSV(text.replace(/^﻿/, "")).filter((r) => r.some((c) => c.trim() !== ""));
+  const cells = parseCSV(text.replace(/^\uFEFF/, "")).filter((r) => r.some((c) => c.trim() !== ""));
   const header = (cells[0] ?? []).map((h) => h.trim().toLowerCase());
   const col = (name: string) => header.indexOf(name.toLowerCase());
   const missingColumns = MASTER_CSV_COLUMNS.filter((c) => col(c) < 0);
