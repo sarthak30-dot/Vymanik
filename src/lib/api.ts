@@ -365,6 +365,7 @@ export interface SurveyDefectRow {
   module?: string;
   defectCode?: string;
   footprint?: [number, number][];
+  deltaT?: number;
 }
 
 export const api = {

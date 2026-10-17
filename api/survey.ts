@@ -44,6 +44,8 @@ interface SurveyRow {
   module?: string;
   defectCode?: string;
   footprint?: [number, number][];
+  /** Measured ΔT in °C, when the survey carries it (the Master CSV does). */
+  deltaT?: number;
 }
 
 /** Postgres "relation does not exist" — migration 007 not run yet. */
@@ -129,9 +131,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         row: Number(r.row) || 0,
         col: Number(r.col) || 0,
         type: r.type,
-        // The survey KML carries no temperatures — stored as unknown rather
-        // than estimated from the defect type.
-        delta_t: null,
+        // The defect KML carries no temperatures; the Master CSV does. Stored
+        // as unknown (null) when absent rather than estimated from the type.
+        delta_t: Number.isFinite(r.deltaT) ? r.deltaT : null,
         severity: r.severity,
         string: r.string,
         inverter: r.inverter,

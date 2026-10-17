@@ -13,6 +13,9 @@
  * mirrored here.
  */
 
+import { parseCSV } from "./csv";
+import { clientDefectType, DEFECT_CATEGORY_NAMES } from "./mock-data";
+
 // ─── Minimal ZIP reader (a KMZ is a zip) ─────────────────────────────────────
 // Native DecompressionStream("deflate-raw") instead of a zip library — no new
 // dependency (the repo carries both package-lock.json and bun.lock, and a
@@ -141,6 +144,16 @@ export interface SurveyRow {
   module?: string;
   defectCode?: string;
   footprint?: [number, number][];
+  /** Measured ΔT in °C — only present when the survey ships it (the Master CSV does). */
+  deltaT?: number;
+}
+
+/** One KML placemark, read raw: its attribute fields and surveyed outline. */
+export interface RawPlacemark {
+  data: Record<string, string>;
+  lat: number;
+  lng: number;
+  footprint?: [number, number][];
 }
 
 export interface ParsedDefects {
@@ -152,6 +165,17 @@ export interface ParsedDefects {
   unknownCodes: string[];
   /** Placemarks skipped because they had no data or no geometry. */
   skipped: number;
+  /** Every placemark that had usable geometry, raw — what mergeSurvey joins a Master CSV onto. */
+  placemarks: RawPlacemark[];
+  /**
+   * True when the file is outlines only: no Rack/Label fields, so it carries
+   * no severity, ΔT or image reference. `rows` is then NOT safe to upload —
+   * its defect types and severities are guesses from a code table that means
+   * different things in different deliverables (SO is "Soiling" in the
+   * Block 20 file, "String Offline" in Hamirpur's). The Master CSV must be
+   * merged in first.
+   */
+  needsCsv: boolean;
 }
 
 /** 7 decimals ≈ 1 cm — the script's num(); the source's 13 are noise. */
@@ -182,48 +206,86 @@ function parseCoords(text: string): [number, number][] {
     .filter(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat));
 }
 
+/**
+ * A placemark's position and outline. The vendor's file draws each panel as a
+ * <Polygon>/<LinearRing>; the Hamirpur export draws the same closed outline as
+ * a <MultiGeometry><LineString>. Both read as a ring here. A point-only
+ * placemark gets a position and no outline.
+ */
+function placemarkGeometry(
+  pm: Element,
+): { lat: number; lng: number; footprint?: [number, number][] } | null {
+  const ringEl = pm.getElementsByTagName("LinearRing")[0] ?? pm.getElementsByTagName("LineString")[0];
+  const ringText = ringEl ? childText(ringEl, "coordinates") : null;
+  const pointEl = pm.getElementsByTagName("Point")[0];
+  const pointText = pointEl ? childText(pointEl, "coordinates") : null;
+  if (!ringText && !pointText) return null;
+
+  if (ringText) {
+    const pts = parseCoords(ringText);
+    if (pts.length < 4) return null;
+    // Closed ring: drop the repeated closing vertex before averaging, or
+    // the shared corner is weighted twice and the centroid drifts to it.
+    const closed = pts[0][0] === pts[pts.length - 1][0] && pts[0][1] === pts[pts.length - 1][1];
+    const uniq = closed ? pts.slice(0, -1) : pts;
+    return {
+      lng: uniq.reduce((s, p) => s + p[0], 0) / uniq.length,
+      lat: uniq.reduce((s, p) => s + p[1], 0) / uniq.length,
+      footprint: pts.map(([x, y]) => [round7(x), round7(y)] as [number, number]),
+    };
+  }
+  // A point-only placemark — the script skips these; accepting them means
+  // a survey exported without panel outlines still loads (as dots).
+  const pt = parseCoords(pointText!)[0];
+  return pt ? { lng: pt[0], lat: pt[1] } : null;
+}
+
+function summarise(rows: SurveyRow[]) {
+  const bySeverity = { critical: 0, medium: 0, normal: 0 };
+  const types = new Map<string, number>();
+  const blocks = new Set<string>();
+  for (const r of rows) {
+    bySeverity[r.severity]++;
+    types.set(r.type, (types.get(r.type) ?? 0) + 1);
+    if (r.block) blocks.add(r.block);
+  }
+  return {
+    bySeverity,
+    byType: [...types.entries()].sort((a, b) => b[1] - a[1]),
+    blocks: [...blocks].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b)),
+  };
+}
+
+function sortRows<T extends SurveyRow & { _rack: number; _panel: number }>(out: T[]): SurveyRow[] {
+  // Same order the script emits: severity, then type, then rack/panel.
+  out.sort(
+    (a, b) =>
+      SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+      (a.type < b.type ? -1 : a.type > b.type ? 1 : 0) ||
+      a._rack - b._rack ||
+      a._panel - b._panel,
+  );
+  return out.map(({ _rack: _r, _panel: _p, ...r }) => r);
+}
+
 export function parseDefectKml(kmlText: string): ParsedDefects {
   const doc = parseXml(kmlText);
   const out: (SurveyRow & { _rack: number; _panel: number })[] = [];
+  const placemarks: RawPlacemark[] = [];
   const unknown = new Set<string>();
   let skipped = 0;
+  let sawRackOrLabel = false;
 
   for (const pm of Array.from(doc.getElementsByTagName("Placemark"))) {
     const data = placemarkData(pm);
-    const ringEl = pm.getElementsByTagName("LinearRing")[0];
-    const ringText = ringEl ? childText(ringEl, "coordinates") : null;
-    const pointEl = pm.getElementsByTagName("Point")[0];
-    const pointText = pointEl ? childText(pointEl, "coordinates") : null;
-    if (Object.keys(data).length === 0 || (!ringText && !pointText)) {
+    const geom = Object.keys(data).length === 0 ? null : placemarkGeometry(pm);
+    if (!geom) {
       skipped++;
       continue;
     }
-
-    let lat: number, lng: number;
-    let footprint: [number, number][] | undefined;
-    if (ringText) {
-      const pts = parseCoords(ringText);
-      if (pts.length < 4) {
-        skipped++;
-        continue;
-      }
-      // Closed ring: drop the repeated closing vertex before averaging, or
-      // the shared corner is weighted twice and the centroid drifts to it.
-      const closed = pts[0][0] === pts[pts.length - 1][0] && pts[0][1] === pts[pts.length - 1][1];
-      const uniq = closed ? pts.slice(0, -1) : pts;
-      lng = uniq.reduce((s, p) => s + p[0], 0) / uniq.length;
-      lat = uniq.reduce((s, p) => s + p[1], 0) / uniq.length;
-      footprint = pts.map(([x, y]) => [round7(x), round7(y)]);
-    } else {
-      // A point-only placemark — the script skips these; accepting them means
-      // a survey exported without panel outlines still loads (as dots).
-      const pt = parseCoords(pointText!)[0];
-      if (!pt) {
-        skipped++;
-        continue;
-      }
-      [lng, lat] = pt;
-    }
+    const { lat, lng, footprint } = geom;
+    placemarks.push({ data, lat, lng, footprint });
+    if (data.Rack != null || data.Label != null) sawRackOrLabel = true;
 
     const code = (data.id ?? "").toUpperCase();
     const mapped = DEFECT_CODE_MAP[code];
@@ -257,31 +319,14 @@ export function parseDefectKml(kmlText: string): ParsedDefects {
     });
   }
 
-  // Same order the script emits: severity, then type, then rack/panel.
-  out.sort(
-    (a, b) =>
-      SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
-      (a.type < b.type ? -1 : a.type > b.type ? 1 : 0) ||
-      a._rack - b._rack ||
-      a._panel - b._panel,
-  );
-  const rows: SurveyRow[] = out.map(({ _rack: _r, _panel: _p, ...r }) => r);
-
-  const bySeverity = { critical: 0, medium: 0, normal: 0 };
-  const types = new Map<string, number>();
-  const blocks = new Set<string>();
-  for (const r of rows) {
-    bySeverity[r.severity]++;
-    types.set(r.type, (types.get(r.type) ?? 0) + 1);
-    if (r.block) blocks.add(r.block);
-  }
+  const rows = sortRows(out);
   return {
     rows,
-    bySeverity,
-    byType: [...types.entries()].sort((a, b) => b[1] - a[1]),
-    blocks: [...blocks].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b)),
+    ...summarise(rows),
     unknownCodes: [...unknown].sort(),
     skipped,
+    placemarks,
+    needsCsv: placemarks.length > 0 && !sawRackOrLabel,
   };
 }
 
@@ -296,6 +341,205 @@ export async function parseDefectFile(file: File): Promise<ParsedDefects> {
     return parseDefectKml(new TextDecoder().decode(await zip.get(kmlName)!.read()));
   }
   return parseDefectKml(await file.text());
+}
+
+// ─── Master CSV (the analyst-reviewed register) merged onto the KMZ outlines ──
+//
+// The Hamirpur deliverable splits the survey across two files. The defect KMZ
+// is geometry only (Module/R/T/S/id per panel outline); the Master CSV is the
+// reviewed register — defect description, COA severity, ΔT, source frame.
+// Neither alone is a survey, so the upload joins them. The join key is the
+// five fields the two files share, which is unique in both and matched all 186
+// rows to a centroid-identical coordinate in the Hamirpur files.
+
+export interface MasterCsvRow {
+  rack: string;
+  panel: string;
+  module: string;
+  r: string;
+  t: string;
+  s: string;
+  id: string;
+  label: string;
+  lat: number;
+  lng: number;
+  description: string;
+  deltaT: number | null;
+  severity: string;
+}
+
+export interface MasterCsv {
+  rows: MasterCsvRow[];
+  /** Required columns the file doesn't have — nothing is importable if any are missing. */
+  missingColumns: string[];
+}
+
+const MASTER_CSV_COLUMNS = [
+  "Rack", "Panel", "Module", "R", "T", "S", "id", "Label",
+  "xcoord", "ycoord", "Defect_Description", "Delta_T", "Severity",
+] as const;
+
+/** Parse the Master CSV. Header names are matched exactly (case-insensitive,
+ *  trimmed) — it's a machine-produced file, not a free-form spreadsheet. */
+export function parseMasterCsv(text: string): MasterCsv {
+  const cells = parseCSV(text.replace(/^﻿/, "")).filter((r) => r.some((c) => c.trim() !== ""));
+  const header = (cells[0] ?? []).map((h) => h.trim().toLowerCase());
+  const col = (name: string) => header.indexOf(name.toLowerCase());
+  const missingColumns = MASTER_CSV_COLUMNS.filter((c) => col(c) < 0);
+  if (missingColumns.length > 0) return { rows: [], missingColumns };
+
+  const idx = Object.fromEntries(MASTER_CSV_COLUMNS.map((c) => [c, col(c)])) as Record<
+    (typeof MASTER_CSV_COLUMNS)[number],
+    number
+  >;
+  const rows: MasterCsvRow[] = [];
+  for (const c of cells.slice(1)) {
+    const get = (name: (typeof MASTER_CSV_COLUMNS)[number]) => (c[idx[name]] ?? "").trim();
+    const lat = Number(get("ycoord"));
+    const lng = Number(get("xcoord"));
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || get("ycoord") === "" || get("xcoord") === "") continue;
+    const dt = get("Delta_T");
+    rows.push({
+      rack: get("Rack"),
+      panel: get("Panel"),
+      module: get("Module"),
+      r: get("R"),
+      t: get("T"),
+      s: get("S"),
+      id: get("id"),
+      label: get("Label"),
+      lat,
+      lng,
+      description: get("Defect_Description"),
+      deltaT: dt !== "" && Number.isFinite(Number(dt)) ? Number(dt) : null,
+      severity: get("Severity").toUpperCase(),
+    });
+  }
+  return { rows, missingColumns: [] };
+}
+
+/** The class-of-abnormality the register carries -> this app's severity tier
+ *  (the same mapping thermography-report.ts's coaLabel applies in reverse). */
+const COA_TO_SEVERITY: Record<string, SurveyRow["severity"]> = {
+  COA3: "critical",
+  COA2: "medium",
+  COA1: "normal",
+};
+
+/** The register's own wording -> the client category names the app stores
+ *  (see DEFECT_CATEGORIES in mock-data.ts). Anything else is kept verbatim. */
+const REGISTER_TYPE_NAMES: Record<string, string> = {
+  "Single Cell Hotspot": "Single Cell",
+  "Multi Cell Hotspot": "Multi Cell",
+  "Diode Failure": "Bypass Diode",
+};
+
+export interface MergeStats {
+  /** Register rows that found their outline in the KMZ. */
+  matched: number;
+  /** Register rows with no outline in the KMZ — imported as points. */
+  csvOnly: number;
+  /** KMZ outlines with no register row — dropped (no severity to give them). */
+  kmlOnly: number;
+  /** Severities in the CSV that aren't COA1/COA2/COA3. */
+  badSeverities: string[];
+  /** Defect types that aren't one of the client's categories — kept as written. */
+  unknownTypes: string[];
+}
+
+export interface MergedSurvey extends ParsedDefects {
+  merge: MergeStats;
+  /** Reasons the merge can't be uploaded — empty when it's safe to. */
+  errors: string[];
+}
+
+const joinKey = (module: string, r: string, t: string, s: string, id: string) =>
+  [module, r, t, s, id.toUpperCase()].join("|");
+
+export function mergeSurvey(kml: ParsedDefects, csv: MasterCsv): MergedSurvey {
+  const empty: MergedSurvey = {
+    rows: [], bySeverity: { critical: 0, medium: 0, normal: 0 }, byType: [], blocks: [],
+    unknownCodes: [], skipped: kml.skipped, placemarks: kml.placemarks, needsCsv: false,
+    merge: { matched: 0, csvOnly: 0, kmlOnly: 0, badSeverities: [], unknownTypes: [] }, errors: [],
+  };
+  if (csv.missingColumns.length > 0) {
+    return { ...empty, errors: [`The CSV is missing these columns: ${csv.missingColumns.join(", ")}.`] };
+  }
+  if (csv.rows.length === 0) return { ...empty, errors: ["The CSV has no defect rows."] };
+
+  // key -> outlines still unclaimed (a queue, so a repeated key can't claim one outline twice)
+  const outlines = new Map<string, RawPlacemark[]>();
+  for (const pm of kml.placemarks) {
+    const d = pm.data;
+    const key = joinKey(d.Module ?? "", d.R ?? "", d.T ?? "", d.S ?? "", d.id ?? "");
+    (outlines.get(key) ?? outlines.set(key, []).get(key)!).push(pm);
+  }
+
+  const out: (SurveyRow & { _rack: number; _panel: number })[] = [];
+  const badSeverities = new Set<string>();
+  const unknownTypes = new Set<string>();
+  let matched = 0;
+  let csvOnly = 0;
+
+  for (const r of csv.rows) {
+    const pm = outlines.get(joinKey(r.module, r.r, r.t, r.s, r.id))?.shift();
+    if (pm) matched++;
+    else csvOnly++;
+
+    const severity = COA_TO_SEVERITY[r.severity];
+    if (!severity) badSeverities.add(r.severity || "(blank)");
+    const type = REGISTER_TYPE_NAMES[r.description] ?? r.description;
+    if (!DEFECT_CATEGORY_NAMES.includes(clientDefectType(type))) unknownTypes.add(r.description || "(blank)");
+
+    out.push({
+      panelId: `R${r.rack}-P${r.panel}`,
+      row: Number(r.rack) || 0,
+      col: Number(r.panel) || 0,
+      type,
+      severity: severity ?? "medium",
+      string: `Table-${r.t}`,
+      // The Hamirpur plant has no inverter/SMB hierarchy in its register.
+      inverter: "—",
+      rgbNote: `Image: ${r.label}`,
+      // The register's coordinate is authoritative (it equals the outline's
+      // centroid to the metre); the outline only supplies the footprint.
+      gps: { lat: round7(r.lat), lng: round7(r.lng) },
+      // Primary zone — the rack row ("Row: 17") the register groups by. It
+      // fills the same slot as a block elsewhere, so the per-block graph and
+      // the jump list work for this plant.
+      block: r.r || undefined,
+      stringSide: r.s || undefined,
+      module: r.module || undefined,
+      defectCode: r.id || undefined,
+      footprint: pm?.footprint,
+      deltaT: r.deltaT ?? undefined,
+      _rack: parseInt(r.rack, 10) || 0,
+      _panel: parseInt(r.panel, 10) || 0,
+    });
+  }
+  const kmlOnly = [...outlines.values()].reduce((n, q) => n + q.length, 0);
+
+  const errors: string[] = [];
+  if (matched === 0) {
+    errors.push(
+      "None of the CSV rows match an outline in the KMZ (matched on Module, R, T, S and id) — are these two files from the same survey?",
+    );
+  }
+  if (badSeverities.size > 0) {
+    errors.push(`Unrecognised severity in the CSV: ${[...badSeverities].join(", ")} (expected COA1, COA2 or COA3).`);
+  }
+
+  const rows = sortRows(out);
+  return {
+    rows,
+    ...summarise(rows),
+    unknownCodes: [],
+    skipped: kml.skipped,
+    placemarks: kml.placemarks,
+    needsCsv: false,
+    merge: { matched, csvOnly, kmlOnly, badSeverities: [...badSeverities], unknownTypes: [...unknownTypes].sort() },
+    errors,
+  };
 }
 
 // ─── Orthomosaic KMZ -> one web overlay (port of flatten_superoverlay.py) ────

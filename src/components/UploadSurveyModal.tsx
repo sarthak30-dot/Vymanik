@@ -5,7 +5,7 @@
  * KMZ, sees a parsed preview, and uploads. Parsing/compositing is
  * src/lib/survey-import.ts; persistence is useUploadSurvey.
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   X,
   UploadCloud,
@@ -18,7 +18,16 @@ import {
 import { toast } from "sonner";
 import type { PlantSummary } from "@/lib/mock-data";
 import { useUploadSurvey } from "@/lib/queries";
-import { parseDefectFile, compositeOrthoKmz, type ParsedDefects } from "@/lib/survey-import";
+import {
+  parseDefectFile,
+  parseMasterCsv,
+  mergeSurvey,
+  compositeOrthoKmz,
+  type ParsedDefects,
+  type MasterCsv,
+  type MergedSurvey,
+} from "@/lib/survey-import";
+import { affectedModules } from "@/lib/affected-modules";
 
 interface OrthoResult {
   blob: Blob;
@@ -54,9 +63,26 @@ export function UploadSurveyModal({
   const [inspectionDate, setInspectionDate] = useState("");
 
   const [defectFile, setDefectFile] = useState<File | null>(null);
-  const [parsed, setParsed] = useState<ParsedDefects | null>(null);
+  const [kmlParsed, setKmlParsed] = useState<ParsedDefects | null>(null);
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
+
+  // Optional Master CSV — the analyst-reviewed register that carries severity,
+  // ΔT and the source frame for a KMZ that is outlines only.
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [csv, setCsv] = useState<MasterCsv | null>(null);
+  const [csvError, setCsvError] = useState<string | null>(null);
+
+  // The survey to upload: the KMZ alone, or the KMZ joined with its CSV.
+  const merged: MergedSurvey | null = useMemo(
+    () => (kmlParsed && csv ? mergeSurvey(kmlParsed, csv) : null),
+    [kmlParsed, csv],
+  );
+  const parsed: ParsedDefects | null = merged ?? kmlParsed;
+  const needsCsv = !!kmlParsed?.needsCsv && !csv;
+  const mergeErrors = merged?.errors ?? [];
+  const totalPanels = plants.find((p) => p.id === plantId)?.totalPanels ?? 0;
+  const affected = parsed ? affectedModules(parsed.rows) : 0;
 
   const [orthoFile, setOrthoFile] = useState<File | null>(null);
   const [ortho, setOrtho] = useState<OrthoResult | null>(null);
@@ -70,17 +96,33 @@ export function UploadSurveyModal({
   async function handleDefectFile(file: File | undefined) {
     if (!file) return;
     setDefectFile(file);
-    setParsed(null);
+    setKmlParsed(null);
     setParseError(null);
     setParsing(true);
     try {
       const result = await parseDefectFile(file);
-      setParsed(result);
+      setKmlParsed(result);
       if (result.rows.length === 0) setParseError("No defects found in that file.");
     } catch (e) {
       setParseError(e instanceof Error ? e.message : String(e));
     } finally {
       setParsing(false);
+    }
+  }
+
+  async function handleCsvFile(file: File | undefined) {
+    if (!file) return;
+    setCsvFile(file);
+    setCsv(null);
+    setCsvError(null);
+    try {
+      const result = parseMasterCsv(await file.text());
+      setCsv(result);
+      if (result.missingColumns.length > 0) {
+        setCsvError(`That CSV is missing these columns: ${result.missingColumns.join(", ")}.`);
+      }
+    } catch (e) {
+      setCsvError(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -108,6 +150,9 @@ export function UploadSurveyModal({
     !!inspectionDate.trim() &&
     !!parsed &&
     parsed.rows.length > 0 &&
+    !needsCsv &&
+    mergeErrors.length === 0 &&
+    !csvError &&
     !parsing &&
     !compositing &&
     !upload.isPending;
@@ -157,8 +202,9 @@ export function UploadSurveyModal({
 
         <div className="p-5 space-y-4">
           <p className="text-xs text-muted-foreground -mt-1">
-            Load a new inspection from its defect KML/KMZ and (optionally) its orthomosaic KMZ — no
-            script or redeploy needed. Re-uploading the same date replaces that survey.
+            Load a new inspection from its defect KML/KMZ — plus its Master Report CSV when the KMZ is
+            outlines only — and (optionally) its orthomosaic KMZ. No script or redeploy needed.
+            Re-uploading the same date replaces that survey.
           </p>
 
           <div className="grid grid-cols-2 gap-3">
@@ -209,7 +255,14 @@ export function UploadSurveyModal({
                 <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {parseError}
               </p>
             )}
-            {parsed && parsed.rows.length > 0 && (
+            {needsCsv && (
+              <p className="mt-2 text-xs text-ochre-fg flex items-start gap-1.5">
+                <AlertTriangle size={12} className="mt-0.5 shrink-0" /> This KMZ has panel outlines only —{" "}
+                {kmlParsed?.placemarks.length} of them, but no defect type, severity or ΔT. Add its Master CSV below to
+                continue.
+              </p>
+            )}
+            {parsed && parsed.rows.length > 0 && !needsCsv && (
               <div className="mt-2 border border-border bg-muted/50 p-3 text-xs space-y-1.5">
                 <p className="font-semibold text-foreground flex items-center gap-1.5">
                   <CheckCircle2 size={13} className="text-normal" /> {parsed.rows.length} defects
@@ -229,20 +282,77 @@ export function UploadSurveyModal({
                   </span>
                 </p>
                 <p className="text-muted-foreground">
-                  {parsed.blocks.length} blocks: {parsed.blocks.join(", ")}
+                  {parsed.blocks.length} {merged ? "rows" : "blocks"}: {parsed.blocks.join(", ")}
                 </p>
+                {affected !== parsed.rows.length && (
+                  <p className="text-foreground">
+                    <span className="font-semibold">{affected.toLocaleString("en-IN")} modules affected</span>
+                    {totalPanels > 0 && <> ({((affected / totalPanels) * 100).toFixed(2)}% of {totalPanels.toLocaleString("en-IN")})</>}
+                    <span className="text-muted-foreground"> — a String Offline counts 26 modules, a Partial String Offline 13.</span>
+                  </p>
+                )}
+                {merged && (
+                  <p className="text-muted-foreground">
+                    {merged.merge.matched} of {merged.rows.length} matched to a panel outline
+                    {merged.rows.some((r) => r.deltaT != null) && " · ΔT included"}.
+                  </p>
+                )}
+                {merged && merged.merge.csvOnly > 0 && (
+                  <p className="text-ochre-fg">
+                    {merged.merge.csvOnly} CSV rows have no outline in the KMZ — imported as points.
+                  </p>
+                )}
+                {merged && merged.merge.kmlOnly > 0 && (
+                  <p className="text-ochre-fg">
+                    {merged.merge.kmlOnly} KMZ outlines have no CSV row — left out (no severity to give them).
+                  </p>
+                )}
+                {merged && merged.merge.unknownTypes.length > 0 && (
+                  <p className="text-ochre-fg">
+                    Defect types outside the client's categories kept as written: {merged.merge.unknownTypes.join(", ")}
+                  </p>
+                )}
                 {parsed.skipped > 0 && (
                   <p className="text-muted-foreground">
                     {parsed.skipped} placemarks skipped (no data or geometry).
                   </p>
                 )}
-                {parsed.unknownCodes.length > 0 && (
+                {!merged && parsed.unknownCodes.length > 0 && (
                   <p className="text-ochre-fg">
                     Unmapped defect codes imported as “Other”: {parsed.unknownCodes.join(", ")}
                   </p>
                 )}
               </div>
             )}
+          </div>
+
+          {/* Master CSV (needed when the KMZ is outlines only) */}
+          <div>
+            <label className="text-[11px] font-semibold uppercase tracking-widest text-grey-400 flex items-center gap-1.5">
+              <FileText size={12} /> Master Report (.csv) — {kmlParsed?.needsCsv ? "required for this KMZ" : "optional"}
+            </label>
+            <input
+              type="file"
+              accept=".csv"
+              disabled={busy}
+              onChange={(e) => handleCsvFile(e.target.files?.[0])}
+              className="mt-1.5 w-full text-xs file:mr-3 file:h-8 file:px-3 file:border file:border-border file:bg-muted file:text-xs file:font-medium file:cursor-pointer"
+            />
+            {csvFile && csv && !csvError && (
+              <p className="mt-2 text-xs text-foreground flex items-center gap-1.5">
+                <CheckCircle2 size={13} className="text-normal" /> {csv.rows.length} defect rows read from {csvFile.name}
+              </p>
+            )}
+            {csvError && (
+              <p className="mt-2 text-xs text-critical flex items-start gap-1.5">
+                <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {csvError}
+              </p>
+            )}
+            {mergeErrors.map((m) => (
+              <p key={m} className="mt-2 text-xs text-critical flex items-start gap-1.5">
+                <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {m}
+              </p>
+            ))}
           </div>
 
           {/* Orthomosaic file (optional) */}
