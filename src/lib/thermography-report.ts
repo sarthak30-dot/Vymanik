@@ -16,6 +16,7 @@ import { jsPDF } from "jspdf";
 import { SEVERITY } from "./severity-tokens";
 import { downloadTextFile } from "./csv";
 import { clientDefectType, DEFECT_CATEGORIES, type Anomaly, type PlantSummary } from "./mock-data";
+import { moduleMultiplier } from "./affected-modules";
 
 /**
  * The fields the report actually reads — a structural subset satisfied by
@@ -62,12 +63,14 @@ export interface ReportMetadata {
 }
 
 export function defaultReportMetadata(
-  plant: { name: string; location: string; capacityMW: number; totalPanels: number },
+  plant: { name: string; location: string; capacityMW: number; totalPanels: number; client?: string },
   inspectionDate: string,
 ): ReportMetadata {
   return {
     reportNo: `VYMANIK/${plant.name.replace(/\s+/g, "-").toUpperCase()}/DT/01`,
-    customerName: plant.name,
+    // The client the plant belongs to (Add Plant's "Client" field), when it has
+    // one — the plant's own name is the fallback, as before.
+    customerName: plant.client && plant.client !== "—" ? plant.client : plant.name,
     address: plant.location,
     testLocation: plant.location,
     sampleUnderTest: "PV Modules",
@@ -144,7 +147,8 @@ function tableNumber(a: ReportAnomaly): string {
 function layoutLocation(a: ReportAnomaly): string {
   const parts: string[] = [];
   if (a.block) parts.push(`Block: ${a.block}`);
-  parts.push(`Inv: ${a.inverter.replace(/^INV-?/i, "")}`);
+  const inv = a.inverter.replace(/^INV-?/i, "");
+  if (inv && inv !== "—") parts.push(`Inv: ${inv}`);
   parts.push(`Table: ${tableNumber(a)}`);
   if (a.stringSide) parts.push(`Str: ${a.stringSide}`);
   parts.push(`Mod: ${a.module ?? a.panelId}`);
@@ -217,6 +221,11 @@ const RECOMMENDATION_BY_CATEGORY: Record<string, { recommendation: string; respo
   "String Offline": {
     recommendation:
       "Inspect the combiner box, fuses, isolators, and MC4 connectors for the affected string; restore continuity.",
+    responsibility: "O&M",
+  },
+  "Partial String Offline": {
+    recommendation:
+      "Trace the affected string for the break point — inspect MC4 connectors, interconnections and fuses along it; restore continuity.",
     responsibility: "O&M",
   },
   "Module Offline": {
@@ -631,10 +640,6 @@ export function generateThermographyPDF(
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   const totalTested = plant.totalPanels > 0 ? plant.totalPanels : faulty.length;
-  const summaryIntro = `As per the defined scope, a total of ${totalTested.toLocaleString("en-IN")} Nos. of PV modules were tested for aerial thermography. Out of the total inspected modules, ${faulty.length.toLocaleString("en-IN")} modules were found defective. Following is a summary of the test results.`;
-  const introLines = doc.splitTextToSize(summaryIntro, W - 30) as string[];
-  doc.text(introLines, 15, y);
-  y += introLines.length * 4.5 + 6;
 
   // Grouped by the client-facing category (not the raw internal `type`) —
   // two internal types that read as the same category (e.g. "Diode Failure"
@@ -643,17 +648,50 @@ export function generateThermographyPDF(
   // clientDefectType's docblock in mock-data.ts.
   const typeCounts = countBy(faulty, (a) => clientDefectType(a.type));
   const typeRows = [...typeCounts.entries()].sort((a, b) => b[1] - a[1]);
-  y = drawTable(
-    doc,
-    ["Defect Type", "Total No. of Defected Modules"],
-    [130, 55],
-    [
-      ...typeRows.map(([t, c]) => [t, String(c)]),
-      ["Cumulative Total", String(faulty.length)],
-    ],
-    y,
-    15,
-  );
+
+  // Modules affected, not just defects found: a String Offline puts a whole
+  // string out (26 modules; Partial String Offline 13) — see
+  // lib/affected-modules.ts. For a survey with neither type this equals the
+  // defect count, and the table keeps the original two-column layout.
+  const affectedByType = new Map(typeRows.map(([t, c]) => [t, c * moduleMultiplier(t)]));
+  const affectedTotal = [...affectedByType.values()].reduce((sum, n) => sum + n, 0);
+  const hasMultiplied = typeRows.some(([t]) => moduleMultiplier(t) > 1);
+
+  const summaryIntro = `As per the defined scope, a total of ${totalTested.toLocaleString("en-IN")} Nos. of PV modules were tested for aerial thermography. Out of the total inspected modules, ${affectedTotal.toLocaleString("en-IN")} modules were found defective${hasMultiplied ? ` (${faulty.length.toLocaleString("en-IN")} defects; a String Offline is counted as the 26 modules on the string and a Partial String Offline as 13)` : ""}. Following is a summary of the test results.`;
+  const introLines = doc.splitTextToSize(summaryIntro, W - 30) as string[];
+  doc.text(introLines, 15, y);
+  y += introLines.length * 4.5 + 6;
+
+  if (hasMultiplied) {
+    const pctOfPlant = (n: number) => (plant.totalPanels > 0 ? `${((n / plant.totalPanels) * 100).toFixed(2)}%` : "-");
+    y = drawTable(
+      doc,
+      ["Defect Type", "No. of Defects", "Multiplier", "Affected Modules", "% of Plant Panels"],
+      [50, 26, 40, 32, 32],
+      [
+        ...typeRows.map(([t, c]) => {
+          const m = moduleMultiplier(t);
+          const aff = affectedByType.get(t) ?? c;
+          return [t, String(c), m > 1 ? `${c} x ${m} = ${aff}` : String(c), String(aff), pctOfPlant(aff)];
+        }),
+        ["Cumulative Total", String(faulty.length), "-", String(affectedTotal), pctOfPlant(affectedTotal)],
+      ],
+      y,
+      15,
+    );
+  } else {
+    y = drawTable(
+      doc,
+      ["Defect Type", "Total No. of Defected Modules"],
+      [130, 55],
+      [
+        ...typeRows.map(([t, c]) => [t, String(c)]),
+        ["Cumulative Total", String(faulty.length)],
+      ],
+      y,
+      15,
+    );
+  }
 
   // ── Figures 1-3 ──
   // Figure 1 (defect-wise): every defect category. Bars stay readable up to
@@ -760,7 +798,8 @@ export function generateThermographyPDF(
   y = sectionTitle(doc, "6. Key Observation and Conclusion", 32);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9.5);
-  for (const [type, count] of typeRows) {
+  for (const [type] of typeRows) {
+    const count = affectedByType.get(type) ?? 0;
     doc.text(
       `• ${count} Module${count === 1 ? "" : "s"} ${count === 1 ? "is" : "are"} affected by ${type}`,
       18,

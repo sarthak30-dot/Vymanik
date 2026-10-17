@@ -1573,6 +1573,16 @@ export const DEFECT_CATEGORIES: DefectCategory[] = [
     defaultCoa: "COA3",
   },
   {
+    // Not one of the client's original eight — added for the Hamirpur audit,
+    // whose own summary table lists it as a separate observation (with a
+    // different module multiplier from a full String Offline). Description is
+    // our wording, to be confirmed with the client.
+    name: "Partial String Offline",
+    description:
+      "Part of a series string inactive while the rest keeps producing, typically a break or loose MC4 partway along the string; inspect the string's connectors and interconnections.",
+    defaultCoa: "COA3",
+  },
+  {
     name: "Module Offline",
     description:
       "Full module open-circuited or disconnected within the string; check module interconnections and continuity.",
@@ -1624,6 +1634,10 @@ const CLIENT_DEFECT_NAMES: Record<string, string> = {
   "Module Missing": "Module Offline",
   "Module Crack": "Module Broken",
   "Spekled": "Speckled",
+  // The wording the Hamirpur Master CSV's Defect_Description column uses.
+  "Single Cell Hotspot": "Single Cell",
+  "Multi Cell Hotspot": "Multi Cell",
+  "Partial String Offline": "Partial String Offline",
   // Survey/KML types (scripts/import_defect_kml.py CODE_MAP) — superseded by
   // the corrected deliverable above but kept for any older cached/exported
   // data still carrying the original decode.

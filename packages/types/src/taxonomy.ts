@@ -15,6 +15,8 @@ export const DEFECT_TYPES = [
   "Multi-cell Hotspot",
   "Full-module Hotspot",
   "Module Offline",
+  "String Offline",
+  "Partial String Offline",
   "Soiling",
   "Delamination",
   "Shading",

@@ -12,6 +12,7 @@ import { usePlantContext } from "@/lib/plant-context";
 import { SHOW_LOSS_METRICS } from "@/lib/feature-flags";
 import { useDensity } from "@/hooks/use-presentation";
 import { useGuidedTour, hasTourRun, type TourStep } from "@/hooks/use-guided-tour";
+import { affectedModules } from "@/lib/affected-modules";
 import type { PlantDTO } from "@/lib/api";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
@@ -184,7 +185,10 @@ function Dashboard() {
     ? {
         critical: critical.length,
         medium: medium.length,
-        normal: Math.max(0, plant.totalPanels - critical.length - medium.length),
+        // Healthy panels = everything not taken out by a critical/medium
+        // finding. A String Offline takes out a whole string, so subtract
+        // modules affected (lib/affected-modules.ts), not just defect rows.
+        normal: Math.max(0, plant.totalPanels - affectedModules(critical) - affectedModules(medium)),
       }
     : {
         critical: selectedSummary.criticalCount,
