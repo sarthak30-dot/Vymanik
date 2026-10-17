@@ -537,7 +537,7 @@ function UploadedPlantReports({ plant: summary }: { plant: PlantSummary }) {
   const { data: survey } = usePlantSurvey(summary.id);
   const [meta, setMeta] = useState<ReportMetadata>(() =>
     defaultReportMetadata(
-      { name: summary.name, location: summary.location, capacityMW: summary.capacityMW, totalPanels: summary.totalPanels },
+      { name: summary.name, location: summary.location, capacityMW: summary.capacityMW, totalPanels: summary.totalPanels, client: summary.client },
       survey?.inspectionDate ?? "",
     ),
   );

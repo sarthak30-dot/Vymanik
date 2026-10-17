@@ -13,10 +13,11 @@ import { SHOW_LOSS_METRICS } from "@/lib/feature-flags";
 const PanelMiniMap = lazy(() =>
   import("@/components/PanelMiniMap").then(m => ({ default: m.PanelMiniMap })),
 );
-import { useAnomaly, useAnomalies, usePatchAnomaly } from "@/lib/queries";
-import { plant, SEVERITY_LABEL_FULL, clientDefectType, defectCategoryFor } from "@/lib/mock-data";
+import { useAnomaly, useAnomalies, usePatchAnomaly, DEFAULT_PLANT_ID } from "@/lib/queries";
+import { SEVERITY_LABEL_FULL, clientDefectType, defectCategoryFor } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 import { parseDefectImage } from "@/lib/defect-image";
+import { stringAndInverter } from "@/lib/layout-labels";
 import { tokenFor } from "@/lib/severity-tokens";
 
 export const Route = createFileRoute("/_app/anomalies/$id")({
@@ -74,7 +75,7 @@ async function generateFaultCardPDF(anomaly: AnomalyDTO): Promise<void> {
     ...(anomaly.deltaTNorm ? [["ΔT Normalised @ 1000 W/m²", `+${anomaly.deltaTNorm}°C`] as [string, string]] : []),
     ["Status", anomaly.status],
     ["GPS", `${anomaly.gps.lat}°N, ${anomaly.gps.lng}°E`],
-    ["String / Inverter", `${anomaly.string} · ${anomaly.inverter}`],
+    ["String / Inverter", stringAndInverter(anomaly)],
     ...(anomaly.peakTemp ? [["Peak Cell Temperature", `${anomaly.peakTemp}°C`] as [string, string]] : []),
     ...(anomaly.refTemp ? [["Reference Cell Temp", `${anomaly.refTemp}°C`] as [string, string]] : []),
     ...(anomaly.irradiance ? [["Irradiance at Inspection", `${anomaly.irradiance} W/m²`] as [string, string]] : []),
@@ -196,7 +197,7 @@ function AnomalyDetail() {
 
   const whatsappMsg = encodeURIComponent(
 `🔴 FAULT ALERT — UrjaScan
-Plant: ${plant.name}
+Plant: ${selectedPlant.name}
 Panel: ${anomaly.panelId} (Row ${anomaly.row}, Module ${anomaly.col})
 Type: ${clientDefectType(anomaly.type)}${anomaly.deltaT ? ` | ΔT: +${anomaly.deltaT}°C` : ""}
 Severity: ${SEVERITY_LABEL_FULL[anomaly.severity]}
@@ -230,7 +231,7 @@ Ref: ${anomaly.rgbNote}`
             <ArrowLeft size={12} /> Back
           </Link>
           <h1 className="text-3xl md:text-4xl font-bold">Panel <span className="mono">{anomaly.panelId}</span></h1>
-          <p className="text-muted-foreground mt-1 text-sm">{clientDefectType(anomaly.type)} · {anomaly.string} · {anomaly.inverter}</p>
+          <p className="text-muted-foreground mt-1 text-sm">{clientDefectType(anomaly.type)} · {stringAndInverter(anomaly)}</p>
         </div>
         <div className="flex flex-col items-end gap-3">
           {/* Adjacent-defect stepper — walk the survey without a list round-trip.
@@ -266,7 +267,14 @@ Ref: ${anomaly.rgbNote}`
           thermal-only survey, so a second "no visual imagery" panel added nothing.
           Restore a two-up grid here if a visual/RGB set is ever delivered. */}
       <section className="max-w-3xl">
-        <ThermalImage note={anomaly.rgbNote} peak={anomaly.peakTemp ?? 83} deltaT={anomaly.deltaT} />
+        <ThermalImage
+          note={anomaly.rgbNote}
+          // 83 °C is plant-001's stand-in when a row has no measured peak. For any
+          // other plant there is nothing to stand in for — show "—", not a made-up figure.
+          peak={anomaly.peakTemp ?? (anomaly.plantId === DEFAULT_PLANT_ID ? 83 : undefined)}
+          deltaT={anomaly.deltaT}
+          ownFrames={anomaly.plantId === DEFAULT_PLANT_ID}
+        />
       </section>
 
       {/* Data grid */}
@@ -307,7 +315,7 @@ Ref: ${anomaly.rgbNote}`
           lng={anomaly.gps.lng}
           severity={anomaly.severity}
           status={anomaly.status}
-          caption={`${anomaly.string} · ${anomaly.inverter}`}
+          caption={stringAndInverter(anomaly)}
         />
       </Suspense>
 
@@ -467,7 +475,21 @@ function Detail({ label, value, mono, critical, tooltip, extra }: { label: strin
   );
 }
 
-function ThermalImage({ note, peak, deltaT }: { note: string; peak: number; deltaT: number | null }) {
+function ThermalImage({
+  note,
+  peak,
+  deltaT,
+  ownFrames,
+}: {
+  note: string;
+  /** Measured peak °C, or undefined when the survey doesn't carry one. */
+  peak?: number;
+  deltaT: number | null;
+  /** True only for the built-in plant, whose frames and site orthomosaic ship
+   *  with the app. Any other plant's frames are its own uploads. */
+  ownFrames: boolean;
+}) {
+  const { selectedPlant } = usePlantContext();
   const { filename, pos, src } = parseDefectImage(note);
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
@@ -478,7 +500,7 @@ function ThermalImage({ note, peak, deltaT }: { note: string; peak: number; delt
         <span className="font-semibold text-xs uppercase tracking-widest text-grey-400">Thermal Image (IR)</span>
         <div className="flex items-center gap-3">
           {deltaT && <span className="mono text-xs text-critical font-semibold">ΔT: +{deltaT}°C</span>}
-          <span className="mono text-xs text-muted-foreground">Peak: {peak}°C</span>
+          <span className="mono text-xs text-muted-foreground">Peak: {peak != null ? `${peak}°C` : "—"}</span>
         </div>
       </div>
       <div className="relative aspect-video bg-black overflow-hidden">
@@ -507,15 +529,23 @@ function ThermalImage({ note, peak, deltaT }: { note: string; peak: number; delt
             {/* Scale bar */}
             {loaded && (
               <div className="absolute right-2 top-2 bottom-2 flex flex-col items-center gap-1">
-                <span className="mono text-[9px] text-white drop-shadow">{peak}°</span>
+                <span className="mono text-[9px] text-white drop-shadow">{peak != null ? `${peak}°` : ""}</span>
                 <div className="w-3 flex-1" style={{ background: "linear-gradient(to bottom, #fff 0%, #ffeb3b 20%, #ff5722 45%, #d32f2f 65%, #6a1b9a 85%, #1a237e 100%)" }} />
                 <span className="mono text-[9px] text-white drop-shadow">20°</span>
               </div>
             )}
             <div className="absolute bottom-2 right-8 bg-black/60 text-white text-[10px] mono px-2 py-0.5">
-              {plant.name} · {plant.lastInspection}
+              {selectedPlant.name} · {selectedPlant.lastInspection}
             </div>
           </>
+        ) : !ownFrames ? (
+          /* Another plant's defect whose source frame hasn't been uploaded: say so.
+             The bundled orthomosaic below is the built-in plant's site, and showing it
+             here would present the wrong plant's imagery as this defect's. */
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-center px-6">
+            <p className="text-white/80 text-sm">Thermal frame not uploaded yet</p>
+            {filename && <p className="text-white/50 text-xs mono">{filename.toUpperCase()}</p>}
+          </div>
         ) : (
           /* Fallback: the site-wide orthomosaic when this defect has no frame.
              Every one of the 1,249 March 2026 defects does have one, so this path
@@ -534,7 +564,7 @@ function ThermalImage({ note, peak, deltaT }: { note: string; peak: number; delt
               </div>
             </div>
             <div className="absolute right-2 top-2 bottom-2 flex flex-col items-center gap-1">
-              <span className="mono text-[9px] text-white drop-shadow">{peak}°</span>
+              <span className="mono text-[9px] text-white drop-shadow">{peak != null ? `${peak}°` : ""}</span>
               <div className="w-3 flex-1" style={{ background: "linear-gradient(to bottom, #fff 0%, #ffeb3b 20%, #ff5722 45%, #d32f2f 65%, #6a1b9a 85%, #1a237e 100%)" }} />
               <span className="mono text-[9px] text-white drop-shadow">20°</span>
             </div>

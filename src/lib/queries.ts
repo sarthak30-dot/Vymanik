@@ -8,7 +8,7 @@ import {
   teamMembers as seedTeamMembers, type PlantSummary, type TeamMember,
 } from "./mock-data";
 
-const DEFAULT_PLANT_ID = "plant-001"; // matches allPlants[0].id in mock-data.ts
+export const DEFAULT_PLANT_ID = "plant-001"; // matches allPlants[0].id in mock-data.ts
 const DEFAULT_INSPECTION_ID = "insp-may-2026";
 
 function mockPlantDTO(id = DEFAULT_PLANT_ID): PlantDTO {

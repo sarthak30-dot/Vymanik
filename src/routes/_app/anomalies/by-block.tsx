@@ -7,6 +7,7 @@ import { useAnomalies } from "@/lib/queries";
 import { usePlantContext } from "@/lib/plant-context";
 import { plant, SEVERITY_LABEL_FULL, clientDefectType } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
+import { stringAndInverter } from "@/lib/layout-labels";
 
 export const Route = createFileRoute("/_app/anomalies/by-block")({
   head: () => ({ meta: [{ title: "Block-wise Anomaly — UrjaScan" }] }),
@@ -432,7 +433,7 @@ function BlockwiseAnomaly() {
                           <td className="px-4 py-3 mono font-semibold text-sm">{a.panelId}</td>
                           <td className="px-4 py-3 text-sm">{clientDefectType(a.type)}</td>
                           <td className="px-4 py-3 mono text-xs text-muted-foreground">
-                            {a.string} · {a.inverter.replace(/^INV-/i, "Inv-")}
+                            {stringAndInverter({ string: a.string, inverter: a.inverter.replace(/^INV-/i, "Inv-") })}
                           </td>
                           <td className="px-4 py-3 mono text-sm">
                             {a.deltaTNorm ? (
@@ -473,7 +474,7 @@ function BlockwiseAnomaly() {
                         <div>
                           <p className="mono font-bold text-sm">{a.panelId}</p>
                           <p className="text-sm text-muted-foreground mt-0.5">{clientDefectType(a.type)}</p>
-                          <p className="mono text-xs text-muted-foreground mt-0.5">{a.string} · {a.inverter}</p>
+                          <p className="mono text-xs text-muted-foreground mt-0.5">{stringAndInverter(a)}</p>
                         </div>
                         <SeverityBadge severity={a.severity} />
                       </div>

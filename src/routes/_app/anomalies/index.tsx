@@ -31,7 +31,10 @@ function blockNumber(a: AnomalyDTO, plantName: string): string {
 function layoutLocation(a: AnomalyDTO, plantName: string): string {
   const inv = a.inverter.replace(/^INV-/i, "");
   const table = a.string.replace(/^Table-/i, "");
-  return `Block: ${blockNumber(a, plantName)}, Inv: ${inv}, Table: ${table}, Panel: ${a.panelId}`;
+  // A survey with no inverter hierarchy (Hamirpur) stores "—" — leave "Inv:" out
+  // rather than print a placeholder.
+  const invPart = inv && inv !== "—" ? `Inv: ${inv}, ` : "";
+  return `Block: ${blockNumber(a, plantName)}, ${invPart}Table: ${table}, Panel: ${a.panelId}`;
 }
 
 function mapLocation(a: AnomalyDTO): string {
