@@ -6,20 +6,22 @@ import {
   Crosshair, RotateCcw, Copy, EyeOff, MonitorPlay, History, Loader2,
 } from "lucide-react";
 import {
-  anomalies, anomalyTypes, plant, anomalyCounts, SEVERITY_LABEL_FULL,
+  anomalies as bakedAnomalies, anomalyTypes, plant, SEVERITY_LABEL_FULL,
   type Anomaly, type Severity,
 } from "@/lib/mock-data";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { SeverityShape } from "@/components/SeverityShape";
 import { usePlantContext } from "@/lib/plant-context";
-import { usePlantSurvey } from "@/lib/queries";
+import { usePlantSurvey, useAnomalies, DEFAULT_PLANT_ID } from "@/lib/queries";
+import type { AnomalyDTO } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { buildAnomaliesKML, downloadKML } from "@/lib/kml";
 import { parseDefectImage } from "@/lib/defect-image";
 import {
   OVERLAYS, IDENTITY, cornersFor, loadPlacements, savePlacements, toSourceSnippet,
-  type Placement,
+  overlayFromSurvey, ringFromBaseline,
+  type Placement, type OverlayDef,
 } from "@/lib/overlay-registration";
 import {
   loadRasterMask, makeCoverageTest, scorePlacement,
@@ -88,7 +90,8 @@ import "mapbox-gl/dist/mapbox-gl.css";
 // which is why the overlay used to sit on the satellite view as an opaque box.
 // scripts/clean_orthomosaic.py alpha-cuts the filler, upscales 2x and sharpens.
 // Canvas proportions are preserved, so the baseline still applies unchanged.
-const THERMAL_IMAGE = OVERLAYS.thermal.url;
+// (The URL itself now comes from the selected plant's overlay rather than a
+// module constant — see `activeOverlay` in SiteMap.)
 
 // Applied to the thermal raster on top of the per-layer opacity. Range is -1..1
 // for both; 0 is untouched source, which is what the March 2026 raster wants.
@@ -295,6 +298,35 @@ const SEV_COLOR: Record<string, string> = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/**
+ * An uploaded plant's defect row as the map's layers want it.
+ *
+ * AnomalyDTO is already structurally what Anomaly is — migration 007 added
+ * `footprint` and the asset-register fields precisely so an uploaded survey
+ * carries the same shape the baked one does. The only genuine mismatch is
+ * `rootCause`, which the DB types as free text and mock-data as a closed union;
+ * anything outside the union is treated as unset rather than passed through, so
+ * a stray value cannot reach a consumer that switches on it.
+ */
+const ROOT_CAUSES = new Set<string>([
+  "Manufacturing defect",
+  "Wiring / connector fault",
+  "Soiling / dust",
+  "Shading / vegetation",
+  "Physical damage",
+  "Unknown",
+]);
+
+function dtoToAnomaly(a: AnomalyDTO): Anomaly {
+  return {
+    ...a,
+    rootCause:
+      a.rootCause && ROOT_CAUSES.has(a.rootCause)
+        ? (a.rootCause as Anomaly["rootCause"])
+        : null,
+  };
+}
+
 function buildWhatsAppLink(a: Anomaly, plantName: string) {
   const msg = `[${a.severity.toUpperCase()}] ${a.type}\nPlant: ${plantName}\nPanel: ${a.panelId} (Row ${a.row}, Module ${a.col})\nGPS: ${a.gps.lat}°N, ${a.gps.lng}°E\nView: ${location.origin}/anomalies/${a.id}`;
   return `https://wa.me/?text=${encodeURIComponent(msg)}`;
@@ -348,11 +380,88 @@ function loadLayerPrefs(): LayerPrefs {
 
 function SiteMap() {
   const { selectedPlant } = usePlantContext();
-  const isRajpur = selectedPlant.id === "plant-001";
-  // Non-primary plants render their survey on the Dashboard / Anomalies
-  // views (the map's georeferenced overlay tooling is built around the
-  // primary plant's baked baseline); this just makes the placeholder honest.
-  const { data: uploadedSurvey } = usePlantSurvey(isRajpur ? "" : selectedPlant.id);
+  const isPrimary = selectedPlant.id === DEFAULT_PLANT_ID;
+
+  /**
+   * WHERE THIS PLANT'S SURVEY COMES FROM
+   * ------------------------------------
+   * The primary plant's survey is baked into the build — mock-data's 1,249
+   * defects and the measured thermal in OVERLAYS — and both useAnomalies and
+   * the OVERLAYS comment treat it as the source of truth whether or not a
+   * backend is reachable. It is skipped here for that reason, not by accident.
+   *
+   * Every other plant's survey is the defect KML and orthomosaic an admin
+   * uploaded through Control Center: the defects are rows in `anomalies`, and
+   * the raster sits in Supabase Storage with its measured extent in
+   * `plant_surveys` (migration 007). Until now the map fetched that survey only
+   * to print "see the Dashboard and Anomalies views" over a placeholder pin —
+   * the imagery and defects were uploaded but never drawn. They are drawn now.
+   */
+  const { data: uploadedSurvey } = usePlantSurvey(isPrimary ? "" : selectedPlant.id);
+  const { data: uploadedAnomalies = [] } = useAnomalies(selectedPlant.id);
+
+  /** This plant's defects, from whichever of the two sources above it has. */
+  const anomalies: Anomaly[] = useMemo(
+    () => (isPrimary ? bakedAnomalies : uploadedAnomalies.map(dtoToAnomaly)),
+    [isPrimary, uploadedAnomalies],
+  );
+
+  /**
+   * This plant's drawable orthomosaics.
+   *
+   * The baked registry for the primary plant; for anyone else, whatever the
+   * upload produced. An uploaded survey may legitimately have no raster — a
+   * defect list alone is a valid survey — in which case this is empty and the
+   * defects are drawn straight onto the satellite basemap.
+   */
+  const overlays: Record<string, OverlayDef> = useMemo(() => {
+    if (isPrimary) return OVERLAYS;
+    const def = overlayFromSurvey(selectedPlant.id, uploadedSurvey?.overlay ?? null);
+    return def ? { [def.id]: def } : {};
+  }, [isPrimary, selectedPlant.id, uploadedSurvey]);
+
+  const overlayIds = useMemo(() => Object.keys(overlays), [overlays]);
+
+  /**
+   * The raster actually mounted as a Mapbox image source.
+   *
+   * One at a time, because `plant_surveys` stores one orthomosaic per survey and
+   * the baked registry ships one. The Mapbox source and layer ids stay the
+   * literals "thermal" / "thermal-layer" whichever plant is selected — they are
+   * what OVERLAY_STACK reorders against and what `beforeId` pins the anomaly
+   * layers above, so making them per-plant would silently drop the new layer out
+   * of that ordering. The per-plant identity lives in the registry key instead
+   * (surveyOverlayId), which is what saved placements and alpha masks are keyed
+   * by. Drawing two rasters at once would need per-overlay layer ids and a
+   * second entry in OVERLAY_STACK; no deliverable has needed it yet.
+   */
+  const activeOverlay = useMemo(
+    () => (overlayIds.length > 0 ? overlays[overlayIds[0]] : null),
+    [overlays, overlayIds],
+  );
+
+  /**
+   * Whether this plant has a survey to draw at all.
+   *
+   * This replaces a hard `selectedPlant.id === "plant-001"` test. Every gate it
+   * stands in for asked the same question — is there imagery and a defect set
+   * here, or should the map fall back to a single pin? — and answering it with
+   * one plant's id was what kept uploaded surveys off the map.
+   */
+  const hasSurvey = anomalies.length > 0 || overlayIds.length > 0;
+
+  /** Dashed site outline: the baked rectangle for the primary plant, otherwise
+   *  the uploaded raster's own extent, so outline and imagery agree by
+   *  construction rather than as two separate estimates. */
+  const boundaryRing = useMemo(
+    () =>
+      isPrimary
+        ? PLANT_BOUNDARY_COORDS
+        : activeOverlay
+          ? ringFromBaseline(activeOverlay.baseline)
+          : null,
+    [isPrimary, activeOverlay],
+  );
 
   // Survey tooling — KML view, KML export, and hand-alignment — is for the people
   // who flew the site, not the people reading the result. A plant owner opening
@@ -424,8 +533,11 @@ function SiteMap() {
   // cluster's size without clicking it open.
   const [clusterTip, setClusterTip]         = useState<{ lng: number; lat: number; count: number } | null>(null);
   const [mapError, setMapError]             = useState<string | null>(null);
+  // Centred on whichever plant is selected rather than on the primary plant's
+  // coordinates, which used to be written in here as literals — a second plant
+  // opened the map looking at Rajasthan.
   const [viewState, setViewState]           = useState<Omit<ViewState, "width"|"height">>({
-    longitude: 73.0295, latitude: 28.2622, zoom: 16.2,
+    longitude: selectedPlant.gps.lng, latitude: selectedPlant.gps.lat, zoom: 16.2,
     bearing: 0, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 },
   });
 
@@ -532,42 +644,41 @@ function SiteMap() {
   // once per image; the pixels never change, only where they are placed.
   useEffect(() => {
     let live = true;
-    Object.values(OVERLAYS).forEach(def => {
+    Object.values(overlays).forEach(def => {
       loadRasterMask(def).then(m => {
         if (live) setMasks(prev => (def.id in prev ? prev : { ...prev, [def.id]: m }));
       });
     });
     return () => { live = false; };
-  }, []);
+  }, [overlays]);
 
   const cornersOf = useCallback(
-    (id: string) => cornersFor(OVERLAYS[id].baseline, placementOf(id)),
-    [placementOf],
+    (id: string) => cornersFor(overlays[id].baseline, placementOf(id)),
+    [overlays, placementOf],
   );
 
   const baseAnomalies = useMemo(() => {
-    if (!isRajpur) return [];
     return anomalies.filter(a =>
       filters[a.severity] &&
       (typeFilter     === "all" || a.type     === typeFilter) &&
       (inverterFilter === "all" || a.inverter === inverterFilter) &&
       (stringFilter   === "all" || a.string   === stringFilter),
     );
-  }, [isRajpur, filters, typeFilter, inverterFilter, stringFilter]);
+  }, [anomalies, filters, typeFilter, inverterFilter, stringFilter]);
 
   // Which overlays are actually drawn right now. Kept as a list even though the
   // March 2026 survey ships exactly one raster: a defect counts as a "stray" only
   // when it falls outside *every* visible overlay, and that rule has to survive the
   // next deliverable arriving with a visual ortho alongside the thermal.
   const activeOverlayIds = useMemo(() => {
-    if (kmlViewMode) return [];
-    return [thermalVisible ? "thermal" : null].filter(Boolean) as string[];
-  }, [kmlViewMode, thermalVisible]);
+    if (kmlViewMode || !thermalVisible) return [];
+    return overlayIds;
+  }, [kmlViewMode, thermalVisible, overlayIds]);
 
   const strayIds = useMemo(() => {
     if (activeOverlayIds.length === 0) return new Set<string>();
     const tests = activeOverlayIds
-      .map(id => makeCoverageTest(OVERLAYS[id], placementOf(id), masks[id] ?? null))
+      .map(id => makeCoverageTest(overlays[id], placementOf(id), masks[id] ?? null))
       .filter(Boolean);
     if (tests.length === 0) return new Set<string>();
     const out = new Set<string>();
@@ -575,7 +686,7 @@ function SiteMap() {
       if (!tests.some(t => t!.insideFootprint(a.gps.lng, a.gps.lat))) out.add(a.id);
     }
     return out;
-  }, [activeOverlayIds, baseAnomalies, masks, placementOf]);
+  }, [activeOverlayIds, overlays, baseAnomalies, masks, placementOf]);
 
   const visibleAnomalies = useMemo(
     () => (suppressionApplies(activeOverlayIds, strayIds.size, baseAnomalies.length)
@@ -593,27 +704,38 @@ function SiteMap() {
     return out;
   }, [visibleAnomalies]);
 
+  /** Per-severity totals for this plant's whole dataset — what the filter
+   *  checkboxes count and what decides whether a row is worth showing at all.
+   *  Counted from the selected plant's anomalies rather than mock-data's
+   *  `anomalyCounts`, which would print the primary plant's 1,249-defect split
+   *  beside every other plant's map. */
+  const datasetCounts = useMemo(() => {
+    const out: Record<Severity, number> = { critical: 0, medium: 0, normal: 0, nodata: 0 };
+    for (const a of anomalies) out[a.severity]++;
+    return out;
+  }, [anomalies]);
+
   // Live registration quality for the Align panel, scored against the surveyed
   // KML centroids — the only exact geography on this map.
   const alignScore: AlignmentScore | null = useMemo(() => {
     if (!alignTarget) return null;
     return scorePlacement(
-      OVERLAYS[alignTarget],
+      overlays[alignTarget],
       placementOf(alignTarget),
       masks[alignTarget] ?? null,
       anomalies.map(a => ({ lng: a.gps.lng, lat: a.gps.lat })),
     );
-  }, [alignTarget, placementOf, masks]);
+  }, [alignTarget, overlays, anomalies, placementOf, masks]);
 
   const baselineScore: AlignmentScore | null = useMemo(() => {
     if (!alignTarget) return null;
     return scorePlacement(
-      OVERLAYS[alignTarget],
+      overlays[alignTarget],
       IDENTITY,
       masks[alignTarget] ?? null,
       anomalies.map(a => ({ lng: a.gps.lng, lat: a.gps.lat })),
     );
-  }, [alignTarget, masks]);
+  }, [alignTarget, overlays, anomalies, masks]);
 
   // Surveyed panel outlines (defpanels1.kml) — real footprints, not estimated positions.
   // Drives both the zoom-in panel fills on the satellite view and KML View.
@@ -646,7 +768,7 @@ function SiteMap() {
 
   const anomalyById = useMemo(
     () => new Map(anomalies.map(a => [a.id, a])),
-    [],
+    [anomalies],
   );
 
   // ── Defect stepper order ──
@@ -781,11 +903,12 @@ function SiteMap() {
    *     entirely while Align is open rather than trying to coordinate with it.
    *   - compareMode: two independently-scrolled panes side by side have no
    *     one camera for a keypress to mean anything about.
-   *   - isRajpur: the non-Rajpur placeholder map carries no real anomaly data
-   *     for the stepper to walk and isn't meant to be a navigable site map.
+   *   - hasSurvey: a plant with no survey shows the placeholder map, which
+   *     carries no anomaly data for the stepper to walk and isn't meant to be a
+   *     navigable site map.
    */
   useEffect(() => {
-    if (!isRajpur || compareMode) return;
+    if (!hasSurvey || compareMode) return;
     const onKey = (e: KeyboardEvent) => {
       if (alignTarget) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -819,7 +942,7 @@ function SiteMap() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isRajpur, compareMode, alignTarget, selected, stepDefect, resetNorth, stepZoom, stepPitch, panCardinal]);
+  }, [hasSurvey, compareMode, alignTarget, selected, stepDefect, resetNorth, stepZoom, stepPitch, panCardinal]);
 
   // Alignment reference: every surveyed footprint, ignoring the sidebar filters.
   // Filtering here would be actively harmful — you align against as much known-good
@@ -832,7 +955,7 @@ function SiteMap() {
       geometry: { type: "Polygon" as const, coordinates: [a.footprint!] },
       properties: {},
     })),
-  }), []);
+  }), [anomalies]);
 
   // ── Overlay render profile ──
   // Recomputed only when the presentation toggle flips. The paint objects are
@@ -859,6 +982,33 @@ function SiteMap() {
       localStorage.setItem(LAYER_PREFS_KEY, JSON.stringify({ thermalOpacity, hideBasemap, showOutlines }));
     } catch { /* private mode / storage disabled — prefs just won't persist */ }
   }, [thermalOpacity, hideBasemap, showOutlines]);
+
+  /**
+   * Frame the selected plant's site.
+   *
+   * `initialViewState` only applies on mount, which is not enough for either of
+   * the two ways the subject changes under a mounted map: switching plants from
+   * the picker, and this plant's survey arriving from the API a moment after
+   * first paint. Without this, an uploaded plant's imagery would draw correctly
+   * and off-screen.
+   *
+   * Keyed on the plant and its boundary, so it fires on those two events and not
+   * on the operator's own panning.
+   */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (boundaryRing) {
+      const lngs = boundaryRing.map(([lng]) => lng);
+      const lats = boundaryRing.map(([, lat]) => lat);
+      map.fitBounds(
+        [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
+        { padding: 40, duration: 0 },
+      );
+    } else {
+      map.jumpTo({ center: [selectedPlant.gps.lng, selectedPlant.gps.lat], zoom: 14 });
+    }
+  }, [selectedPlant.id, selectedPlant.gps.lng, selectedPlant.gps.lat, boundaryRing, mapReady]);
 
   /**
    * The selected panel's centroid, or nothing.
@@ -1083,14 +1233,17 @@ function SiteMap() {
     setAuditOpen(false);
   }, [selected?.id]);
 
+  // Derived from the selected plant's own defects, so switching plants rebuilds
+  // the filter options instead of leaving the previous plant's inverters and
+  // tables in the dropdowns.
   const uniqueInverters = useMemo(() =>
-    ["all", ...Array.from(new Set(anomalies.map(a => a.inverter))).sort()], []);
+    ["all", ...Array.from(new Set(anomalies.map(a => a.inverter))).sort()], [anomalies]);
   const uniqueTables = useMemo(() =>
     ["all", ...Array.from(new Set(anomalies.map(a => a.string))).sort((a, b) => {
       const na = parseInt(a.replace("Table-", ""));
       const nb = parseInt(b.replace("Table-", ""));
       return isNaN(na) || isNaN(nb) ? a.localeCompare(b) : na - nb;
-    })], []);
+    })], [anomalies]);
 
   const resetFilters = () => {
     setFilters({ critical: true, medium: true, normal: true, nodata: true });
@@ -1100,7 +1253,7 @@ function SiteMap() {
   const exportKML = () => {
     const kml = buildAnomaliesKML({
       plantName: selectedPlant.name,
-      boundary: isRajpur ? PLANT_BOUNDARY_COORDS : undefined,
+      boundary: boundaryRing ?? undefined,
       plantCenter: selectedPlant.gps,
       anomalies: visibleAnomalies,
     });
@@ -1119,10 +1272,10 @@ function SiteMap() {
 
         <div className="space-y-2">
           {([
-            { key: "critical", label: SEVERITY_LABEL_FULL.critical, dotColor: SEV_COLOR.critical, count: anomalyCounts.critical, color: "text-critical" },
-            { key: "medium",   label: SEVERITY_LABEL_FULL.medium,   dotColor: SEV_COLOR.medium,   count: anomalyCounts.medium,   color: "text-medium" },
-            { key: "normal",   label: SEVERITY_LABEL_FULL.normal,   dotColor: SEV_COLOR.normal,   count: anomalyCounts.normal,   color: "text-normal" },
-            { key: "nodata",   label: SEVERITY_LABEL_FULL.nodata,   dotColor: "#6b7280",          count: anomalyCounts.nodata,   color: "text-muted-foreground" },
+            { key: "critical", label: SEVERITY_LABEL_FULL.critical, dotColor: SEV_COLOR.critical, count: datasetCounts.critical, color: "text-critical" },
+            { key: "medium",   label: SEVERITY_LABEL_FULL.medium,   dotColor: SEV_COLOR.medium,   count: datasetCounts.medium,   color: "text-medium" },
+            { key: "normal",   label: SEVERITY_LABEL_FULL.normal,   dotColor: SEV_COLOR.normal,   count: datasetCounts.normal,   color: "text-normal" },
+            { key: "nodata",   label: SEVERITY_LABEL_FULL.nodata,   dotColor: "#6b7280",          count: datasetCounts.nodata,   color: "text-muted-foreground" },
             // A row reading "(0)" is a filter that can only ever remove nothing.
           ] as const).filter(f => f.count > 0).map(f => (
             <label key={f.key} className="flex items-center gap-3 cursor-pointer py-1.5">
@@ -1139,7 +1292,7 @@ function SiteMap() {
           ))}
         </div>
 
-        {isRajpur && (
+        {hasSurvey && (
           <p className="mt-4 text-[11px] text-muted-foreground mono border-t border-grey-200 pt-3">
             {visibleAnomalies.length} of {anomalies.length} anomalies shown
           </p>
@@ -1166,14 +1319,19 @@ function SiteMap() {
             <h1 className="font-bold text-foreground">{selectedPlant.name} — Site Map</h1>
             <p className="text-xs text-muted-foreground mono">
               {selectedPlant.totalPanels.toLocaleString()} panels · {selectedPlant.location}
-              {isRajpur ? ` · ${PLANT_ROWS} rows × ${PLANT_COLS} cols` : ""}
+              {/* The 26-column rack geometry is the primary plant's layout, not
+                  a property every plant shares, so it is captioned only there. */}
+              {isPrimary ? ` · ${PLANT_ROWS} rows × ${PLANT_COLS} cols` : ""}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
 
             {/* Satellite-only controls */}
-            {isRajpur && (
+            {hasSurvey && (
               <>
+                {/* Needs a raster to compare the satellite against — a survey
+                    that shipped a defect list and no orthomosaic has none. */}
+                {activeOverlay && (
                 <button
                   onClick={() => { setCompareMode(v => !v); setKmlViewMode(false); }}
                   title="Compare thermal against satellite"
@@ -1183,6 +1341,7 @@ function SiteMap() {
                 >
                   <SplitSquareHorizontal size={13} /> Compare
                 </button>
+                )}
 
                 {/* Not gated on isSurveyor: the person sharing their screen with a
                     plant owner is as often the plant owner. */}
@@ -1214,7 +1373,12 @@ function SiteMap() {
                     // Opening Align implies you want to see what you are aligning,
                     // so switch the target overlay on rather than making the
                     // operator remember to.
-                    const next = alignTarget ? null : (activeOverlayIds[0] ?? "thermal");
+                    //
+                    // Taken from this plant's own registry, not a literal
+                    // "thermal" fallback: that id only exists for the primary
+                    // plant, so on any other plant it named an overlay that was
+                    // not there and the corner lookup had nothing to read.
+                    const next = alignTarget ? null : (overlayIds[0] ?? null);
                     if (next) setThermalVisible(true);
                     setAlignTarget(next);
                     setCompareMode(false); setKmlViewMode(false);
@@ -1228,7 +1392,7 @@ function SiteMap() {
                 </button>
                 )}
 
-                {!compareMode && !kmlViewMode && (
+                {activeOverlay && !compareMode && !kmlViewMode && (
                   <div className="flex items-center border border-border divide-x divide-border overflow-hidden">
                     <span className="px-2 text-[10px] uppercase tracking-widest text-grey-400 bg-grey-50 h-8 flex items-center">Overlay</span>
                     <button onClick={() => setThermalVisible(v => !v)} className={`h-8 px-3 flex items-center gap-1.5 text-xs font-medium transition ${thermalVisible ? "bg-red-600 text-white" : "bg-card text-muted-foreground hover:bg-muted"}`}>
@@ -1259,7 +1423,7 @@ function SiteMap() {
         <div className="flex-1 overflow-hidden relative flex flex-col">
 
           {/* ── Satellite: compare mode ── */}
-          {compareMode && (
+          {compareMode && activeOverlay && (
             <div
               className="absolute inset-0 flex select-none"
               onMouseMove={e => {
@@ -1280,7 +1444,7 @@ function SiteMap() {
                   style={{ width: "100%", height: "100%" }}
                   mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
                 >
-                  <Source id="cmp-thermal" type="image" url={THERMAL_IMAGE} coordinates={cornersOf("thermal")}>
+                  <Source id="cmp-thermal" type="image" url={activeOverlay.url} coordinates={cornersOf(activeOverlay.id)}>
                     <Layer id="cmp-thermal-layer" type="raster" paint={{
                       "raster-opacity": 1,
                       "raster-resampling": RASTER_RESAMPLING,
@@ -1334,10 +1498,17 @@ function SiteMap() {
               <MapGL
                 ref={mapRef}
                 mapboxAccessToken={MAPBOX_TOKEN}
-                // Centre of the March 2026 thermal footprint. z16.2 rather than the
-                // old z17 because this block is 1.14 km across against Block 20's
-                // 0.57 km — at z17 half of it starts off screen.
-                initialViewState={{ longitude: 73.0295, latitude: 28.2622, zoom: isRajpur ? 16.2 : 14 }}
+                // The selected plant's own coordinates, where this used to be the
+                // March 2026 footprint's centre as literals. z16.2 rather than the
+                // old z17 because that block is 1.14 km across against Block 20's
+                // 0.57 km — at z17 half of it starts off screen. A plant with a
+                // survey gets reframed to its actual extent once that extent is
+                // known; see the fitBounds effect above.
+                initialViewState={{
+                  longitude: selectedPlant.gps.lng,
+                  latitude: selectedPlant.gps.lat,
+                  zoom: hasSurvey ? 16.2 : 14,
+                }}
                 key={selectedPlant.id}
                 // Task 6's "simplified 2D mobile fallback": a tilted view costs
                 // extra fill-rate on the exact devices least able to spare it, and
@@ -1429,10 +1600,10 @@ function SiteMap() {
                 <NavigationControl position="top-right" />
 
                 {/* Plant boundary outline */}
-                {isRajpur && (
+                {boundaryRing && (
                   <Source id="plant-boundary" type="geojson" data={{
                     type: "Feature",
-                    geometry: { type: "Polygon", coordinates: [PLANT_BOUNDARY_COORDS] },
+                    geometry: { type: "Polygon", coordinates: [boundaryRing] },
                     properties: {},
                   } as never}>
                     <Layer id="plant-boundary-fill" type="fill" paint={{ "fill-color": "#f59e0b", "fill-opacity": 0.04 }} />
@@ -1440,8 +1611,8 @@ function SiteMap() {
                   </Source>
                 )}
 
-                {/* Non-Rajpur: centre pin */}
-                {!isRajpur && (
+                {/* No survey to draw: a single pin at the plant's coordinates */}
+                {!hasSurvey && (
                   <Marker longitude={selectedPlant.gps.lng} latitude={selectedPlant.gps.lat} anchor="center">
                     <div style={{ width: 24, height: 24, borderRadius: "50%", backgroundColor: "var(--ochre)", border: "3px solid white", boxShadow: "0 2px 8px rgba(0,0,0,0.4)" }} />
                   </Marker>
@@ -1458,7 +1629,7 @@ function SiteMap() {
                     each new layer to the top of the stack, so an overlay toggled on
                     later would otherwise bury the anomalies. Declaring these first
                     gives the rasters below a stable `beforeId` to insert beneath. */}
-                {isRajpur && !kmlViewMode && (
+                {hasSurvey && !kmlViewMode && (
                   <>
                     {/* ── Bounding boxes ──
                         The surveyed footprints, tiled at panel scale (SOURCE_TUNING)
@@ -1601,8 +1772,8 @@ function SiteMap() {
                 {/* Drone orthomosaic overlays — suppressed in KML View, which shows outlines on their own.
                     `beforeId` keeps them underneath the anomaly layers no matter what order
                     the user toggles IR in. */}
-                {isRajpur && thermalVisible && !kmlViewMode && (
-                  <Source id="thermal" type="image" url={THERMAL_IMAGE} coordinates={cornersOf("thermal")}>
+                {activeOverlay && thermalVisible && !kmlViewMode && (
+                  <Source id="thermal" type="image" url={activeOverlay.url} coordinates={cornersOf(activeOverlay.id)}>
                     <Layer id="thermal-layer" type="raster" beforeId="anomaly-panel-fill" paint={{
                       "raster-opacity": thermalOpacity,
                       // The site is ~900 m across, so past roughly z18 the map is
@@ -1623,7 +1794,7 @@ function SiteMap() {
                     fixed thing: you move the raster until its panel rows sit under
                     these rectangles, never the other way round. Declared after the
                     rasters so Mapbox stacks it above them. */}
-                {isRajpur && alignTarget && (
+                {hasSurvey && alignTarget && (
                   <Source id="align-ref" type="geojson" data={alignReferenceGeoJSON as never}>
                     <Layer id="align-ref-line" type="line" paint={{
                       "line-color": "#22d3ee",
@@ -1634,7 +1805,7 @@ function SiteMap() {
                 )}
 
                 {/* Surveyed panel outlines — real footprints from defpanels1.kml — only in KML View */}
-                {isRajpur && kmlViewMode && (
+                {hasSurvey && kmlViewMode && (
                   <Source id="panel-outlines" type="geojson" data={panelOutlinesGeoJSON as never}>
                     <Layer id="panel-outlines-fill" type="fill" paint={{
                       "fill-color": ["match", ["get", "severity"], "critical", SEV_COLOR.critical, "medium", SEV_COLOR.medium, "normal", SEV_COLOR.normal, SEV_COLOR.nodata],
@@ -1720,7 +1891,7 @@ function SiteMap() {
 
               {/* Navigation HUD — pitch/elevation steppers, cardinal pan,
                   north reset, defect stepper, keyboard legend. Gated on
-                  isRajpur for the same reason the anomaly layers above are:
+                  hasSurvey for the same reason the anomaly layers above are:
                   the placeholder map for any other plant has no real
                   geometry for the stepper to walk. See components/
                   NavigationHUD.tsx for why it shifts rather than layers under
@@ -1738,7 +1909,7 @@ function SiteMap() {
                   AlignPanel's own listener below — this HUD stepping aside
                   matches the keyboard guard in the keydown handler above,
                   which already refuses to act while alignTarget is set. */}
-              {isRajpur && !kmlViewMode && !alignTarget && (
+              {hasSurvey && !kmlViewMode && !alignTarget && (
                 <NavigationHUD
                   onPan={panCardinal}
                   onPitch={stepPitch}
@@ -1758,7 +1929,7 @@ function SiteMap() {
               )}
 
               {/* KML View mode badge */}
-              {isRajpur && kmlViewMode && (
+              {hasSurvey && kmlViewMode && (
                 <div className="absolute top-2 left-2 bg-ochre text-ochre-fg text-[10px] font-bold mono px-2 py-0.5 flex items-center gap-1 z-10">
                   <MapIcon size={10} /> KML VIEW — SURVEYED PANEL OUTLINES
                 </div>
@@ -1799,7 +1970,7 @@ function SiteMap() {
                     a registration artefact, not a defect that has moved. Defects
                     sitting in interior road or stitch gaps are *not* counted here
                     and stay visible, because those are correctly placed. */}
-                {isSurveyor && isRajpur && activeOverlayIds.length > 0 && strayIds.size > 0 && (
+                {isSurveyor && hasSurvey && activeOverlayIds.length > 0 && strayIds.size > 0 && (
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">
                     <div className="flex items-center gap-1 text-muted-foreground">
                       <EyeOff size={11} /> {strayIds.size} off-overlay hidden
@@ -1810,7 +1981,7 @@ function SiteMap() {
                     </p>
                   </div>
                 )}
-                {isRajpur && (
+                {hasSurvey && (
                   <div className="pt-1.5 border-t border-grey-200 flex items-center justify-between">
                     <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
                       <Layers size={11} /> Layers
@@ -1820,7 +1991,7 @@ function SiteMap() {
                     </span>
                   </div>
                 )}
-                {isRajpur && !kmlViewMode && (
+                {hasSurvey && !kmlViewMode && (
                   <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
@@ -1831,7 +2002,7 @@ function SiteMap() {
                     <span className="text-muted-foreground">Show Defect Outlines</span>
                   </label>
                 )}
-                {isRajpur && thermalVisible && !kmlViewMode && (
+                {activeOverlay && thermalVisible && !kmlViewMode && (
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">
                     <div className="flex items-center gap-1.5 text-red-500 font-medium"><Thermometer size={11} /> Thermal IR</div>
                     <div className="flex items-center gap-2">
@@ -1850,7 +2021,7 @@ function SiteMap() {
                     </label>
                   </div>
                 )}
-                {isRajpur && kmlViewMode && (
+                {hasSurvey && kmlViewMode && (
                   <div className="pt-1.5 border-t border-grey-200 space-y-1">
                     <div className="flex items-center gap-1.5 text-ochre font-medium"><MapIcon size={11} /> KML — Surveyed Panels</div>
                     <p className="text-[10px] text-muted-foreground">
@@ -1866,12 +2037,16 @@ function SiteMap() {
               </div>
 
               {/* Align panel */}
-              {isRajpur && alignTarget && (
+              {hasSurvey && alignTarget && overlays[alignTarget] && (
                 <AlignPanel
                   targetId={alignTarget}
+                  overlays={overlays}
                   onTarget={id => {
                     setAlignTarget(id);
-                    if (id === "thermal") setThermalVisible(true);
+                    // Whatever the operator picks, show it — the old test for the
+                    // literal "thermal" id left an uploaded plant's raster hidden
+                    // behind an Align panel that was editing it.
+                    setThermalVisible(true);
                   }}
                   placement={placementOf(alignTarget)}
                   onChange={patch => updatePlacement(alignTarget, patch)}
@@ -1882,8 +2057,8 @@ function SiteMap() {
                 />
               )}
 
-              {/* Non-Rajpur info */}
-              {!isRajpur && (
+              {/* No survey for this plant yet */}
+              {!hasSurvey && (
                 <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/95 border border-grey-200 px-4 py-2.5 text-xs shadow text-center max-w-xs">
                   <p className="font-semibold text-foreground">{selectedPlant.name}</p>
                   <p className="text-muted-foreground mt-0.5">{selectedPlant.location} · {selectedPlant.capacityMW} MW</p>
@@ -2061,9 +2236,12 @@ function alignmentVerdict(score: AlignmentScore | null): {
 }
 
 function AlignPanel({
-  targetId, onTarget, placement, onChange, score, baseline, onClose, presentation,
+  targetId, overlays, onTarget, placement, onChange, score, baseline, onClose, presentation,
 }: {
   targetId: string;
+  /** The selected plant's overlays — the baked registry for the primary plant,
+   *  its uploaded orthomosaic for anyone else. */
+  overlays: Record<string, OverlayDef>;
   onTarget: (id: string) => void;
   placement: Placement;
   onChange: (patch: Partial<Placement>) => void;
@@ -2075,7 +2253,7 @@ function AlignPanel({
 }) {
   const [step, setStep] = useState(1);
   const [copied, setCopied] = useState(false);
-  const def = OVERLAYS[targetId];
+  const def = overlays[targetId];
   const verdict = alignmentVerdict(score);
 
   const nudge = useCallback((de: number, dn: number) => {
@@ -2126,7 +2304,7 @@ function AlignPanel({
           onChange={e => onTarget(e.target.value)}
           className="w-full h-8 px-2 border border-border bg-card text-foreground text-xs"
         >
-          {Object.values(OVERLAYS).map(o => (
+          {Object.values(overlays).map(o => (
             <option key={o.id} value={o.id}>{o.label}</option>
           ))}
         </select>

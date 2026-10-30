@@ -38,10 +38,26 @@
  */
 
 const M_PER_DEG_LAT = 110_600.0;
-/** Plant centroid latitude. Over a ~1.1 km site the cos(lat) term varies by far
- *  less than the placement's own accuracy, so one constant is enough. */
-const SITE_LAT = 28.2622;
-const M_PER_DEG_LNG = 111_320.0 * Math.cos((SITE_LAT * Math.PI) / 180);
+const M_PER_DEG_LNG_EQUATOR = 111_320.0;
+
+/**
+ * Metres per degree of longitude at a given latitude.
+ *
+ * This was a module constant pinned to one site's centroid (28.2622). Over a
+ * ~1.1 km block the cos(lat) term really does vary by far less than the
+ * placement's own accuracy, so for a single plant it was enough. It stops being
+ * enough the moment a second plant is registered: cos(lat) is 0.881 in
+ * Rajasthan and 0.961 at 16°N, so a Karnataka overlay georeferenced with
+ * Rajasthan's constant would be stretched ~9% east-west — tens of metres of
+ * error across a block, which is the difference between a marker on its module
+ * and a marker on its neighbour.
+ *
+ * Each overlay now derives it from its own baseline's centre latitude, so the
+ * scaling follows the imagery rather than the site it was first written for.
+ */
+function mPerDegLng(lat: number): number {
+  return M_PER_DEG_LNG_EQUATOR * Math.cos((lat * Math.PI) / 180);
+}
 
 export type Corner = [number, number];
 /** Mapbox image-source corner order: NW, NE, SE, SW. */
@@ -111,21 +127,98 @@ export interface OverlayDef {
  *
  * To add an overlay later: drop the file in public/, add an entry here, then open
  * Align on the map and register it. Nothing else needs to change.
+ *
+ * This registry is the *baked* one — assets shipped with the build, for the
+ * primary plant. A plant whose survey was uploaded through Control Center keeps
+ * its orthomosaic in Supabase Storage with its extent in `plant_surveys`
+ * instead; see overlayFromSurvey below.
  */
 export const OVERLAYS: Record<string, OverlayDef> = {
   thermal: {
     id: "thermal",
     label: "Thermal IR",
     url: "/thermal_ortho4_hi.webp",
-    baseline: { west: 73.023697, north: 28.264500, east: 73.035302, south: 28.259854 },
+    baseline: { west: 73.023697, north: 28.2645, east: 73.035302, south: 28.259854 },
   },
 };
+
+/**
+ * Overlay id for a plant's uploaded orthomosaic.
+ *
+ * Scoped by plant id rather than a bare "survey" on purpose: saved placements
+ * are keyed by overlay id (see loadPlacements below), so one shared id would
+ * carry an operator's nudge of plant A's raster onto plant B's. One raster per
+ * plant — a re-upload replaces it rather than adding a second layer.
+ */
+export function surveyOverlayId(plantId: string): string {
+  return `survey:${plantId}`;
+}
+
+/** The orthomosaic extent as `plant_surveys` stores it (api/survey.ts surveyDTO). */
+export interface SurveyOverlaySource {
+  url: string;
+  west: number;
+  north: number;
+  east: number;
+  south: number;
+}
+
+/**
+ * An uploaded survey's orthomosaic as a drawable overlay.
+ *
+ * The extent is read from the deliverable's own <LatLonBox> tags during import
+ * (src/lib/survey-import.ts) and stored alongside the image, so — exactly like
+ * the baked entry above — these corners are measured rather than fitted, and
+ * IDENTITY is the correct placement. The Align panel still works on it if a
+ * raster ever arrives mis-tagged.
+ *
+ * Returns null when the survey carries no raster: a defect list on its own is a
+ * valid survey (the `plant_surveys` comment in migration 007 says so), and the
+ * map should then draw the defects over the satellite basemap rather than
+ * mounting an image source with nothing in it.
+ */
+export function overlayFromSurvey(
+  plantId: string,
+  overlay: SurveyOverlaySource | null | undefined,
+  label = "Thermal IR",
+): OverlayDef | null {
+  if (!overlay?.url) return null;
+  const { west, north, east, south } = overlay;
+  // A degenerate or inverted extent would give a zero/negative half-extent and
+  // collapse or mirror the raster. Treat it as "no usable overlay" rather than
+  // drawing the image somewhere arbitrary.
+  if (![west, north, east, south].every(Number.isFinite)) return null;
+  if (east <= west || north <= south) return null;
+  return {
+    id: surveyOverlayId(plantId),
+    label,
+    url: overlay.url,
+    baseline: { west, north, east, south },
+  };
+}
+
+/** The boundary rectangle implied by an overlay's extent, as a closed
+ *  [lng, lat] ring — what the map draws as the dashed site outline. Keeping it
+ *  derived from the raster means outline and imagery are the same rectangle by
+ *  construction, which is the same reasoning as the baked
+ *  PLANT_BOUNDARY_COORDS in routes/_app/map.tsx. */
+export function ringFromBaseline(b: Baseline): [number, number][] {
+  return [
+    [b.west, b.north],
+    [b.east, b.north],
+    [b.east, b.south],
+    [b.west, b.south],
+    [b.west, b.north],
+  ];
+}
 
 // ─── Transform ────────────────────────────────────────────────────────────────
 
 interface Frame {
   centreLng: number;
   centreLat: number;
+  /** Metres per degree of longitude at this overlay's own centre latitude. */
+  mPerDegLng: number;
   /** half-extent east-west, metres, after scale */
   hw: number;
   /** half-extent north-south, metres, after scale */
@@ -136,10 +229,13 @@ interface Frame {
 
 function frame(baseline: Baseline, p: Placement): Frame {
   const theta = (p.rotation * Math.PI) / 180;
+  const centreLat = (baseline.north + baseline.south) / 2;
+  const mLng = mPerDegLng(centreLat);
   return {
     centreLng: (baseline.west + baseline.east) / 2,
-    centreLat: (baseline.north + baseline.south) / 2,
-    hw: ((baseline.east - baseline.west) * M_PER_DEG_LNG * p.scale) / 2,
+    centreLat,
+    mPerDegLng: mLng,
+    hw: ((baseline.east - baseline.west) * mLng * p.scale) / 2,
     hh: ((baseline.north - baseline.south) * M_PER_DEG_LAT * p.scale) / 2,
     cos: Math.cos(theta),
     sin: Math.sin(theta),
@@ -162,7 +258,7 @@ export function cornersFor(baseline: Baseline, p: Placement): ImageCorners {
   ];
   return local.map(([e, n]) => {
     const [me, mn] = place(f, p, e, n);
-    return [f.centreLng + me / M_PER_DEG_LNG, f.centreLat + mn / M_PER_DEG_LAT] as Corner;
+    return [f.centreLng + me / f.mPerDegLng, f.centreLat + mn / M_PER_DEG_LAT] as Corner;
   }) as ImageCorners;
 }
 
@@ -180,7 +276,7 @@ export function worldToImage(
   lat: number,
 ): { u: number; v: number } {
   const f = frame(baseline, p);
-  const e = (lng - f.centreLng) * M_PER_DEG_LNG - p.dx;
+  const e = (lng - f.centreLng) * f.mPerDegLng - p.dx;
   const n = (lat - f.centreLat) * M_PER_DEG_LAT - p.dy;
   // Undo the clockwise rotation applied in place().
   const le = e * f.cos - n * f.sin;

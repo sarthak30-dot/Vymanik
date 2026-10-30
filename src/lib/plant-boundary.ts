@@ -17,6 +17,12 @@
  * accepted on purpose, not missed. The values themselves are the composited
  * extent of the March 2026 thermal orthomosaic (see the OVERLAYS baseline in
  * lib/overlay-registration.ts), the same ground truth both places draw from.
+ *
+ * PLANT_BOUNDARY is the *primary* plant's rectangle and stays the default, so
+ * existing callers are unchanged. The checks below take a box so a second
+ * plant's ingestion can be validated against its own surveyed extent — read
+ * from its uploaded survey (`plant_surveys.overlay_*`) — instead of being told
+ * its perfectly good coordinates are 500 km off-site.
  */
 
 export interface BoundaryBox {
@@ -39,8 +45,17 @@ export const PLANT_BOUNDARY: BoundaryBox = {
  *  train an operator to stop trusting the check. ~15 m is roughly a rack's
  *  depth at this site, generous enough to absorb noise without accepting a
  *  point that is genuinely off-site. */
-const TOLERANCE_DEG_LAT = 15 / 110_600;
-const TOLERANCE_DEG_LNG = 15 / (111_320 * Math.cos((28.2622 * Math.PI) / 180));
+const TOLERANCE_M = 15;
+const M_PER_DEG_LAT = 110_600;
+
+/** Metres per degree of longitude at the box's own centre latitude, rather
+ *  than at one site's. A rectangle at 16°N is ~9% wider per degree than one in
+ *  Rajasthan, and using the wrong figure would mis-measure how far outside a
+ *  point sits — and so flag or accept the wrong rows. */
+function mPerDegLng(box: BoundaryBox): number {
+  const centreLat = (box.south + box.north) / 2;
+  return 111_320 * Math.cos((centreLat * Math.PI) / 180);
+}
 
 export interface BoundaryCheck {
   withinBoundary: boolean;
@@ -53,25 +68,18 @@ export interface BoundaryCheck {
  * approximation used everywhere else on this map (valid at this site's
  * ~1.1 km scale — see the note in lib/map-camera.ts).
  */
-export function checkBoundary(lat: number, lng: number): BoundaryCheck {
-  const dLatOut =
-    lat < PLANT_BOUNDARY.south
-      ? PLANT_BOUNDARY.south - lat
-      : lat > PLANT_BOUNDARY.north
-        ? lat - PLANT_BOUNDARY.north
-        : 0;
-  const dLngOut =
-    lng < PLANT_BOUNDARY.west
-      ? PLANT_BOUNDARY.west - lng
-      : lng > PLANT_BOUNDARY.east
-        ? lng - PLANT_BOUNDARY.east
-        : 0;
+export function checkBoundary(
+  lat: number,
+  lng: number,
+  box: BoundaryBox = PLANT_BOUNDARY,
+): BoundaryCheck {
+  const dLatOut = lat < box.south ? box.south - lat : lat > box.north ? lat - box.north : 0;
+  const dLngOut = lng < box.west ? box.west - lng : lng > box.east ? lng - box.east : 0;
 
-  const mLat = dLatOut * 110_600;
-  const mLng = dLngOut * (111_320 * Math.cos((28.2622 * Math.PI) / 180));
-  const distanceOutsideM = Math.hypot(mLat, mLng);
+  const mLng = mPerDegLng(box);
+  const distanceOutsideM = Math.hypot(dLatOut * M_PER_DEG_LAT, dLngOut * mLng);
 
-  const withinBoundary = dLatOut <= TOLERANCE_DEG_LAT && dLngOut <= TOLERANCE_DEG_LNG;
+  const withinBoundary = dLatOut <= TOLERANCE_M / M_PER_DEG_LAT && dLngOut <= TOLERANCE_M / mLng;
   return { withinBoundary, distanceOutsideM: Math.round(distanceOutsideM) };
 }
 
@@ -83,6 +91,8 @@ export function checkBoundary(lat: number, lng: number): BoundaryCheck {
  * leaves the operator to guess why. Checking the swap explicitly turns that
  * into a specific, actionable message instead of a confusing distance.
  */
-export function looksSwapped(lat: number, lng: number): boolean {
-  return !checkBoundary(lat, lng).withinBoundary && checkBoundary(lng, lat).withinBoundary;
+export function looksSwapped(lat: number, lng: number, box: BoundaryBox = PLANT_BOUNDARY): boolean {
+  return (
+    !checkBoundary(lat, lng, box).withinBoundary && checkBoundary(lng, lat, box).withinBoundary
+  );
 }

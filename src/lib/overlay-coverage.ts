@@ -97,11 +97,16 @@ function dilate(g: Grid): Grid {
 }
 
 const M_PER_DEG_LAT = 110_600.0;
-const M_PER_DEG_LNG = 111_320.0 * Math.cos((28.2622 * Math.PI) / 180);
 
+/** Metres per degree of longitude at the overlay's own centre latitude, not at
+ *  one site's. These metres set the mask's grid cell counts (DATA_CELL_M /
+ *  FOOTPRINT_CELL_M), so a fixed 28.2622° would quietly mis-size the grid for a
+ *  plant at any other latitude. Same reasoning as the note in
+ *  overlay-registration.ts. */
 function groundSize(b: Baseline) {
+  const centreLat = (b.north + b.south) / 2;
   return {
-    width: (b.east - b.west) * M_PER_DEG_LNG,
+    width: (b.east - b.west) * 111_320.0 * Math.cos((centreLat * Math.PI) / 180),
     height: (b.north - b.south) * M_PER_DEG_LAT,
   };
 }
