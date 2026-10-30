@@ -6,6 +6,7 @@ import { SeverityBadge, StatusBadge } from "@/components/SeverityBadge";
 import { MaintenanceTimeline } from "@/components/MaintenanceTimeline";
 import { tokenFor } from "@/lib/severity-tokens";
 import { parseDefectImage } from "@/lib/defect-image";
+import { registerLocation } from "@/lib/layout-labels";
 import { teamMembers, type Anomaly } from "@/lib/mock-data";
 import {
   appendAuditEvent,
@@ -198,6 +199,10 @@ function stringAssignment(a: Anomaly): string {
   if (a.block && a.smb) {
     return `Block ${a.block} · SMB ${a.smb} · ${a.string}${a.module ? ` · Module ${a.module}` : ""}`;
   }
+  const loc = registerLocation(a);
+  // A row-style register (no inverter hierarchy, no SMB) carries its own
+  // position wording. Without this the fallback below printed "Table-6 · —".
+  if (loc.zoneLabel === "Row") return loc.full;
   return `${a.string} · ${a.inverter}`;
 }
 

@@ -7,10 +7,10 @@ import { useAnomalies } from "@/lib/queries";
 import { usePlantContext } from "@/lib/plant-context";
 import { plant, SEVERITY_LABEL_FULL, clientDefectType } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
-import { stringAndInverter } from "@/lib/layout-labels";
+import { stringAndInverter, registerLocation } from "@/lib/layout-labels";
 
 export const Route = createFileRoute("/_app/anomalies/by-block")({
-  head: () => ({ meta: [{ title: "Block-wise Anomaly — UrjaScan" }] }),
+  head: () => ({ meta: [{ title: "Anomalies by zone — UrjaScan" }] }),
   // Optional ?block=<id> — lets the header's plant/block picker land straight
   // on a block's drill-down instead of the whole-plant chart. Absent for the
   // normal in-app tab click, same as map.tsx's own `focus` search param.
@@ -22,11 +22,14 @@ export const Route = createFileRoute("/_app/anomalies/by-block")({
 
 // ── Tab strip shared across the three anomaly views ──────────────────────────
 
-function AnomalyTabNav() {
+function AnomalyTabNav({ zoneLabel = "Block" }: { zoneLabel?: string }) {
   const loc = useLocation();
+  // The middle tab groups by whatever the survey's register groups by, so it
+  // reads "Row-wise" for a plant with no blocks. The route path stays
+  // /anomalies/by-block — it is a URL, not a label.
   const tabs = [
     { to: "/anomalies" as const,           label: "All Anomalies" },
-    { to: "/anomalies/by-block" as const,  label: "Block-wise" },
+    { to: "/anomalies/by-block" as const,  label: `${zoneLabel}-wise` },
     { to: "/anomalies/by-defect" as const, label: "Defect-wise" },
   ];
   return (
@@ -58,12 +61,12 @@ const BLOCK_CHART_COLORS = [
   "#6554C0", "#FF5630", "#00875A", "#0052CC", "#8777D9",
 ];
 
-function BlockTooltip({ active, payload }: { active?: boolean; payload?: { payload: { block: string; count: number } }[] }) {
+function BlockTooltip({ active, payload, zoneLabel = "Block" }: { active?: boolean; payload?: { payload: { block: string; count: number } }[]; zoneLabel?: string }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
   return (
     <div className="bg-card border border-border shadow p-3 text-xs space-y-0.5">
-      <p className="font-semibold text-foreground">Block {d.block}</p>
+      <p className="font-semibold text-foreground">{zoneLabel} {d.block}</p>
       <p className="text-muted-foreground"><span className="mono font-semibold text-foreground">{d.count}</span> defects</p>
     </div>
   );
@@ -216,26 +219,31 @@ function BlockwiseAnomaly() {
   }
 
   const plantName = selectedPlant.name;
+  // "Block"/"Blocks" or "Row"/"Rows", whichever this survey's own register
+  // groups by. The grouping itself is unchanged — `block` already holds the
+  // rack row for a row-style survey — only the word for it.
+  const { zoneLabel, zoneLabelPlural } = registerLocation(
+    anomalies[0] ?? { inverter: "", string: "", panelId: "" }, plantName);
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-5">
       <header>
         <h1 className="text-2xl md:text-3xl font-bold text-foreground">
-          Block-wise Anomaly — {plantName}
+          {zoneLabel}-wise Anomaly — {plantName}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          <span className="mono">{blockStats.length}</span> blocks ·{" "}
+          <span className="mono">{blockStats.length}</span> {zoneLabelPlural.toLowerCase()} ·{" "}
           <span className="mono">{anomalies.length}</span> total defects
         </p>
       </header>
 
-      <AnomalyTabNav />
+      <AnomalyTabNav zoneLabel={zoneLabel} />
 
       {/* ── Block bar chart ── */}
       {!selectedBlock && blockStats.length > 0 && (
         <div className="bg-card border border-border p-4">
           <p className="text-xs font-semibold uppercase tracking-widest text-grey-400 mb-4">
-            Defects per Block
+            Defects per {zoneLabel}
           </p>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart
@@ -252,7 +260,7 @@ function BlockwiseAnomaly() {
                 tick={{ fontSize: 10, fill: "var(--muted-foreground,#888)" }}
                 allowDecimals={false}
               />
-              <RechartsTooltip content={<BlockTooltip />} cursor={{ fill: "var(--grey-25,#fafafa)" }} />
+              <RechartsTooltip content={<BlockTooltip zoneLabel={zoneLabel} />} cursor={{ fill: "var(--grey-25,#fafafa)" }} />
               <Bar dataKey="count" radius={[2, 2, 0, 0]}>
                 {blockStats.map((_, i) => (
                   <Cell
@@ -286,7 +294,7 @@ function BlockwiseAnomaly() {
               <thead className="bg-muted text-[11px] uppercase tracking-widest text-grey-400 border-b border-border">
                 <tr>
                   <th className="text-left px-4 py-3 font-semibold">
-                    <SortButton label="Block" col="block" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <SortButton label={zoneLabel} col="block" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                   </th>
                   <th className="text-left px-4 py-3 font-semibold">
                     <SortButton label="Defects" col="defects" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
@@ -312,7 +320,7 @@ function BlockwiseAnomaly() {
                       className="hover:bg-grey-25 transition cursor-pointer"
                       onClick={() => { setSelectedBlock(bs.block); setDrillDefectFilter("all"); setDrillSevFilter("all"); }}
                     >
-                      <td className="px-4 py-3 font-semibold mono">Block {bs.block}</td>
+                      <td className="px-4 py-3 font-semibold mono">{zoneLabel} {bs.block}</td>
                       <td className="px-4 py-3 mono font-semibold tabular-nums">{bs.defectCount}</td>
                       <td className="px-4 py-3">
                         <SeverityPills c={bs.criticalCount} m={bs.mediumCount} n={bs.normalCount} />
@@ -349,7 +357,7 @@ function BlockwiseAnomaly() {
               </button>
               <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
                 <LayoutGrid size={18} className="text-ochre" />
-                Block {selectedBlock}
+                {zoneLabel} {selectedBlock}
               </h2>
             </div>
             {/* Summary chips */}
@@ -371,7 +379,7 @@ function BlockwiseAnomaly() {
 
           {/* Cross-filters */}
           <div className="bg-card border border-border p-3 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-            <p className="text-xs font-semibold text-muted-foreground shrink-0">Filter within Block {selectedBlock}:</p>
+            <p className="text-xs font-semibold text-muted-foreground shrink-0">Filter within {zoneLabel} {selectedBlock}:</p>
             <select
               value={drillDefectFilter}
               onChange={e => setDrillDefectFilter(e.target.value)}
@@ -404,7 +412,7 @@ function BlockwiseAnomaly() {
           <div className="bg-card border border-border overflow-hidden">
             <div className="px-4 py-3 border-b border-border text-xs text-muted-foreground">
               Showing <span className="mono font-semibold text-foreground">{drillRows.length}</span> of{" "}
-              <span className="mono">{drillBlock.defectCount}</span> defects in Block {selectedBlock}
+              <span className="mono">{drillBlock.defectCount}</span> defects in {zoneLabel} {selectedBlock}
             </div>
 
             {drillRows.length === 0 ? (

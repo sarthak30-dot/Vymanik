@@ -7,6 +7,7 @@ import { useAnomalies } from "@/lib/queries";
 import { usePlantContext } from "@/lib/plant-context";
 import { SEVERITY_LABEL_FULL, clientDefectType } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
+import { registerLocation } from "@/lib/layout-labels";
 
 export const Route = createFileRoute("/_app/anomalies/by-defect")({
   head: () => ({ meta: [{ title: "Defect-wise Anomaly — UrjaScan" }] }),
@@ -15,11 +16,14 @@ export const Route = createFileRoute("/_app/anomalies/by-defect")({
 
 // ── Tab strip shared across the three anomaly views ──────────────────────────
 
-function AnomalyTabNav() {
+function AnomalyTabNav({ zoneLabel = "Block" }: { zoneLabel?: string }) {
   const loc = useLocation();
+  // The middle tab groups by whatever the survey's register groups by, so it
+  // reads "Row-wise" for a plant with no blocks. The route path stays
+  // /anomalies/by-block — it is a URL, not a label.
   const tabs = [
     { to: "/anomalies" as const,           label: "All Anomalies" },
-    { to: "/anomalies/by-block" as const,  label: "Block-wise" },
+    { to: "/anomalies/by-block" as const,  label: `${zoneLabel}-wise` },
     { to: "/anomalies/by-defect" as const, label: "Defect-wise" },
   ];
   return (
@@ -56,13 +60,13 @@ interface DefectStats {
   defects: AnomalyDTO[];
   count: number;
   pct: number;
-  topBlocks: string[];       // top 3 blocks by defect count for this type
+  topBlocks: string[];       // top 3 zones by defect count for this type
   criticalCount: number;
   mediumCount: number;
   normalCount: number;
 }
 
-function computeDefectStats(anomalies: AnomalyDTO[]): DefectStats[] {
+function computeDefectStats(anomalies: AnomalyDTO[], zoneLabel = "Block"): DefectStats[] {
   const grouped = new Map<string, AnomalyDTO[]>();
   for (const a of anomalies) {
     const key = clientDefectType(a.type);
@@ -72,7 +76,8 @@ function computeDefectStats(anomalies: AnomalyDTO[]): DefectStats[] {
   const total = anomalies.length || 1;
   return Array.from(grouped.entries())
     .map(([type, defects]) => {
-      // Top 3 blocks by count for this defect type
+      // Top 3 zones by count for this defect type — "Block 16" or "Row 19",
+      // whichever this survey's register groups by.
       const blockCounts = new Map<string, number>();
       for (const d of defects) {
         const b = d.block ?? "Unknown";
@@ -81,7 +86,7 @@ function computeDefectStats(anomalies: AnomalyDTO[]): DefectStats[] {
       const topBlocks = [...blockCounts.entries()]
         .sort((a, b) => b[1] - a[1])
         .slice(0, 3)
-        .map(([b]) => `Block ${b}`);
+        .map(([b]) => `${zoneLabel} ${b}`);
       return {
         type,
         label: type,
@@ -133,7 +138,14 @@ function DefectwiseAnomaly() {
     [allAnomalies, selectedPlant.id],
   );
 
-  const defectStats = useMemo(() => computeDefectStats(anomalies), [anomalies]);
+  // The word this survey's register uses for its primary grouping: "Block"
+  // for a plant with a block/inverter hierarchy, "Row" for one that groups by
+  // rack row (Hamirpur). Read off the rows, not the plant id.
+  const { zoneLabel } = registerLocation(
+    anomalies[0] ?? { inverter: "", string: "", panelId: "" }, selectedPlant.name);
+
+  const defectStats = useMemo(
+    () => computeDefectStats(anomalies, zoneLabel), [anomalies, zoneLabel]);
 
   // Distinct block values for cross-filter
   const allBlocks = useMemo(
@@ -184,7 +196,7 @@ function DefectwiseAnomaly() {
         </p>
       </header>
 
-      <AnomalyTabNav />
+      <AnomalyTabNav zoneLabel={zoneLabel} />
 
       {/* ── Summary view ── */}
       {!selectedType && (
@@ -397,7 +409,7 @@ function DefectwiseAnomaly() {
                     <thead className="bg-muted text-[11px] uppercase tracking-widest text-grey-400 border-b border-border">
                       <tr>
                         <th className="text-left px-4 py-3 font-semibold">Panel ID</th>
-                        <th className="text-left px-4 py-3 font-semibold">Block</th>
+                        <th className="text-left px-4 py-3 font-semibold">{zoneLabel}</th>
                         <th className="text-left px-4 py-3 font-semibold">String / Inverter</th>
                         <th className="text-left px-4 py-3 font-semibold">Delta_T</th>
                         <th className="text-left px-4 py-3 font-semibold">Severity</th>
@@ -409,7 +421,7 @@ function DefectwiseAnomaly() {
                       {drillRows.map(a => (
                         <tr key={a.id} className="hover:bg-grey-25 transition">
                           <td className="px-4 py-3 mono font-semibold text-sm">{a.panelId}</td>
-                          <td className="px-4 py-3 mono text-sm">{a.block ? `Block ${a.block}` : "—"}</td>
+                          <td className="px-4 py-3 mono text-sm">{a.block ? `${zoneLabel} ${a.block}` : "—"}</td>
                           <td className="px-4 py-3 mono text-xs text-muted-foreground">
                             {a.string} · {a.inverter.replace(/^INV-/i, "Inv-")}
                           </td>
@@ -452,7 +464,7 @@ function DefectwiseAnomaly() {
                         <div>
                           <p className="mono font-bold text-sm">{a.panelId}</p>
                           <p className="text-xs text-muted-foreground mt-0.5">
-                            {a.block ? `Block ${a.block}` : ""} · {a.string}
+                            {a.block ? `${zoneLabel} ${a.block}` : ""} · {a.string}
                           </p>
                         </div>
                         <SeverityBadge severity={a.severity} />

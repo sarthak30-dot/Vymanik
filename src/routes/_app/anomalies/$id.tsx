@@ -17,7 +17,7 @@ import { useAnomaly, useAnomalies, usePatchAnomaly, DEFAULT_PLANT_ID } from "@/l
 import { SEVERITY_LABEL_FULL, clientDefectType, defectCategoryFor } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 import { parseDefectImage } from "@/lib/defect-image";
-import { stringAndInverter } from "@/lib/layout-labels";
+import { stringAndInverter, registerLocation } from "@/lib/layout-labels";
 import { tokenFor } from "@/lib/severity-tokens";
 
 export const Route = createFileRoute("/_app/anomalies/$id")({
@@ -189,6 +189,8 @@ function AnomalyDetail() {
   }
 
   const currentIdx = STEPS.indexOf(anomaly.status);
+  // This defect's position in the words its own survey register uses.
+  const zone = registerLocation(anomaly, selectedPlant.name);
 
   const actionText =
     anomaly.severity === "critical" ? "⚠️ Immediate repair required" :
@@ -295,8 +297,22 @@ Ref: ${anomaly.rgbNote}`
           {anomaly.deltaT && <Detail label="ΔT (raw)" value={`+${anomaly.deltaT}°C`} mono critical tooltip="Measured temperature rise above reference panel" />}
           {anomaly.deltaTNorm && <Detail label="ΔT normalised @ 1000 W/m²" value={`+${anomaly.deltaTNorm}°C`} mono critical tooltip="IEC 62446-3 §6.3 — adjusted for actual irradiance (847 W/m²). Use this value for warranty claims." />}
           <Detail label="String" value={anomaly.string} />
+          {/* The survey register's own position wording — "Block: 16, Inv: A,
+              Table: 3, Panel: R8-P12" or "Table: 6 | S: B | Mod: A - 1",
+              whichever this deliverable writes. It is what a field engineer
+              navigates by, and it was missing from this page entirely. */}
+          <Detail
+            label={`${zone.zoneLabel} / Layout Location`}
+            value={zone.full}
+            mono
+          />
           {anomaly.peakTemp && <Detail label="Peak Cell Temperature" value={`${anomaly.peakTemp}°C`} mono />}
-          <Detail label="Inverter" value={anomaly.inverter} />
+          {/* A survey with no inverter hierarchy stores "—"; printing that under
+              an "Inverter" heading reads as missing data rather than as absent
+              by design. */}
+          {anomaly.inverter && anomaly.inverter !== "—" && (
+            <Detail label="Inverter" value={anomaly.inverter} />
+          )}
           {anomaly.refTemp && <Detail label="Reference Cell Temp" value={`${anomaly.refTemp}°C`} mono />}
           {anomaly.moduleSerial && <Detail label="Module Serial #" value={anomaly.moduleSerial} mono />}
           {anomaly.irradiance && <Detail label="Irradiance at inspection" value={`${anomaly.irradiance} W/m²`} mono />}

@@ -10,31 +10,23 @@ import { getUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { SEVERITY_LABEL, SEVERITY_LABEL_FULL, clientDefectType } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
+import { registerLocation } from "@/lib/layout-labels";
 
 /**
- * Block number for the report's "Layout Location" column.
+ * The zone value and the register's own "Layout Location" string.
  *
- * Prefer the anomaly's own `block`, which the March 2026 survey KML carries per
- * defect — this site spans eight blocks (06, 09, 12, 14, 16, 17, 19, 122), so a
- * single number scraped from the plant name would be wrong for seven of them.
- *
- * The name fallback is for the Block 20 deliverable, whose rows had no block
- * field and whose plant was named "Block 20 Solar Plant". Without it those rows
- * would read "Block: Block 20 Solar Plant".
+ * Both come from lib/layout-labels.ts, which decides the vocabulary from the
+ * deliverable rather than from the plant: Blocks 06-122 reads "Block: 16,
+ * Inv: A, Table: 3, Panel: R8-P12" under a "Block" heading, Hamirpur reads
+ * "Table: 6 | S: B | Mod: A - 1" under "Row", exactly as each survey's own
+ * register writes it.
  */
 function blockNumber(a: AnomalyDTO, plantName: string): string {
-  return a.block ?? plantName.match(/Block\s+(\d+)/i)?.[1] ?? "—";
+  return registerLocation(a, plantName).zone;
 }
 
-// Mirrors the report's "Layout Location" string, e.g.
-// "Block: 16, Inv: A, Table: 3, Panel: R8-P12"
 function layoutLocation(a: AnomalyDTO, plantName: string): string {
-  const inv = a.inverter.replace(/^INV-/i, "");
-  const table = a.string.replace(/^Table-/i, "");
-  // A survey with no inverter hierarchy (Hamirpur) stores "—" — leave "Inv:" out
-  // rather than print a placeholder.
-  const invPart = inv && inv !== "—" ? `Inv: ${inv}, ` : "";
-  return `Block: ${blockNumber(a, plantName)}, ${invPart}Table: ${table}, Panel: ${a.panelId}`;
+  return registerLocation(a, plantName).layout;
 }
 
 function mapLocation(a: AnomalyDTO): string {
@@ -86,7 +78,11 @@ function MapLocationLink({
 }
 
 function exportCSV(rows: AnomalyDTO[], plantName: string) {
-  const header = ["SL No","Block","Layout Location","Map Location","Defect Type","Delta_T","Severity","Status","Date","Image Ref"];
+  // Heading taken from the rows themselves, so the export says "Row" for a
+  // survey that groups by rack row and "Block" for one that groups by block —
+  // the same word the client's own register uses.
+  const zoneLabel = rows[0] ? registerLocation(rows[0], plantName).zoneLabel : "Block";
+  const header = ["SL No",zoneLabel,"Layout Location","Map Location","Defect Type","Delta_T","Severity","Status","Date","Image Ref"];
   const lines = rows.map((a, i) => [
     i + 1, blockNumber(a, plantName), layoutLocation(a, plantName), mapLocation(a), clientDefectType(a.type),
     a.deltaTNorm ?? a.deltaT ?? "", SEVERITY_LABEL[a.severity], a.status, a.date, a.rgbNote ?? "",
@@ -106,11 +102,14 @@ type Status = AnomalyDTO["status"];
 
 // ── Tab strip shared across the three anomaly views ──────────────────────────
 
-function AnomalyTabNav() {
+function AnomalyTabNav({ zoneLabel = "Block" }: { zoneLabel?: string }) {
   const loc = useLocation();
+  // The middle tab groups by whatever the survey's register groups by, so it
+  // reads "Row-wise" for a plant with no blocks. The route path stays
+  // /anomalies/by-block — it is a URL, not a label.
   const tabs = [
     { to: "/anomalies" as const,           label: "All Anomalies" },
-    { to: "/anomalies/by-block" as const,  label: "Block-wise" },
+    { to: "/anomalies/by-block" as const,  label: `${zoneLabel}-wise` },
     { to: "/anomalies/by-defect" as const, label: "Defect-wise" },
   ];
   return (
@@ -303,6 +302,12 @@ function AnomalyList() {
   }
 
   const plantName = selectedPlant.name;
+  // "Block" or "Row", whichever this survey's register groups by — read off
+  // the rows rather than the plant, so an uploaded survey gets the right
+  // heading without this view knowing anything about which plant it is.
+  const zoneLabel = allAnomalies[0]
+    ? registerLocation(allAnomalies[0], plantName).zoneLabel
+    : "Block";
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-5">
@@ -318,7 +323,7 @@ function AnomalyList() {
         </p>
       </header>
 
-      <AnomalyTabNav />
+      <AnomalyTabNav zoneLabel={zoneLabel} />
 
       <SeverityPieChart
         critical={anomalies.filter(a => a.severity === "critical").length}
@@ -450,7 +455,7 @@ function AnomalyList() {
                   />
                 </th>
                 <th className="text-left px-4 py-3 font-semibold">SL No</th>
-                <th className="text-left px-4 py-3 font-semibold">Block</th>
+                <th className="text-left px-4 py-3 font-semibold">{zoneLabel}</th>
                 <th className="text-left px-4 py-3 font-semibold">Layout Location</th>
                 <th className="text-left px-4 py-3 font-semibold">Map Location</th>
                 <th className="text-left px-4 py-3 font-semibold">Defect Type</th>
@@ -554,7 +559,7 @@ function AnomalyList() {
                 />
                 <div>
                   <p className="mono text-[11px] text-muted-foreground">SL {i + 1}</p>
-                  <p className="mono font-bold text-sm mt-0.5">{layoutLocation(a, plantName)}</p>
+                  <p className="mono font-bold text-sm mt-0.5">{registerLocation(a, plantName).full}</p>
                   <p className="text-sm mt-1 text-muted-foreground">{clientDefectType(a.type)}</p>
                 </div>
               </div>
