@@ -17,6 +17,7 @@ import { SEVERITY } from "./severity-tokens";
 import { downloadTextFile } from "./csv";
 import { clientDefectType, DEFECT_CATEGORIES, type Anomaly, type PlantSummary } from "./mock-data";
 import { moduleMultiplier } from "./affected-modules";
+import { registerLocation } from "./layout-labels";
 
 /**
  * The fields the report actually reads — a structural subset satisfied by
@@ -25,7 +26,7 @@ import { moduleMultiplier } from "./affected-modules";
  */
 export type ReportAnomaly = Pick<
   Anomaly,
-  "panelId" | "type" | "deltaT" | "severity" | "string" | "inverter" | "gps"
+  "panelId" | "type" | "deltaT" | "severity" | "string" | "inverter" | "gps" | "row" | "col"
 > &
   Partial<Pick<Anomaly, "block" | "smb" | "stringSide" | "module">>;
 
@@ -134,6 +135,21 @@ function faultyModules(anomalies: readonly ReportAnomaly[]): ReportAnomaly[] {
   return anomalies.filter((a) => a.severity !== "nodata");
 }
 
+/**
+ * The register's (rack, panel) position, for ordering Table 6 the way the
+ * register itself is written.
+ *
+ * `row`/`col` carry it, but a caller assembling ReportAnomaly by hand can
+ * leave them off, and a NaN comparator silently leaves the table in whatever
+ * order it arrived in — which is how this was caught. panelId is built as
+ * "R<rack>-P<panel>", so it answers the same question when they are absent.
+ */
+function registerOrder(a: ReportAnomaly): [number, number] {
+  if (Number.isFinite(a.row) && Number.isFinite(a.col)) return [a.row, a.col];
+  const m = /^R(\d+)-P(\d+)$/i.exec(a.panelId);
+  return m ? [Number(m[1]), Number(m[2])] : [Number.MAX_SAFE_INTEGER, 0];
+}
+
 /** "Table-347" -> "347"; falls back to the raw string field for surveys that
  *  didn't use the Table- prefix convention. */
 function tableNumber(a: ReportAnomaly): string {
@@ -141,22 +157,55 @@ function tableNumber(a: ReportAnomaly): string {
   return m ? m[1] : a.string;
 }
 
-/** Mirrors the sample report's "Block: 20, Inv: A, Table: 3, Str: B, Mod: A - 8"
- *  — composed from whatever this survey actually captured (see mock-data.ts's
- *  Anomaly.block docblock: the asset-register fields are optional per survey). */
+/**
+ * The survey register's own wording for a defect's position, and the heading
+ * its zone column carries.
+ *
+ * Delegated to lib/layout-labels.ts so the report and the Anomalies screens
+ * cannot drift: a block/inverter survey reads "Block: 20, Inv: A, Table: 3,
+ * Panel: R8-P12", and a survey with neither reads "Table: 6 | S: B | Mod:
+ * A - 1" under a "Row" heading, which is exactly how the client's own Table 6
+ * prints it.
+ */
 function layoutLocation(a: ReportAnomaly): string {
-  const parts: string[] = [];
-  if (a.block) parts.push(`Block: ${a.block}`);
-  const inv = a.inverter.replace(/^INV-?/i, "");
-  if (inv && inv !== "—") parts.push(`Inv: ${inv}`);
-  parts.push(`Table: ${tableNumber(a)}`);
-  if (a.stringSide) parts.push(`Str: ${a.stringSide}`);
-  parts.push(`Mod: ${a.module ?? a.panelId}`);
-  return parts.join(", ");
+  return registerLocation(a).layout;
 }
 
+/**
+ * What the zone column shows for one row. The client's report writes the
+ * row-style value with its label ("Row: 1" — it is the register's own
+ * Primary_Zone string); the block-style column has always carried the bare
+ * number, and there is no newer reference saying otherwise, so it keeps it.
+ */
+function zoneCell(a: ReportAnomaly): string {
+  const loc = registerLocation(a);
+  if (loc.zone === "—") return "—";
+  return loc.zoneLabel === "Row" ? `Row: ${loc.zone}` : loc.zone;
+}
+
+/**
+ * The register's own name for a defect category.
+ *
+ * The app stores a short internal label ("Multi Cell"); the client's audit
+ * report prints the full IEC wording ("Multi Cell Hotspot"). survey-import.ts
+ * maps the long form to the short one on the way in — this is that mapping
+ * read back out, so the report says what the client's own workbook says.
+ */
+const REGISTER_WORDING: Record<string, string> = {
+  "Multi Cell": "Multi Cell Hotspot",
+  "Single Cell": "Single Cell Hotspot",
+  "Bypass Diode": "Diode Failure",
+};
+
+function registerDefectName(type: string): string {
+  const client = clientDefectType(type);
+  return REGISTER_WORDING[client] ?? client;
+}
+
+/** 6 decimals (~0.1 m) — the precision the client's own Table 6 prints, and
+ *  far finer than the GPS behind it. */
 function mapLocation(a: ReportAnomaly): string {
-  return `${a.gps.lat}, ${a.gps.lng}`;
+  return `${a.gps.lat.toFixed(6)}, ${a.gps.lng.toFixed(6)}`;
 }
 
 // ─── Grouped counts for the summary table + charts ──────────────────────────
@@ -664,17 +713,29 @@ export function generateThermographyPDF(
 
   if (hasMultiplied) {
     const pctOfPlant = (n: number) => (plant.totalPanels > 0 ? `${((n / plant.totalPanels) * 100).toFixed(2)}%` : "-");
+    // Share of affected modules, not of defect rows — a String Offline is 26
+    // modules, so the two differ and the client's table reports the former.
+    const pctOfDefects = (n: number) => (affectedTotal > 0 ? `${((n / affectedTotal) * 100).toFixed(1)}%` : "-");
+    // Listed by observation type, matching the client's own table order.
+    const byName = [...typeRows].sort((a, b) =>
+      registerDefectName(a[0]).localeCompare(registerDefectName(b[0])));
     y = drawTable(
       doc,
-      ["Defect Type", "No. of Defects", "Multiplier", "Affected Modules", "% of Plant Panels"],
-      [50, 26, 40, 32, 32],
+      ["Observation Type", "No. of Defects", "Multiplier Formula", "Affected Modules", "% of Defects", "% of Plant Panels"],
+      [42, 24, 34, 28, 24, 28],
       [
-        ...typeRows.map(([t, c]) => {
+        ...byName.map(([t, c]) => {
           const m = moduleMultiplier(t);
           const aff = affectedByType.get(t) ?? c;
-          return [t, String(c), m > 1 ? `${c} x ${m} = ${aff}` : String(c), String(aff), pctOfPlant(aff)];
+          return [registerDefectName(t), String(c), m > 1 ? `${c} x ${m} = ${aff}` : String(c),
+                  String(aff), pctOfDefects(aff), pctOfPlant(aff)];
         }),
-        ["Cumulative Total", String(faulty.length), "-", String(affectedTotal), pctOfPlant(affectedTotal)],
+        ["Cumulative Defective Modules", String(faulty.length), "-", String(affectedTotal),
+         pctOfDefects(affectedTotal), pctOfPlant(affectedTotal)],
+        ["Total Plant Scope", `${faulty.length} Defects`,
+         `Plant Scope: ${plant.totalPanels.toLocaleString("en-IN")} Modules`,
+         `${affectedTotal} / ${plant.totalPanels.toLocaleString("en-IN")}`, "-",
+         `${pctOfPlant(affectedTotal)} Defect Impact`],
       ],
       y,
       15,
@@ -698,7 +759,9 @@ export function generateThermographyPDF(
   // ~12; beyond that the tail folds into one "Other" bar so no defect is
   // dropped from the total the chart represents.
   const MAX_TYPE_BARS = 12;
-  const namedRows: [string, number][] = typeRows;
+  const namedRows: [string, number][] = [...typeRows]
+    .map(([t, c]) => [registerDefectName(t), c] as [string, number])
+    .sort((a, b) => a[0].localeCompare(b[0]));
   let figure1Rows = namedRows;
   if (namedRows.length > MAX_TYPE_BARS) {
     const head = namedRows.slice(0, MAX_TYPE_BARS - 1);
@@ -720,11 +783,19 @@ export function generateThermographyPDF(
   );
   y += 75;
 
-  const blockCounts = countBy(faulty, (a) => a.block ?? "Unassigned");
-  const blockRows = [...blockCounts.entries()].sort(
-    (a, b) => Number(a[0]) - Number(b[0]) || a[0].localeCompare(b[0]),
-  );
-  barChart(doc, "Figure 2 — Block-wise Defect Summary", blockRows, 15, y, W - 30, 55, NAVY);
+  // Figure 2 (zone-wise). A survey with no block hierarchy has no meaningful
+  // zone breakdown to chart — its "zones" are individual rack rows, dozens of
+  // them — and the client's own report for such a survey omits this figure,
+  // numbering straight from Figure 1 to Figure 3. Omitted here on the same
+  // rule rather than printed under a heading the site does not have.
+  const zoneWord = registerLocation(faulty[0] ?? { inverter: "", string: "", panelId: "" });
+  if (zoneWord.zoneLabel === "Block") {
+    const blockCounts = countBy(faulty, (a) => a.block ?? "Unassigned");
+    const blockRows = [...blockCounts.entries()].sort(
+      (a, b) => Number(a[0]) - Number(b[0]) || a[0].localeCompare(b[0]),
+    );
+    barChart(doc, "Figure 2 — Block-wise Defect Summary", blockRows, 15, y, W - 30, 55, NAVY);
+  }
 
   newPage(doc, label);
   const coaCounts = { COA1: 0, COA2: 0, COA3: 0 };
@@ -757,17 +828,41 @@ export function generateThermographyPDF(
   // ── Table 6: Details for Faulty PV Modules — every row ──
   newPage(doc, label);
   y = sectionTitle(doc, "Table 6 — Details for Faulty PV Modules", 32);
+  // Column order, headings and row order all follow the client's own Table 6.
+  // The zone heading is the register's word for it — "Row" for a survey with
+  // no blocks, which is what this table used to mislabel as "Block".
+  const t6Zone = registerLocation(faulty[0] ?? { inverter: "", string: "", panelId: "" });
   const t6Headers = [
-    "SL No",
-    "Block",
-    "Layout Location",
-    "Map Location",
+    "SI No",
     "Defect Type",
-    "Delta T",
+    t6Zone.zoneLabel,
+    "Layout Location",
+    "Map Location (Google Maps)",
+    "T (°C)",
     "Severity",
   ];
-  const t6Widths = [12, 14, 62, 38, 32, 14, 18];
-  drawFaultyModuleTable(doc, t6Headers, t6Widths, faulty, label, newPage);
+  const t6Widths = [11, 33, 17, 50, 41, 13, 15];
+  // The register's own order, established by diffing against the client's own
+  // Table 6 until all 186 rows matched: zone, then table, then rack, then
+  // panel. None of the three leading keys can be dropped — the rack number is
+  // not monotonic across the file (rack 9 in row 10 precedes rack 8 in row
+  // 11), and inside one zone+table the modules are not in numeric order
+  // either (row 9 table 2 runs A-17 then A-15, by rack).
+  const num = (v: string | undefined) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER;
+  };
+  const t6Rows = [...faulty].sort((a, b) => {
+    const [ar, ac] = registerOrder(a);
+    const [br, bc] = registerOrder(b);
+    return (
+      num(a.block) - num(b.block) ||
+      num(tableNumber(a)) - num(tableNumber(b)) ||
+      (ar - br) ||
+      (ac - bc)
+    );
+  });
+  drawFaultyModuleTable(doc, t6Headers, t6Widths, t6Rows, label, newPage);
 
   // ── 4. Recommendation ──
   newPage(doc, label);
@@ -896,11 +991,11 @@ function drawFaultyModuleTable(
   rows.forEach((a, idx) => {
     const cells = [
       String(idx + 1),
-      a.block ?? "—",
+      registerDefectName(a.type),
+      zoneCell(a),
       layoutLocation(a),
       mapLocation(a),
-      clientDefectType(a.type),
-      a.deltaT != null ? a.deltaT.toFixed(2) : "—",
+      a.deltaT != null ? String(a.deltaT) : "—",
       coaLabel(a),
     ];
     const cellLines = cells.map((c, i) => doc.splitTextToSize(c, widths[i] - 2.4) as string[]);
@@ -933,14 +1028,17 @@ export function generateThermographyCSV(
   allAnomalies: readonly ReportAnomaly[],
 ) {
   const faulty = faultyModules(allAnomalies);
+  // Same columns and wording as Table 6, so the CSV and the PDF cannot be read
+  // as two different registers.
+  const zone = registerLocation(faulty[0] ?? { inverter: "", string: "", panelId: "" });
   const header = [
-    "SL No",
-    "Block",
+    "SI No",
+    "Defect Type",
+    zone.zoneLabel,
     "Layout Location",
     "Map Location (Lat)",
     "Map Location (Lng)",
-    "Defect Type",
-    "Delta_T",
+    "T (degC)",
     "Severity",
   ];
   const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
@@ -949,12 +1047,12 @@ export function generateThermographyCSV(
     lines.push(
       [
         String(idx + 1),
-        esc(a.block ?? ""),
+        esc(registerDefectName(a.type)),
+        esc(zoneCell(a)),
         esc(layoutLocation(a)),
         String(a.gps.lat),
         String(a.gps.lng),
-        esc(clientDefectType(a.type)),
-        a.deltaT != null ? a.deltaT.toFixed(2) : "",
+        a.deltaT != null ? String(a.deltaT) : "",
         coaLabel(a),
       ].join(","),
     );
