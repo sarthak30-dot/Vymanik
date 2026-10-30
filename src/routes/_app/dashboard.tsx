@@ -13,6 +13,7 @@ import { SHOW_LOSS_METRICS } from "@/lib/feature-flags";
 import { useDensity } from "@/hooks/use-presentation";
 import { useGuidedTour, hasTourRun, type TourStep } from "@/hooks/use-guided-tour";
 import { affectedModules } from "@/lib/affected-modules";
+import { registerLocation } from "@/lib/layout-labels";
 import type { PlantDTO } from "@/lib/api";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
@@ -128,6 +129,10 @@ function Dashboard() {
 
   // After 7 s of unresolved loading, show a retry prompt instead of infinite skeleton
   const [timedOut, setTimedOut] = useState(false);
+  // Which block the dashboard is highlighting; "all" shows the whole plant.
+  const [blockFilter, setBlockFilter] = useState<string>("all");
+  // A block id means nothing on another plant, so switching plants clears it.
+  useEffect(() => { setBlockFilter("all"); }, [selectedSummary.id]);
   useEffect(() => {
     if (!isLoading) { setTimedOut(false); return; }
     const t = setTimeout(() => setTimedOut(true), 7000);
@@ -178,6 +183,20 @@ function Dashboard() {
 
   const critical = anomalies.filter(a => a.severity === "critical");
   const medium = anomalies.filter(a => a.severity === "medium");
+
+  // ── Block highlight ──
+  // The blocks this survey actually has, numerically ordered, and the word its
+  // own register uses for them ("Block", or "Row" for a survey with no blocks).
+  const blocksPresent = [...new Set(anomalies.map(a => a.block).filter((b): b is string => !!b))]
+    .sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
+  const zoneLabel = registerLocation(
+    anomalies[0] ?? { inverter: "", string: "", panelId: "" }, selectedSummary.name,
+  ).zoneLabel;
+  // A stale selection (the survey reloaded without that block) reads as "all"
+  // rather than as an empty dashboard.
+  const activeBlock = blocksPresent.includes(blockFilter) ? blockFilter : "all";
+  const scoped = activeBlock === "all" ? anomalies : anomalies.filter(a => a.block === activeBlock);
+  const scopedCritical = scoped.filter(a => a.severity === "critical");
 
   // Live anomaly counts whenever this plant has a survey (mock for plant-001,
   // uploaded rows for any other); otherwise the fleet summary's own counts.
@@ -294,9 +313,9 @@ function Dashboard() {
 
       {/* ── Quick Anomaly Overview charts ── */}
       {hasSurveyData && anomalies.length > 0 && (() => {
-        const critCount = anomalies.filter(a => a.severity === "critical").length;
-        const medCount  = anomalies.filter(a => a.severity === "medium").length;
-        const normCount = anomalies.filter(a => a.severity === "normal").length;
+        const critCount = scoped.filter(a => a.severity === "critical").length;
+        const medCount  = scoped.filter(a => a.severity === "medium").length;
+        const normCount = scoped.filter(a => a.severity === "normal").length;
         const total = critCount + medCount + normCount;
         const pieData = [
           { name: "Critical", value: critCount, pct: ((critCount / total) * 100).toFixed(1), color: "#FF2E2E" },
@@ -329,9 +348,61 @@ function Dashboard() {
 
         return (
           <section className="bg-card border border-border p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Block highlight — picks one block out of the plant. It dims the other
+                bars below, scopes the severity pie, the callout and the critical
+                list to it, and links to that block's own drill-down. */}
+            <div className="md:col-span-2 flex flex-col sm:flex-row sm:items-center gap-3 pb-4 border-b border-border">
+              <div>
+                <label htmlFor="block-highlight" className="block text-[11px] uppercase tracking-widest text-grey-400 mb-1">
+                  Highlight {zoneLabel}
+                </label>
+                <div className="relative inline-block">
+                  <select
+                    id="block-highlight"
+                    value={activeBlock}
+                    onChange={e => setBlockFilter(e.target.value)}
+                    className="appearance-none h-9 pl-3 pr-8 min-w-[11rem] border border-border bg-card text-foreground text-sm font-semibold focus:outline-none focus:ring-1 focus:ring-ochre cursor-pointer"
+                  >
+                    <option value="all">All {zoneLabel.toLowerCase()}s ({blocksPresent.length})</option>
+                    {blocksPresent.map(b => (
+                      <option key={b} value={b}>
+                        {zoneLabel} {b} — {blockSevMap[b]?.total ?? 0} defects
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                </div>
+              </div>
+              {activeBlock !== "all" && (
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs sm:ml-auto">
+                  <span className="text-muted-foreground">
+                    <span className="mono font-semibold text-foreground">{scoped.length}</span> defects ·{" "}
+                    <span className="mono font-semibold" style={{ color: "#FF2E2E" }}>{critCount}</span> critical ·{" "}
+                    <span className="mono font-semibold" style={{ color: "#FF8C00" }}>{medCount}</span> medium ·{" "}
+                    <span className="mono font-semibold" style={{ color: "#36B37E" }}>{normCount}</span> normal
+                  </span>
+                  <Link
+                    to="/anomalies/by-block"
+                    search={{ block: activeBlock }}
+                    className="font-medium text-ochre hover:underline inline-flex items-center gap-1"
+                  >
+                    Open {zoneLabel.toLowerCase()} detail <ArrowRight size={12} />
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => setBlockFilter("all")}
+                    className="text-muted-foreground hover:text-foreground underline"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
+            </div>
             {/* Severity pie */}
             <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-grey-400 mb-2">Severity Breakdown</p>
+              <p className="text-xs font-semibold uppercase tracking-widest text-grey-400 mb-2">
+                Severity Breakdown{activeBlock !== "all" ? ` — ${zoneLabel} ${activeBlock}` : ""}
+              </p>
               <div className="flex items-center gap-4">
                 <div style={{ width: 140, height: 140, flexShrink: 0 }}>
                   <ResponsiveContainer width="100%" height="100%">
@@ -368,10 +439,10 @@ function Dashboard() {
             </div>
             {/* Block bar chart */}
             <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-grey-400 mb-2">Defects per Block</p>
+              <p className="text-xs font-semibold uppercase tracking-widest text-grey-400 mb-2">Defects per {zoneLabel}</p>
               <ResponsiveContainer width="100%" height={140}>
                 <BarChart data={barData} margin={{ top: 4, right: 8, bottom: 16, left: 0 }} barCategoryGap="30%">
-                  <XAxis dataKey="block" tick={{ fontSize: 9, fill: "var(--muted-foreground,#888)" }} tickFormatter={v => `B${v}`} />
+                  <XAxis dataKey="block" tick={{ fontSize: 9, fill: "var(--muted-foreground,#888)" }} tickFormatter={v => `${zoneLabel[0]}${v}`} />
                   <YAxis tick={{ fontSize: 9, fill: "var(--muted-foreground,#888)" }} allowDecimals={false} width={24} />
                   <Tooltip
                     content={({ active, payload }) => {
@@ -380,7 +451,7 @@ function Dashboard() {
                       const t = d.count || 1;
                       return (
                         <div className="bg-card border border-border shadow p-2 text-xs space-y-0.5 min-w-[130px]">
-                          <p className="font-semibold mb-1">Block {d.block} — {d.count} defects</p>
+                          <p className="font-semibold mb-1">{zoneLabel} {d.block} — {d.count} defects</p>
                           <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{background:"#FF2E2E"}} /><span className="text-muted-foreground">Critical</span><span className="ml-auto font-semibold">{d.critical} ({((d.critical/t)*100).toFixed(0)}%)</span></div>
                           <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{background:"#FF8C00"}} /><span className="text-muted-foreground">Medium</span><span className="ml-auto font-semibold">{d.medium} ({((d.medium/t)*100).toFixed(0)}%)</span></div>
                           <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm" style={{background:"#36B37E"}} /><span className="text-muted-foreground">Normal</span><span className="ml-auto font-semibold">{d.normal} ({((d.normal/t)*100).toFixed(0)}%)</span></div>
@@ -388,9 +459,24 @@ function Dashboard() {
                       );
                     }}
                   />
-                  <Bar dataKey="count" radius={[2, 2, 0, 0]}>
+                  <Bar
+                    dataKey="count"
+                    radius={[2, 2, 0, 0]}
+                    style={{ cursor: "pointer" }}
+                    onClick={(d: { block?: string }) => {
+                      if (d?.block) setBlockFilter(d.block === activeBlock ? "all" : d.block);
+                    }}
+                  >
                     {barData.map((d, i) => (
-                      <Cell key={i} fill={blockBarColor(d)} opacity={0.88} />
+                      <Cell
+                        key={i}
+                        fill={blockBarColor(d)}
+                        // With a block highlighted, the others recede rather than
+                        // vanish — the point is to see it against the rest.
+                        opacity={activeBlock === "all" ? 0.88 : d.block === activeBlock ? 1 : 0.22}
+                        stroke={d.block === activeBlock ? "var(--foreground,#111)" : "none"}
+                        strokeWidth={d.block === activeBlock ? 1.5 : 0}
+                      />
                     ))}
                   </Bar>
                 </BarChart>
@@ -402,11 +488,20 @@ function Dashboard() {
                 <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{background:"#36B37E"}} />Normal dominant</span>
               </div>
               {/* Highest-anomaly block callout */}
-              {topBlock && (
-                <p className="mt-2 text-[11px] leading-snug text-muted-foreground border-t border-border pt-2">
-                  <span className="font-semibold text-foreground">Block {topBlock.block}</span> has the highest defect count ({topBlock.count} defects — {((topBlock.critical / topBlock.count) * 100).toFixed(0)}% critical). Prioritise inspection here first.
-                </p>
-              )}
+              {(() => {
+                const focus = activeBlock === "all" ? topBlock : barData.find(d => d.block === activeBlock);
+                if (!focus) return null;
+                const share = ((focus.critical / (focus.count || 1)) * 100).toFixed(0);
+                return activeBlock === "all" ? (
+                  <p className="mt-2 text-[11px] leading-snug text-muted-foreground border-t border-border pt-2">
+                    <span className="font-semibold text-foreground">{zoneLabel} {focus.block}</span> has the highest defect count ({focus.count} defects — {share}% critical). Prioritise inspection here first.
+                  </p>
+                ) : (
+                  <p className="mt-2 text-[11px] leading-snug text-muted-foreground border-t border-border pt-2">
+                    <span className="font-semibold text-foreground">{zoneLabel} {focus.block}</span> holds {focus.count} of this plant&apos;s {anomalies.length.toLocaleString("en-IN")} defects ({((focus.count / anomalies.length) * 100).toFixed(1)}%) — {share}% of them critical.
+                  </p>
+                );
+              })()}
             </div>
           </section>
         );
@@ -458,14 +553,14 @@ function Dashboard() {
         <header className="px-5 py-3 border-b border-border flex items-center justify-between">
           <h2 className="font-semibold text-foreground flex items-center gap-2 text-sm">
             <span aria-hidden style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", backgroundColor: "var(--critical)", flexShrink: 0 }} />
-            Critical — Needs Immediate Attention
+            Critical — Needs Immediate Attention{activeBlock !== "all" ? ` · ${zoneLabel} ${activeBlock}` : ""}
           </h2>
           <Link to="/anomalies" className="text-xs font-medium text-ochre hover:underline inline-flex items-center gap-1">
             View all <ArrowRight size={12} />
           </Link>
         </header>
         <div className="divide-y divide-border">
-          {critical.slice(0, 3).map(a => (
+          {scopedCritical.slice(0, 3).map(a => (
             <Link
               key={a.id}
               to="/anomalies/$id"

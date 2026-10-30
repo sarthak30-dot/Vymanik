@@ -136,9 +136,26 @@ export interface OverlayDef {
 export const OVERLAYS: Record<string, OverlayDef> = {
   thermal: {
     id: "thermal",
-    label: "Thermal IR",
+    label: "Thermal IR — Blocks 06-122",
     url: "/thermal_ortho4_hi.webp",
     baseline: { west: 73.023697, north: 28.2645, east: 73.035302, south: 28.259854 },
+  },
+  // The 08 April 2026 flight: blocks 17, 18, 23, 24, 25, 26 and 28. Its
+  // footprint sits immediately north of the March raster above — they meet at
+  // ~28.2645 and do not overlap — so both draw together rather than one
+  // replacing the other.
+  //
+  // Corners read from the superoverlay's own <LatLonBox> tags, then cropped to
+  // the flight's actual data: the KMZ declares 73.029814/28.259173 to
+  // 73.043853/28.271603, but the southern third of that box is empty (it spans
+  // ground the March flight covered) and carrying it would have spent 44% of
+  // the image on transparent nothing. Cropped, the canvas is 56.6% data and
+  // all 2,339 of that survey's defects land on a data pixel — 100.0%.
+  thermalApr: {
+    id: "thermalApr",
+    label: "Thermal IR — Blocks 17-28",
+    url: "/blocks17_28_thermal.webp",
+    baseline: { west: 73.029813669, north: 28.271603131, east: 73.043506452, south: 28.264666514 },
   },
 };
 

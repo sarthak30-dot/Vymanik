@@ -251,8 +251,20 @@ const CLICK_LAYERS = ["anomaly-cluster", "anomaly-dot", "anomaly-panel-fill"] as
 /** Hover has no cluster state, so it only tracks the two per-panel layers. */
 const HOVER_LAYERS = ["anomaly-panel-fill", "anomaly-dot"] as const;
 
+/** Mapbox source/layer ids for one registry overlay. Kept in one place: the
+ *  restack effect below has to name the same layer ids to keep the rasters
+ *  beneath the anomaly layers after a style reload. */
+function rasterSourceId(overlayId: string): string {
+  return `ortho-${overlayId}`;
+}
+function rasterLayerId(overlayId: string): string {
+  return `ortho-${overlayId}-layer`;
+}
+
+/** The rasters are prepended at runtime (see restack below) — their ids are
+ *  derived from whichever overlays this plant mounts, so they cannot be listed
+ *  here. Everything from "anomaly-panel-fill" down is fixed. */
 const OVERLAY_STACK = [
-  "thermal-layer",
   "anomaly-panel-fill",
   "anomaly-panel-halo",
   "anomaly-panel-black-ring",  // Task 5 anti-camouflage border, under the white casing
@@ -271,10 +283,16 @@ const OVERLAY_STACK = [
 // Plant boundary for the satellite overview polygon — the composited extent of
 // the March 2026 thermal, so the outline and the raster are the same rectangle by
 // construction rather than a separate estimate that can drift out of step with it.
+// The union of the two flights' composited extents — March 2026 over blocks
+// 06-122 (west 73.023697, south 28.259854) and April 2026 over blocks 17-28
+// (east 73.043506, north 28.271603). Drawn as one rectangle because that is
+// what this outline has always been: the site's bounding box, not a traced
+// perimeter. Keeping it at the March extent would have cut the April blocks
+// out of the dashed boundary and out of the camera's opening frame.
 const PLANT_BOUNDARY_COORDS = [
-  [73.023697, 28.264500], [73.035302, 28.264500],
-  [73.035302, 28.259854], [73.023697, 28.259854],
-  [73.023697, 28.264500],
+  [73.023697, 28.271603], [73.043506, 28.271603],
+  [73.043506, 28.259854], [73.023697, 28.259854],
+  [73.023697, 28.271603],
 ] as [number,number][];
 
 // ─── Panel grid constants ─────────────────────────────────────────────────────
@@ -423,22 +441,25 @@ function SiteMap() {
   const overlayIds = useMemo(() => Object.keys(overlays), [overlays]);
 
   /**
-   * The raster actually mounted as a Mapbox image source.
+   * The rasters mounted as Mapbox image sources — all of this plant's, not one.
    *
-   * One at a time, because `plant_surveys` stores one orthomosaic per survey and
-   * the baked registry ships one. The Mapbox source and layer ids stay the
-   * literals "thermal" / "thermal-layer" whichever plant is selected — they are
-   * what OVERLAY_STACK reorders against and what `beforeId` pins the anomaly
-   * layers above, so making them per-plant would silently drop the new layer out
-   * of that ordering. The per-plant identity lives in the registry key instead
-   * (surveyOverlayId), which is what saved placements and alpha masks are keyed
-   * by. Drawing two rasters at once would need per-overlay layer ids and a
-   * second entry in OVERLAY_STACK; no deliverable has needed it yet.
+   * The primary plant now carries two: the March 2026 flight over blocks 06-122
+   * and the April 2026 flight over blocks 17-28, which meet along ~28.2645 and
+   * together cover the site. Drawing only the first would have left every April
+   * defect sitting on bare satellite.
+   *
+   * Each gets its own source and layer id derived from the registry key, so
+   * they can be stacked and toggled independently; rasterLayerId() is the one
+   * place that mapping lives, because OVERLAY_STACK has to name the same ids to
+   * keep them under the anomaly layers after a style reload.
    */
-  const activeOverlay = useMemo(
-    () => (overlayIds.length > 0 ? overlays[overlayIds[0]] : null),
+  const mountedOverlays = useMemo(
+    () => overlayIds.map((id) => overlays[id]).filter(Boolean),
     [overlays, overlayIds],
   );
+  /** The first one, for the controls that act on "the imagery" as a whole
+   *  (Compare, the opacity slider) rather than on one raster. */
+  const activeOverlay = mountedOverlays[0] ?? null;
 
   /**
    * Whether this plant has a survey to draw at all.
@@ -715,6 +736,20 @@ function SiteMap() {
     return out;
   }, [anomalies]);
 
+  // Surveyed centroids that fall inside one raster's own footprint.
+  //
+  // The primary plant now holds two flights whose rasters meet at ~28.2645 and
+  // do not overlap. Scoring the March raster against every defect on the plant
+  // would count all of April's as misses — they are on ground this raster never
+  // covered — and read as "carries no registration" for an overlay that scores
+  // 100%. Only defects inside the raster's extent can say anything about it.
+  const pointsOver = useCallback((def: OverlayDef) => {
+    const b = def.baseline;
+    return anomalies
+      .filter(a => a.gps.lng >= b.west && a.gps.lng <= b.east && a.gps.lat >= b.south && a.gps.lat <= b.north)
+      .map(a => ({ lng: a.gps.lng, lat: a.gps.lat }));
+  }, [anomalies]);
+
   // Live registration quality for the Align panel, scored against the surveyed
   // KML centroids — the only exact geography on this map.
   const alignScore: AlignmentScore | null = useMemo(() => {
@@ -723,9 +758,9 @@ function SiteMap() {
       overlays[alignTarget],
       placementOf(alignTarget),
       masks[alignTarget] ?? null,
-      anomalies.map(a => ({ lng: a.gps.lng, lat: a.gps.lat })),
+      pointsOver(overlays[alignTarget]),
     );
-  }, [alignTarget, overlays, anomalies, placementOf, masks]);
+  }, [alignTarget, overlays, pointsOver, placementOf, masks]);
 
   const baselineScore: AlignmentScore | null = useMemo(() => {
     if (!alignTarget) return null;
@@ -733,9 +768,9 @@ function SiteMap() {
       overlays[alignTarget],
       IDENTITY,
       masks[alignTarget] ?? null,
-      anomalies.map(a => ({ lng: a.gps.lng, lat: a.gps.lat })),
+      pointsOver(overlays[alignTarget]),
     );
-  }, [alignTarget, overlays, anomalies, masks]);
+  }, [alignTarget, overlays, pointsOver, masks]);
 
   // Surveyed panel outlines (defpanels1.kml) — real footprints, not estimated positions.
   // Drives both the zoom-in panel fills on the satellite view and KML View.
@@ -1077,7 +1112,8 @@ function SiteMap() {
       // instead, so the guard is a plain try/catch around the one handler
       // known to run past teardown, not a fix to the ordering itself.
       try {
-        const present = OVERLAY_STACK.filter(id => map.getLayer(id));
+        const stack = [...mountedOverlays.map(d => rasterLayerId(d.id)), ...OVERLAY_STACK];
+        const present = stack.filter(id => map.getLayer(id));
         // Only act when the order is actually wrong. moveLayer() itself emits
         // `styledata`, so an unconditional reorder here would answer its own event
         // — harmless in practice (it converges immediately, measured at 0 extra
@@ -1095,7 +1131,7 @@ function SiteMap() {
     map.on("styledata", restack);
     restack();
     return () => { map.off("styledata", restack); };
-  }, [mapReady]);
+  }, [mapReady, mountedOverlays]);
 
   /**
    * Register the four shape-coded marker sprites (Task 5) — same lifecycle as
@@ -1444,14 +1480,16 @@ function SiteMap() {
                   style={{ width: "100%", height: "100%" }}
                   mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
                 >
-                  <Source id="cmp-thermal" type="image" url={activeOverlay.url} coordinates={cornersOf(activeOverlay.id)}>
-                    <Layer id="cmp-thermal-layer" type="raster" paint={{
+                  {mountedOverlays.map(def => (
+                  <Source key={def.id} id={`cmp-${rasterSourceId(def.id)}`} type="image" url={def.url} coordinates={cornersOf(def.id)}>
+                    <Layer id={`cmp-${rasterLayerId(def.id)}`} type="raster" paint={{
                       "raster-opacity": 1,
                       "raster-resampling": RASTER_RESAMPLING,
                       "raster-contrast": THERMAL_CONTRAST,
                       "raster-saturation": THERMAL_SATURATION,
                     }} />
                   </Source>
+                  ))}
                 </MapGL>
                 <div className="absolute top-2 left-2 bg-red-600 text-white text-[10px] font-bold mono px-2 py-0.5 flex items-center gap-1">
                   <Thermometer size={10} /> THERMAL IR
@@ -1772,9 +1810,9 @@ function SiteMap() {
                 {/* Drone orthomosaic overlays — suppressed in KML View, which shows outlines on their own.
                     `beforeId` keeps them underneath the anomaly layers no matter what order
                     the user toggles IR in. */}
-                {activeOverlay && thermalVisible && !kmlViewMode && (
-                  <Source id="thermal" type="image" url={activeOverlay.url} coordinates={cornersOf(activeOverlay.id)}>
-                    <Layer id="thermal-layer" type="raster" beforeId="anomaly-panel-fill" paint={{
+                {thermalVisible && !kmlViewMode && mountedOverlays.map(def => (
+                  <Source key={def.id} id={rasterSourceId(def.id)} type="image" url={def.url} coordinates={cornersOf(def.id)}>
+                    <Layer id={rasterLayerId(def.id)} type="raster" beforeId="anomaly-panel-fill" paint={{
                       "raster-opacity": thermalOpacity,
                       // The site is ~900 m across, so past roughly z18 the map is
                       // magnifying the raster beyond 1:1. Mapbox defaults to
@@ -1787,7 +1825,7 @@ function SiteMap() {
                       "raster-fade-duration": 0,
                     }} />
                   </Source>
-                )}
+                ))}
 
                 {/* Alignment reference — the surveyed footprints, drawn on top of
                     everything in a colour nothing else on the map uses. These are the
