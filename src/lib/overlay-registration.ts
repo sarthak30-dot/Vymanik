@@ -157,6 +157,17 @@ export const OVERLAYS: Record<string, OverlayDef> = {
     url: "/blocks17_28_thermal.webp",
     baseline: { west: 73.029813669, north: 28.271603131, east: 73.043506452, south: 28.264666514 },
   },
+  // November 2026 resurvey of Blocks 06/09/12/14/16/17/19/122. Same spatial
+  // footprint as the March raster but a fresh flight — 1,249 independent
+  // findings. Corners from the superoverlay's own <LatLonBox> tags, north edge
+  // cropped to 28.265 (northernmost defect at 28.264180, ~91 m inside the crop).
+  // All 1,249 defects land on a data pixel — 100.0%.
+  thermalNov: {
+    id: "thermalNov",
+    label: "Thermal IR — Blocks 06-19 (Survey 2)",
+    url: "/blocks06_19_survey2_thermal.webp",
+    baseline: { west: 73.023697, north: 28.265000, east: 73.035302, south: 28.259854 },
+  },
 };
 
 /**
