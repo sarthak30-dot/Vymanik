@@ -283,15 +283,15 @@ const OVERLAY_STACK = [
 // Plant boundary for the satellite overview polygon — the composited extent of
 // the March 2026 thermal, so the outline and the raster are the same rectangle by
 // construction rather than a separate estimate that can drift out of step with it.
-// The union of the two flights' composited extents — March 2026 over blocks
-// 06-122 (west 73.023697, south 28.259854) and April 2026 over blocks 17-28
-// (east 73.043506, north 28.271603). Drawn as one rectangle because that is
+// The union of the three flights' composited extents — 31 March 2026 over blocks
+// 06-122 (west 73.023697), 29 March 2026 over blocks 7-122 (south 28.254) and
+// April 2026 over blocks 17-28 (east 73.043506, north 28.271603). Drawn as one rectangle because that is
 // what this outline has always been: the site's bounding box, not a traced
 // perimeter. Keeping it at the March extent would have cut the April blocks
 // out of the dashed boundary and out of the camera's opening frame.
 const PLANT_BOUNDARY_COORDS = [
   [73.023697, 28.271603], [73.043506, 28.271603],
-  [73.043506, 28.259854], [73.023697, 28.259854],
+  [73.043506, 28.254], [73.023697, 28.254],
   [73.023697, 28.271603],
 ] as [number,number][];
 
@@ -443,9 +443,9 @@ function SiteMap() {
   /**
    * The rasters mounted as Mapbox image sources — all of this plant's, not one.
    *
-   * The primary plant now carries two: the March 2026 flight over blocks 06-122
-   * and the April 2026 flight over blocks 17-28, which meet along ~28.2645 and
-   * together cover the site. Drawing only the first would have left every April
+   * The primary plant now carries three: the 31 March 2026 flight over blocks
+   * 06-122, the 29 March flight over blocks 7-122 to its south, and the April
+   * 2026 flight over blocks 17-28 to its north, together covering the site. Drawing only the first would have left every April
    * defect sitting on bare satellite.
    *
    * Each gets its own source and layer id derived from the registry key, so
@@ -738,9 +738,9 @@ function SiteMap() {
 
   // Surveyed centroids that fall inside one raster's own footprint.
   //
-  // The primary plant now holds two flights whose rasters meet at ~28.2645 and
-  // do not overlap. Scoring the March raster against every defect on the plant
-  // would count all of April's as misses — they are on ground this raster never
+  // The primary plant now holds three flights whose rasters sit side by side
+  // (the two March ones share only a thin strip). Scoring the 31 March raster
+  // against every defect on the plant would count the others' as misses — they are on ground this raster never
   // covered — and read as "carries no registration" for an overlay that scores
   // 100%. Only defects inside the raster's extent can say anything about it.
   const pointsOver = useCallback((def: OverlayDef) => {

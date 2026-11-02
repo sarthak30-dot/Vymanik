@@ -157,16 +157,21 @@ export const OVERLAYS: Record<string, OverlayDef> = {
     url: "/blocks17_28_thermal.webp",
     baseline: { west: 73.029813669, north: 28.271603131, east: 73.043506452, south: 28.264666514 },
   },
-  // November 2026 resurvey of Blocks 06/09/12/14/16/17/19/122. Same spatial
-  // footprint as the March raster but a fresh flight — 1,249 independent
-  // findings. Corners from the superoverlay's own <LatLonBox> tags, north edge
-  // cropped to 28.265 (northernmost defect at 28.264180, ~91 m inside the crop).
-  // All 1,249 defects land on a data pixel — 100.0%.
-  thermalNov: {
-    id: "thermalNov",
-    label: "Thermal IR — Blocks 06-19 (Survey 2)",
-    url: "/blocks06_19_survey2_thermal.webp",
-    baseline: { west: 73.023697, north: 28.265000, east: 73.035302, south: 28.259854 },
+  // The 29 March 2026 flight (the report's "DAY3" batch): blocks 7, 8, 9, 11,
+  // 12, 17, 19 and 122. It sits mostly south of the 31 March raster, with a
+  // ~200 m strip of overlap along 28.2599-28.2620, so it draws beneath/above
+  // that raster rather than replacing it.
+  //
+  // Corners are the superoverlay's own <LatLonBox> tags (declared extent
+  // 73.027213/28.250489 to 73.039894/28.261717), cropped to the defect footprint
+  // plus a margin: the KMZ's east third and southern strip hold imagery but no
+  // findings, and carrying them would have doubled the file. All 1,606 of the
+  // survey's defects land on a data pixel — 100.0%.
+  thermalMar29: {
+    id: "thermalMar29",
+    label: "Thermal IR — Blocks 7-122 (29 Mar)",
+    url: "/blocks7_122_thermal.webp",
+    baseline: { west: 73.027213, north: 28.262, east: 73.0357, south: 28.254 },
   },
 };
 

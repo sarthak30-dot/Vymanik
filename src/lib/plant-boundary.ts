@@ -15,8 +15,9 @@
  *
  * If the boundary ever moves, both copies need updating — that coupling is
  * accepted on purpose, not missed. The values themselves are the composited
- * extent of the March 2026 thermal orthomosaic (see the OVERLAYS baseline in
- * lib/overlay-registration.ts), the same ground truth both places draw from.
+ * union of the thermal orthomosaics' extents — 31 March (blocks 06-122),
+ * 29 March (blocks 7-122) and 08 April (blocks 17-28); see the OVERLAYS baselines in
+ * lib/overlay-registration.ts, the same ground truth both places draw from.
  *
  * PLANT_BOUNDARY is the *primary* plant's rectangle and stays the default, so
  * existing callers are unchanged. The checks below take a box so a second
@@ -34,9 +35,9 @@ export interface BoundaryBox {
 
 export const PLANT_BOUNDARY: BoundaryBox = {
   west: 73.023697,
-  east: 73.035302,
-  south: 28.259854,
-  north: 28.2645,
+  east: 73.043506,
+  south: 28.254,
+  north: 28.271603,
 };
 
 /** Metres of slack outside the strict rectangle before a point counts as
