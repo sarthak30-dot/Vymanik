@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Loader2, ChevronUp, ChevronDown, ArrowLeft, LayoutGrid } from "lucide-react";
+import { Loader2, ChevronUp, ChevronDown, ArrowLeft, LayoutGrid, Search, Download } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Cell } from "recharts";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { useAnomalies } from "@/lib/queries";
@@ -8,6 +8,7 @@ import { usePlantContext } from "@/lib/plant-context";
 import { plant, SEVERITY_LABEL_FULL, clientDefectType } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 import { stringAndInverter, registerLocation } from "@/lib/layout-labels";
+import { exportAnomaliesCSV } from "@/lib/anomaly-export";
 
 export const Route = createFileRoute("/_app/anomalies/by-block")({
   head: () => ({ meta: [{ title: "Anomalies by zone — UrjaScan" }] }),
@@ -180,9 +181,19 @@ function BlockwiseAnomaly() {
   const [selectedBlock, setSelectedBlock] = useState<string | null>(blockParam ?? null);
   const [drillDefectFilter, setDrillDefectFilter] = useState<string>("all");
   const [drillSevFilter, setDrillSevFilter] = useState<string>("all");
+  // Finds a block/row by number in the summary table.
+  const [blockSearch, setBlockSearch] = useState("");
+  // Finds a specific anomaly (panel ID, defect type, string/inverter) within
+  // the selected block's drill-down table.
+  const [drillSearch, setDrillSearch] = useState("");
 
   const blockStats = useMemo(() => computeBlockStats(anomalies), [anomalies]);
   const sortedBlocks = useMemo(() => sortBlocks(blockStats, sortKey, sortDir), [blockStats, sortKey, sortDir]);
+  const visibleBlocks = useMemo(() => {
+    if (!blockSearch.trim()) return sortedBlocks;
+    const q = blockSearch.trim().toLowerCase();
+    return sortedBlocks.filter(b => b.block.toLowerCase().includes(q));
+  }, [sortedBlocks, blockSearch]);
 
   const drillBlock = useMemo(
     () => blockStats.find(b => b.block === selectedBlock) ?? null,
@@ -196,14 +207,24 @@ function BlockwiseAnomaly() {
 
   const drillRows = useMemo(() => {
     if (!drillBlock) return [];
+    const q = drillSearch.trim().toLowerCase();
     return drillBlock.defects
       .filter(a => drillDefectFilter === "all" || a.type === drillDefectFilter)
       .filter(a => drillSevFilter === "all" || a.severity === drillSevFilter)
+      .filter(a => {
+        if (!q) return true;
+        return (
+          a.panelId.toLowerCase().includes(q) ||
+          clientDefectType(a.type).toLowerCase().includes(q) ||
+          a.string.toLowerCase().includes(q) ||
+          a.inverter.toLowerCase().includes(q)
+        );
+      })
       .sort((a, b) => {
         const rank = { critical: 0, medium: 1, normal: 2, nodata: 3 };
         return rank[a.severity] - rank[b.severity];
       });
-  }, [drillBlock, drillDefectFilter, drillSevFilter]);
+  }, [drillBlock, drillDefectFilter, drillSevFilter, drillSearch]);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -268,7 +289,7 @@ function BlockwiseAnomaly() {
                     fill={BLOCK_CHART_COLORS[i % BLOCK_CHART_COLORS.length]}
                     opacity={0.85}
                     style={{ cursor: "pointer" }}
-                    onClick={() => { setSelectedBlock(blockStats[i].block); }}
+                    onClick={() => { setSelectedBlock(blockStats[i].block); setDrillSearch(""); }}
                   />
                 ))}
               </Bar>
@@ -289,6 +310,24 @@ function BlockwiseAnomaly() {
               Click a row to drill into the block's defects
             </p>
           </div>
+          <div className="px-4 py-3 border-b border-border flex flex-col sm:flex-row gap-3 sm:items-center">
+            <div className="relative flex-1 max-w-xs">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={blockSearch}
+                onChange={e => setBlockSearch(e.target.value)}
+                placeholder={`Find a ${zoneLabel.toLowerCase()}...`}
+                className="w-full h-8 pl-8 pr-3 border border-border bg-card text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ochre"
+              />
+            </div>
+            <button
+              onClick={() => exportAnomaliesCSV(anomalies, plantName, `${zoneLabel}wise_Anomalies`)}
+              disabled={anomalies.length === 0}
+              className="h-8 px-3 border border-border bg-card text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+            >
+              <Download size={12} /> Export CSV
+            </button>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-muted text-[11px] uppercase tracking-widest text-grey-400 border-b border-border">
@@ -307,18 +346,18 @@ function BlockwiseAnomaly() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {sortedBlocks.length === 0 ? (
+                {visibleBlocks.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">
-                      No anomalies detected for this plant.
+                      {sortedBlocks.length === 0 ? "No anomalies detected for this plant." : `No ${zoneLabel.toLowerCase()} matches “${blockSearch}”.`}
                     </td>
                   </tr>
                 ) : (
-                  sortedBlocks.map(bs => (
+                  visibleBlocks.map(bs => (
                     <tr
                       key={bs.block}
                       className="hover:bg-grey-25 transition cursor-pointer"
-                      onClick={() => { setSelectedBlock(bs.block); setDrillDefectFilter("all"); setDrillSevFilter("all"); }}
+                      onClick={() => { setSelectedBlock(bs.block); setDrillDefectFilter("all"); setDrillSevFilter("all"); setDrillSearch(""); }}
                     >
                       <td className="px-4 py-3 font-semibold mono">{zoneLabel} {bs.block}</td>
                       <td className="px-4 py-3 mono font-semibold tabular-nums">{bs.defectCount}</td>
@@ -350,7 +389,7 @@ function BlockwiseAnomaly() {
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
               <button
-                onClick={() => setSelectedBlock(null)}
+                onClick={() => { setSelectedBlock(null); setDrillSearch(""); }}
                 className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-2"
               >
                 <ArrowLeft size={12} /> All Blocks
@@ -380,6 +419,15 @@ function BlockwiseAnomaly() {
           {/* Cross-filters */}
           <div className="bg-card border border-border p-3 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
             <p className="text-xs font-semibold text-muted-foreground shrink-0">Filter within {zoneLabel} {selectedBlock}:</p>
+            <div className="relative flex-1 min-w-[160px]">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={drillSearch}
+                onChange={e => setDrillSearch(e.target.value)}
+                placeholder="Search panel ID, defect type..."
+                className="w-full h-8 pl-8 pr-3 border border-border bg-card text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ochre"
+              />
+            </div>
             <select
               value={drillDefectFilter}
               onChange={e => setDrillDefectFilter(e.target.value)}
@@ -398,14 +446,21 @@ function BlockwiseAnomaly() {
               <option value="medium">Medium (COA2)</option>
               <option value="normal">Normal (COA1)</option>
             </select>
-            {(drillDefectFilter !== "all" || drillSevFilter !== "all") && (
+            {(drillDefectFilter !== "all" || drillSevFilter !== "all" || drillSearch !== "") && (
               <button
-                onClick={() => { setDrillDefectFilter("all"); setDrillSevFilter("all"); }}
+                onClick={() => { setDrillDefectFilter("all"); setDrillSevFilter("all"); setDrillSearch(""); }}
                 className="h-8 px-3 border border-border bg-card text-xs text-muted-foreground hover:bg-muted"
               >
                 Clear filters
               </button>
             )}
+            <button
+              onClick={() => exportAnomaliesCSV(drillRows, plantName, `${zoneLabel}${selectedBlock}_Anomalies`)}
+              disabled={drillRows.length === 0}
+              className="h-8 px-3 border border-border bg-card text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+            >
+              <Download size={12} /> Export CSV
+            </button>
           </div>
 
           {/* Defect table for the selected block */}

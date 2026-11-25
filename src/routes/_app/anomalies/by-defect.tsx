@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Loader2, ArrowLeft, Bug } from "lucide-react";
+import { Loader2, ArrowLeft, Bug, Search, Download } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { useAnomalies } from "@/lib/queries";
@@ -8,6 +8,7 @@ import { usePlantContext } from "@/lib/plant-context";
 import { SEVERITY_LABEL_FULL, clientDefectType } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 import { registerLocation } from "@/lib/layout-labels";
+import { exportAnomaliesCSV } from "@/lib/anomaly-export";
 
 export const Route = createFileRoute("/_app/anomalies/by-defect")({
   head: () => ({ meta: [{ title: "Defect-wise Anomaly — UrjaScan" }] }),
@@ -156,6 +157,9 @@ function DefectwiseAnomaly() {
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [drillBlockFilter, setDrillBlockFilter] = useState<string>("all");
   const [drillSevFilter, setDrillSevFilter] = useState<string>("all");
+  // Finds a specific anomaly (panel ID, string/inverter) within the selected
+  // defect type's drill-down table.
+  const [drillSearch, setDrillSearch] = useState("");
 
   const drillStat = useMemo(
     () => defectStats.find(d => d.type === selectedType) ?? null,
@@ -164,14 +168,23 @@ function DefectwiseAnomaly() {
 
   const drillRows = useMemo(() => {
     if (!drillStat) return [];
+    const q = drillSearch.trim().toLowerCase();
     return drillStat.defects
       .filter(a => drillBlockFilter === "all" || (a.block ?? "Unknown") === drillBlockFilter)
       .filter(a => drillSevFilter === "all" || a.severity === drillSevFilter)
+      .filter(a => {
+        if (!q) return true;
+        return (
+          a.panelId.toLowerCase().includes(q) ||
+          a.string.toLowerCase().includes(q) ||
+          a.inverter.toLowerCase().includes(q)
+        );
+      })
       .sort((a, b) => {
         const rank = { critical: 0, medium: 1, normal: 2, nodata: 3 };
         return rank[a.severity] - rank[b.severity];
       });
-  }, [drillStat, drillBlockFilter, drillSevFilter]);
+  }, [drillStat, drillBlockFilter, drillSevFilter, drillSearch]);
 
   if (isLoading) {
     return (
@@ -232,7 +245,7 @@ function DefectwiseAnomaly() {
                         fill={CHART_COLORS[i % CHART_COLORS.length]}
                         opacity={0.85}
                         style={{ cursor: "pointer" }}
-                        onClick={() => { setSelectedType(defectStats[i].type); setDrillBlockFilter("all"); setDrillSevFilter("all"); }}
+                        onClick={() => { setSelectedType(defectStats[i].type); setDrillBlockFilter("all"); setDrillSevFilter("all"); setDrillSearch(""); }}
                       />
                     ))}
                   </Bar>
@@ -270,7 +283,7 @@ function DefectwiseAnomaly() {
                     <tr
                       key={ds.type}
                       className="hover:bg-grey-25 transition cursor-pointer"
-                      onClick={() => { setSelectedType(ds.type); setDrillBlockFilter("all"); setDrillSevFilter("all"); }}
+                      onClick={() => { setSelectedType(ds.type); setDrillBlockFilter("all"); setDrillSevFilter("all"); setDrillSearch(""); }}
                     >
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
@@ -332,7 +345,7 @@ function DefectwiseAnomaly() {
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
               <button
-                onClick={() => setSelectedType(null)}
+                onClick={() => { setSelectedType(null); setDrillSearch(""); }}
                 className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-2"
               >
                 <ArrowLeft size={12} /> All Defect Types
@@ -362,13 +375,22 @@ function DefectwiseAnomaly() {
           {/* Cross-filters */}
           <div className="bg-card border border-border p-3 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
             <p className="text-xs font-semibold text-muted-foreground shrink-0">Filter within {selectedType}:</p>
+            <div className="relative flex-1 min-w-[160px]">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={drillSearch}
+                onChange={e => setDrillSearch(e.target.value)}
+                placeholder="Search panel ID, string/inverter..."
+                className="w-full h-8 pl-8 pr-3 border border-border bg-card text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ochre"
+              />
+            </div>
             <select
               value={drillBlockFilter}
               onChange={e => setDrillBlockFilter(e.target.value)}
               className="h-8 px-3 border border-border bg-card text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ochre"
             >
-              <option value="all">All blocks</option>
-              {allBlocks.map(b => <option key={b} value={b}>Block {b}</option>)}
+              <option value="all">All {zoneLabel.toLowerCase()}s</option>
+              {allBlocks.map(b => <option key={b} value={b}>{zoneLabel} {b}</option>)}
             </select>
             <select
               value={drillSevFilter}
@@ -380,14 +402,21 @@ function DefectwiseAnomaly() {
               <option value="medium">Medium (COA2)</option>
               <option value="normal">Normal (COA1)</option>
             </select>
-            {(drillBlockFilter !== "all" || drillSevFilter !== "all") && (
+            {(drillBlockFilter !== "all" || drillSevFilter !== "all" || drillSearch !== "") && (
               <button
-                onClick={() => { setDrillBlockFilter("all"); setDrillSevFilter("all"); }}
+                onClick={() => { setDrillBlockFilter("all"); setDrillSevFilter("all"); setDrillSearch(""); }}
                 className="h-8 px-3 border border-border bg-card text-xs text-muted-foreground hover:bg-muted"
               >
                 Clear filters
               </button>
             )}
+            <button
+              onClick={() => exportAnomaliesCSV(drillRows, plantName, `${selectedType.replace(/\s+/g, "_")}_Anomalies`)}
+              disabled={drillRows.length === 0}
+              className="h-8 px-3 border border-border bg-card text-xs font-medium inline-flex items-center gap-1.5 hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+            >
+              <Download size={12} /> Export CSV
+            </button>
           </div>
 
           {/* Defect list */}

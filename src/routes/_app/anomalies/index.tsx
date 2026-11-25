@@ -8,41 +8,10 @@ import { useAnomalies, usePatchAnomaly } from "@/lib/queries";
 import { usePlantContext } from "@/lib/plant-context";
 import { getUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
-import { SEVERITY_LABEL, SEVERITY_LABEL_FULL, clientDefectType } from "@/lib/mock-data";
+import { SEVERITY_LABEL_FULL, clientDefectType } from "@/lib/mock-data";
 import type { AnomalyDTO } from "@/lib/api";
 import { registerLocation } from "@/lib/layout-labels";
-
-/**
- * The zone value and the register's own "Layout Location" string.
- *
- * Both come from lib/layout-labels.ts, which decides the vocabulary from the
- * deliverable rather than from the plant: Blocks 06-122 reads "Block: 16,
- * Inv: A, Table: 3, Panel: R8-P12" under a "Block" heading, Hamirpur reads
- * "Table: 6 | S: B | Mod: A - 1" under "Row", exactly as each survey's own
- * register writes it.
- */
-function blockNumber(a: AnomalyDTO, plantName: string): string {
-  return registerLocation(a, plantName).zone;
-}
-
-function layoutLocation(a: AnomalyDTO, plantName: string): string {
-  return registerLocation(a, plantName).layout;
-}
-
-function mapLocation(a: AnomalyDTO): string {
-  return `${a.gps.lat.toFixed(7)}, ${a.gps.lng.toFixed(7)}`;
-}
-
-/** Google's documented "Search" URL API (maps.google.com/maps?q= still works
- *  but this is the form Google itself recommends going forward) — a pin at
- *  the exact coordinate, not a route, which is what a client double-checking
- *  a defect's location wants. Distinct on purpose from the "Navigate"/driving
- *  -directions links elsewhere in this app (map.tsx, InspectionSheet,
- *  anomalies/$id.tsx all use `?daddr=...&dirflg=d`) — this column exists to
- *  verify a coordinate, not to route a technician there. */
-function googleMapsSearchUrl(lat: number, lng: number): string {
-  return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
-}
+import { blockNumber, layoutLocation, mapLocation, googleMapsSearchUrl, exportAnomaliesCSV } from "@/lib/anomaly-export";
 
 /**
  * The Map Location cell/row, shared between the desktop table and the mobile
@@ -75,26 +44,6 @@ function MapLocationLink({
       {mapLocation(a)}
     </a>
   );
-}
-
-function exportCSV(rows: AnomalyDTO[], plantName: string) {
-  // Heading taken from the rows themselves, so the export says "Row" for a
-  // survey that groups by rack row and "Block" for one that groups by block —
-  // the same word the client's own register uses.
-  const zoneLabel = rows[0] ? registerLocation(rows[0], plantName).zoneLabel : "Block";
-  const header = ["SL No",zoneLabel,"Layout Location","Map Location","Defect Type","Delta_T","Severity","Status","Date","Image Ref"];
-  const lines = rows.map((a, i) => [
-    i + 1, blockNumber(a, plantName), layoutLocation(a, plantName), mapLocation(a), clientDefectType(a.type),
-    a.deltaTNorm ?? a.deltaT ?? "", SEVERITY_LABEL[a.severity], a.status, a.date, a.rgbNote ?? "",
-  ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(","));
-  const csv = [header.join(","), ...lines].join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `UrjaScan_${plantName.replace(/\s+/g, "_")}_Anomalies.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 type Severity = AnomalyDTO["severity"];
@@ -257,6 +206,10 @@ function AnomalyList() {
   const setFilter = (patch: Partial<AnomalyFilters>) =>
     navigate({ to: "/anomalies", search: (prev: AnomalyFilters) => ({ ...prev, ...patch }), replace: true });
 
+  // Needed inside the search filter below (it matches on block/row and
+  // layout location too, both of which read their vocabulary from the plant).
+  const plantName = selectedPlant.name;
+
   const rows = useMemo(() => {
     return anomalies
       .filter(a => sevFilter === "all" || a.severity === sevFilter)
@@ -264,13 +217,20 @@ function AnomalyList() {
       .filter(a => {
         if (!search) return true;
         const q = search.toLowerCase();
-        return a.panelId.toLowerCase().includes(q) || a.type.toLowerCase().includes(q) || clientDefectType(a.type).toLowerCase().includes(q);
+        return (
+          a.panelId.toLowerCase().includes(q) ||
+          a.type.toLowerCase().includes(q) ||
+          clientDefectType(a.type).toLowerCase().includes(q) ||
+          blockNumber(a, plantName).toLowerCase().includes(q) ||
+          layoutLocation(a, plantName).toLowerCase().includes(q) ||
+          a.status.toLowerCase().includes(q)
+        );
       })
       .sort((a, b) => {
         if (SEVERITY_RANK[a.severity] !== SEVERITY_RANK[b.severity]) return SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
         return (b.deltaT ?? 0) - (a.deltaT ?? 0);
       });
-  }, [anomalies, sevFilter, statusFilter, search]);
+  }, [anomalies, sevFilter, statusFilter, search, plantName]);
 
   // ── Bulk selection ──
   // Ephemeral (not URL-backed): a selection is a transient "act on these now"
@@ -301,7 +261,6 @@ function AnomalyList() {
     );
   }
 
-  const plantName = selectedPlant.name;
   // "Block" or "Row", whichever this survey's register groups by — read off
   // the rows rather than the plant, so an uploaded survey gets the right
   // heading without this view knowing anything about which plant it is.
@@ -383,7 +342,7 @@ function AnomalyList() {
           <input
             value={search}
             onChange={e => setFilter({ q: e.target.value || undefined })}
-            placeholder="Search by panel ID or anomaly type..."
+            placeholder="Search by panel ID, block/row, defect type, or status..."
             className="w-full h-8 pl-9 pr-3 border border-border bg-card text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ochre"
           />
         </div>
@@ -394,11 +353,11 @@ function AnomalyList() {
             <Download size={12} /> Export <ChevronDown size={12} className="opacity-60" />
           </summary>
           <div className="absolute right-0 z-20 mt-1 w-52 bg-card border border-border shadow-lg py-1 text-xs">
-            <button onClick={e => { exportCSV(rows, plantName); (e.currentTarget.closest("details") as HTMLDetailsElement).open = false; }}
+            <button onClick={e => { exportAnomaliesCSV(rows, plantName); (e.currentTarget.closest("details") as HTMLDetailsElement).open = false; }}
               className="w-full text-left px-3 py-2 hover:bg-muted flex items-center gap-2">
               <Download size={12} /> Filtered ({rows.length}) · CSV
             </button>
-            <button onClick={e => { exportCSV(anomalies, plantName); (e.currentTarget.closest("details") as HTMLDetailsElement).open = false; }}
+            <button onClick={e => { exportAnomaliesCSV(anomalies, plantName); (e.currentTarget.closest("details") as HTMLDetailsElement).open = false; }}
               className="w-full text-left px-3 py-2 hover:bg-muted flex items-center gap-2">
               <FileText size={12} /> All ({anomalies.length}) · CSV
             </button>
@@ -428,7 +387,7 @@ function AnomalyList() {
             </label>
           )}
           <button
-            onClick={() => exportCSV(selectedRows, plantName)}
+            onClick={() => exportAnomaliesCSV(selectedRows, plantName)}
             className="h-7 px-3 border border-white/25 hover:bg-white/10 inline-flex items-center gap-1.5 font-medium"
           >
             <Download size={12} /> Export selected
