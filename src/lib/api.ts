@@ -379,6 +379,8 @@ export const api = {
     list: (token: string) => req<PlantDTO[]>("GET", "/plants", undefined, token),
     get: (id: string, token: string) => req<PlantDTO>("GET", `/plants/${id}`, undefined, token),
     create: (body: NewPlantInput, token: string) => req<PlantDTO>("POST", "/plants", body, token),
+    delete: (id: string, token: string) =>
+      req<{ deleted: true; id: string }>("DELETE", `/plants/${id}`, undefined, token),
   },
 
   teamMembers: {
@@ -405,6 +407,15 @@ export const api = {
       body: { plantId: string; inspectionId: string; contentType: string },
       token: string,
     ) => req<{ signedUrl: string; publicUrl: string }>("POST", "/survey", { action: "sign-overlay", ...body }, token),
+    /** Up to 100 filenames per call (see api/survey.ts) — the caller chunks a
+     *  larger thermal-image folder into several of these. */
+    signThermalImages: (
+      body: { plantId: string; inspectionId: string; filenames: string[] },
+      token: string,
+    ) =>
+      req<{ images: { filename: string; signedUrl: string; publicUrl: string }[] }>(
+        "POST", "/survey", { action: "sign-thermal-images", ...body }, token,
+      ),
     saveSurvey: (
       body: { plantId: string; inspectionId: string; inspectionDate: string; defectCount: number; overlay: SurveyOverlay | null },
       token: string,

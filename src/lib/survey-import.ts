@@ -542,6 +542,72 @@ export function mergeSurvey(kml: ParsedDefects, csv: MasterCsv): MergedSurvey {
   };
 }
 
+// ─── Thermal image folder -> matched to parsed rows by filename ─────────────
+//
+// The defect KML/CSV's Label field is a frame filename ("23389.JPG"), which
+// parseDefectKml/mergeSurvey already fold into each row's rgbNote as
+// "Image: 23389.JPG" (see src/lib/defect-image.ts for the other end of this —
+// it already knows how to render both a bare filename, resolved against the
+// checked-in public/defimages, and an http(s) URL). Upload Survey's "Thermal
+// Images" folder picker lets the admin supply those frames for a brand-new
+// plant/survey that has no checked-in images: this matches each selected
+// file to the row(s) that reference its name, so only the frames a defect
+// actually points at get uploaded, and the match counts tell the admin
+// immediately whether the folder and the defect file agree on filenames.
+
+const THERMAL_IMAGE_EXT = /\.(jpe?g|png|webp)$/i;
+
+/** The bare filename a row's rgbNote references, lowercased — or null for a
+ *  row with no image note, or one already holding a URL (the CSV wizard's
+ *  form; never produced by parseDefectKml/mergeSurvey, so it never competes
+ *  with a folder match here). */
+export function rowImageFilename(rgbNote: string | undefined | null): string | null {
+  if (!rgbNote || /^Image:\s*https?:\/\//i.test(rgbNote)) return null;
+  const raw = rgbNote.match(/Image:\s*([\w.-]+\.(?:jpe?g|png|webp))/i)?.[1];
+  return raw ? raw.toLowerCase() : null;
+}
+
+/** A selected folder's path with any directories stripped — matching is by
+ *  filename alone, same as the vendor's flat frame naming. */
+function basename(path: string): string {
+  return path.split(/[/\\]/).pop() ?? path;
+}
+
+export interface ThermalImageMatch {
+  /** Lowercased filename -> the selected File, for every image that at least
+   *  one row's rgbNote references. Only these are worth uploading. */
+  matched: Map<string, File>;
+  /** How many rows reference an image filename that isn't in the folder
+   *  (left pointing at a frame that will 404 — same as a missing bundled
+   *  image today, not a new failure mode, but worth surfacing). */
+  unmatchedRowCount: number;
+  /** Files in the folder that no row's rgbNote references. */
+  unmatchedImages: string[];
+}
+
+export function matchThermalImages(rows: SurveyRow[], files: File[]): ThermalImageMatch {
+  const byName = new Map<string, File>();
+  for (const f of files) {
+    if (!THERMAL_IMAGE_EXT.test(f.name)) continue;
+    byName.set(basename(f.name).toLowerCase(), f);
+  }
+
+  const referenced = new Set<string>();
+  const matched = new Map<string, File>();
+  let unmatchedRowCount = 0;
+  for (const r of rows) {
+    const name = rowImageFilename(r.rgbNote);
+    if (!name) continue;
+    referenced.add(name);
+    const file = byName.get(name);
+    if (file) matched.set(name, file);
+    else unmatchedRowCount++;
+  }
+
+  const unmatchedImages = [...byName.keys()].filter((n) => !referenced.has(n)).sort();
+  return { matched, unmatchedRowCount, unmatchedImages };
+}
+
 // ─── Orthomosaic KMZ -> one web overlay (port of flatten_superoverlay.py) ────
 
 export interface Bounds {

@@ -10,20 +10,25 @@ import { getAuthUser } from "./_lib/auth.js";
  * this endpoint only stores the results.
  *
  *   GET  ?plantId=               -> { survey } — the plant's current survey, or null
- *   POST { action: "import-defects", plantId, inspectionId, inspectionDate, rows, replace }
- *   POST { action: "sign-overlay",   plantId, inspectionId }  -> signed upload URL
- *   POST { action: "save-survey",    plantId, inspectionId, inspectionDate, defectCount, overlay? }
+ *   POST { action: "import-defects",      plantId, inspectionId, inspectionDate, rows, replace }
+ *   POST { action: "sign-overlay",        plantId, inspectionId }  -> signed upload URL
+ *   POST { action: "sign-thermal-images", plantId, inspectionId, filenames }  -> one signed upload URL per filename
+ *   POST { action: "save-survey",         plantId, inspectionId, inspectionDate, defectCount, overlay? }
  *
  * One function for all of it on purpose: Vercel's Hobby plan caps a project
  * at 12 serverless functions and this makes the twelfth.
  *
- * The orthomosaic never passes through here. A composited ortho is several
- * MB and Vercel rejects request bodies over 4.5 MB, so "sign-overlay" hands
- * the browser a one-time Supabase Storage upload URL and the file goes
- * straight to storage.
+ * The orthomosaic (and now each thermal defect frame) never passes through
+ * here. A composited ortho is several MB and Vercel rejects request bodies
+ * over 4.5 MB, so "sign-overlay"/"sign-thermal-images" hand the browser a
+ * one-time Supabase Storage upload URL and the file goes straight to storage.
  */
 
 const BUCKET = "survey-overlays";
+/** Admin-uploaded thermal/defect frames matched to a survey row by filename
+ *  (Upload Survey's "Thermal Images" folder picker) — see matchThermalImages
+ *  in src/lib/survey-import.ts for the matching itself. */
+const THERMAL_BUCKET = "survey-thermal-images";
 /** Rows per multi-row insert. The client already chunks requests to stay
  *  under the body limit; this bounds each Postgres statement. */
 const INSERT_CHUNK = 500;
@@ -184,6 +189,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (error || !data) return res.status(500).json({ error: error?.message ?? "Could not create upload URL" });
       const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
       return res.json({ signedUrl: data.signedUrl, publicUrl: pub.publicUrl });
+    }
+
+    case "sign-thermal-images": {
+      const filenames = Array.isArray(body.filenames)
+        ? (body.filenames as unknown[]).filter((f): f is string => typeof f === "string" && f.length > 0)
+        : [];
+      if (filenames.length === 0) return res.status(400).json({ error: "filenames is required" });
+      if (filenames.length > 100) {
+        return res.status(400).json({ error: "Send at most 100 filenames per request." });
+      }
+
+      const { error: getErr } = await supabase.storage.getBucket(THERMAL_BUCKET);
+      if (getErr) {
+        const { error: createErr } = await supabase.storage.createBucket(THERMAL_BUCKET, { public: true });
+        if (createErr && !/already exists/i.test(createErr.message)) {
+          return res.status(500).json({ error: `Could not create storage bucket: ${createErr.message}` });
+        }
+      }
+
+      const images = await Promise.all(
+        filenames.map(async (filename) => {
+          // Keep the folder's own filename as the lookup key the client
+          // matched on; sanitise only what goes into the storage path.
+          const safeName = filename.replace(/[^\w.-]/g, "_");
+          const path = `${plantId}/${inspectionId}/${safeName}`;
+          const { data, error } = await supabase.storage.from(THERMAL_BUCKET).createSignedUploadUrl(path);
+          if (error || !data) return { filename, error: error?.message ?? "Could not create upload URL" };
+          const { data: pub } = supabase.storage.from(THERMAL_BUCKET).getPublicUrl(path);
+          return { filename, signedUrl: data.signedUrl, publicUrl: pub.publicUrl };
+        }),
+      );
+      const failed = images.find((i) => "error" in i);
+      if (failed && "error" in failed) {
+        return res.status(500).json({ error: `Could not sign "${failed.filename}": ${failed.error}` });
+      }
+      return res.json({ images });
     }
 
     case "save-survey": {
