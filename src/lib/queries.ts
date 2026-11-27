@@ -56,6 +56,16 @@ export function usePlant(id = DEFAULT_PLANT_ID) {
  */
 const SUPERSEDED_PLANT_IDS = new Set(["plant-rajpur-1"]);
 
+/**
+ * Plant ids baked into allPlants (today, just plant-001). useFleetPlants
+ * always renders these from the frontend's own mock entry, DB row or not, so
+ * deleting one wouldn't remove it from the fleet list — only wipe its real
+ * survey/anomaly data out from under the mock numbers. Control Center's
+ * Delete button is disabled for these ids rather than offering a delete that
+ * can't actually take the plant off the list.
+ */
+export const BUILT_IN_PLANT_IDS = new Set(allPlants.map((p) => p.id));
+
 function plantDTOToSummary(p: PlantDTO): PlantSummary {
   return {
     id: p.id,
@@ -349,6 +359,26 @@ export function useCreatePlant() {
   });
 }
 
+/**
+ * Deletes a plant and refreshes every query that could still hold its data.
+ * The database FKs cascade (anomalies, surveys, plant layout, inspection
+ * history, enquiries) or clear (a team member's assignedPlantId), so this is
+ * the one call the admin needs — see the DELETE handler in api/plants/[id].ts.
+ */
+export function useDeletePlant() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (plantId: string) => api.plants.delete(plantId, getToken()!),
+    onSuccess: (_result, plantId) => {
+      queryClient.invalidateQueries({ queryKey: ["plants"] });
+      queryClient.invalidateQueries({ queryKey: ["teamMembers"] });
+      queryClient.invalidateQueries({ queryKey: ["plantLayout", plantId] });
+      queryClient.invalidateQueries({ queryKey: ["survey", plantId] });
+      queryClient.invalidateQueries({ queryKey: ["anomalies"], exact: false });
+    },
+  });
+}
+
 /** Fields collected from the "Add Team Member" form in the Control Center */
 export interface NewTeamMemberFormInput {
   name: string;
@@ -490,6 +520,12 @@ export function usePlantSurvey(plantId: string) {
 /** Rows per request to POST /api/survey — well under Vercel's 4.5 MB body
  *  limit even with per-defect footprint rings (~0.5 KB/row). */
 const SURVEY_UPLOAD_CHUNK = 300;
+/** Filenames per sign-thermal-images call — matches the server's own cap
+ *  (api/survey.ts). */
+const THERMAL_SIGN_CHUNK = 100;
+/** Simultaneous PUTs to Supabase Storage — plenty of throughput without
+ *  opening hundreds of connections from one tab. */
+const THERMAL_UPLOAD_CONCURRENCY = 6;
 
 export interface SurveyUploadInput {
   plantId: string;
@@ -498,25 +534,88 @@ export interface SurveyUploadInput {
   rows: import("./api").SurveyDefectRow[];
   /** Composited orthomosaic, if the admin included one. */
   overlay?: { blob: Blob; bounds: { west: number; north: number; east: number; south: number } } | null;
+  /** Thermal/defect frames matched to rows by filename (lowercased filename
+   *  -> File) — src/lib/survey-import.ts matchThermalImages() on the
+   *  admin's "Thermal Images" folder pick. Uploaded to storage and each
+   *  matching row's rgbNote is rewritten to point at the uploaded URL before
+   *  the defects are saved. */
+  thermalImages?: Map<string, File>;
   onProgress?: (stage: string, done: number, total: number) => void;
 }
 
+/** Uploads every matched thermal image straight to Supabase Storage (never
+ *  through the API function — Vercel's body limit, same reasoning as the
+ *  orthomosaic) and returns filename -> public URL for the ones that made it. */
+async function uploadThermalImages(
+  plantId: string,
+  inspectionId: string,
+  files: Map<string, File>,
+  token: string,
+  onProgress?: (done: number, total: number) => void,
+): Promise<Map<string, string>> {
+  const entries = [...files.entries()];
+  const urls = new Map<string, string>();
+  let done = 0;
+  for (let i = 0; i < entries.length; i += THERMAL_SIGN_CHUNK) {
+    const chunk = entries.slice(i, i + THERMAL_SIGN_CHUNK);
+    const { images } = await api.survey.signThermalImages(
+      { plantId, inspectionId, filenames: chunk.map(([name]) => name) },
+      token,
+    );
+    const byName = new Map(images.map((img) => [img.filename, img]));
+    for (let j = 0; j < chunk.length; j += THERMAL_UPLOAD_CONCURRENCY) {
+      const batch = chunk.slice(j, j + THERMAL_UPLOAD_CONCURRENCY);
+      await Promise.all(
+        batch.map(async ([name, file]) => {
+          const sig = byName.get(name);
+          if (!sig) throw new Error(`No upload URL returned for "${name}".`);
+          const put = await fetch(sig.signedUrl, {
+            method: "PUT",
+            headers: { "Content-Type": file.type || "image/jpeg" },
+            body: file,
+          });
+          if (!put.ok) throw new Error(`Uploading "${name}" failed (${put.status}).`);
+          urls.set(name, sig.publicUrl);
+        }),
+      );
+      done += batch.length;
+      onProgress?.(done, entries.length);
+    }
+  }
+  return urls;
+}
+
 /**
- * Persists a parsed survey: defects in chunks (first chunk replaces the same
- * inspection so a re-upload doesn't double up), then the orthomosaic straight
- * to Supabase Storage via a signed URL, then the survey record. Ordering
- * matters — the survey row is written last, so a survey only "exists" once its
- * data is actually in place.
+ * Persists a parsed survey: thermal images (if any) straight to storage with
+ * each matching row's rgbNote rewritten to the uploaded URL, then defects in
+ * chunks (first chunk replaces the same inspection so a re-upload doesn't
+ * double up), then the orthomosaic straight to Supabase Storage via a signed
+ * URL, then the survey record. Ordering matters — the survey row is written
+ * last, so a survey only "exists" once its data is actually in place.
  */
 export function useUploadSurvey() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: SurveyUploadInput): Promise<PlantSurvey> => {
       const token = getToken()!;
-      const { plantId, inspectionDate, rows, overlay, onProgress } = input;
+      const { plantId, inspectionDate, overlay, thermalImages, onProgress } = input;
       // Stable inspection id for this survey (date-derived, so re-uploading the
       // same day's corrected file replaces it rather than stacking).
       const inspectionId = `survey-${plantId}-${inspectionDate.replace(/\s+/g, "-").toLowerCase()}`;
+
+      let rows = input.rows;
+      if (thermalImages && thermalImages.size > 0) {
+        onProgress?.("thermal-images", 0, thermalImages.size);
+        const { rowImageFilename } = await import("./survey-import");
+        const urls = await uploadThermalImages(plantId, inspectionId, thermalImages, token, (done, total) =>
+          onProgress?.("thermal-images", done, total),
+        );
+        rows = rows.map((r) => {
+          const name = rowImageFilename(r.rgbNote);
+          const url = name ? urls.get(name) : undefined;
+          return url ? { ...r, rgbNote: `Image: ${url}` } : r;
+        });
+      }
 
       for (let i = 0; i < rows.length; i += SURVEY_UPLOAD_CHUNK) {
         const chunk = rows.slice(i, i + SURVEY_UPLOAD_CHUNK);

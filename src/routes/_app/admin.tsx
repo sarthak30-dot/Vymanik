@@ -5,6 +5,7 @@ import { requireOperatorRoute } from "@/lib/route-guards";
 import {
   Building2, Users, AlertTriangle, CheckCircle2, Clock, Plane,
   ChevronRight, Wifi, WifiOff, Activity, Shield, UserPlus, PlusCircle, KeyRound, Grid3x3, Copy, UploadCloud,
+  Trash2, Loader2,
 } from "lucide-react";
 import {
   reviewQueue,
@@ -12,7 +13,7 @@ import {
 } from "@/lib/mock-data";
 import {
   useCreatePlant, useCreateTeamMember, useInviteClient, useGeneratePlantLayout, useEditTeamMember,
-  useFleetTeamMembers,
+  useFleetTeamMembers, useDeletePlant, BUILT_IN_PLANT_IDS,
   type NewPlantFormInput, type NewTeamMemberFormInput,
 } from "@/lib/queries";
 import type { NewPlantLayoutInput, InviteClientResult } from "@/lib/api";
@@ -131,6 +132,57 @@ function AssignModal({
           >
             {isPending ? "Assigning…" : "Confirm Assignment"}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Delete plant confirmation ──────────────────────────────────────────────
+
+function DeletePlantModal({
+  plant,
+  onClose,
+  onConfirm,
+  isPending,
+}: {
+  plant: PlantSummary;
+  onClose: () => void;
+  onConfirm: () => void;
+  isPending: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-card border border-border w-full max-w-sm">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-grey-200">
+          <p className="font-semibold text-sm flex items-center gap-2">
+            <AlertTriangle size={15} className="text-critical" /> Delete Plant
+          </p>
+          <button onClick={onClose} disabled={isPending} className="text-muted-foreground hover:text-foreground text-lg leading-none disabled:opacity-40">×</button>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-sm text-foreground">
+            Delete <span className="font-semibold">{plant.name}</span>? This permanently removes its
+            defects, surveys, inspection history and plant layout, and unassigns any inspector.
+            This cannot be undone.
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              disabled={isPending}
+              className="flex-1 h-9 border border-border text-sm font-medium hover:bg-muted disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onConfirm}
+              disabled={isPending}
+              className="flex-1 h-9 bg-critical hover:opacity-90 text-white font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5"
+            >
+              {isPending ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+              {isPending ? "Deleting…" : "Delete Plant"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -558,6 +610,7 @@ function ControlCenter() {
   const navigate = useNavigate();
   const user = getUser();
   const [assignPlant, setAssignPlant] = useState<PlantSummary | null>(null);
+  const [deletePlant, setDeletePlant] = useState<PlantSummary | null>(null);
 
   // Mock plants + every plant saved through Add Plant (useFleetPlants) —
   // was a local copy of the mock list, so added plants vanished on reload.
@@ -578,6 +631,7 @@ function ControlCenter() {
   const [inviteResult, setInviteResult] = useState<InviteClientResult | null>(null);
 
   const createPlant = useCreatePlant();
+  const deletePlantMutation = useDeletePlant();
   const createTeamMember = useCreateTeamMember();
   const editTeamMember = useEditTeamMember();
   const inviteClient = useInviteClient();
@@ -594,6 +648,20 @@ function ControlCenter() {
         });
       },
       onError: (err: Error) => toast.error(err.message || "Failed to add plant"),
+    });
+  }
+
+  function handleDeletePlant() {
+    if (!deletePlant) return;
+    const plant = deletePlant;
+    deletePlantMutation.mutate(plant.id, {
+      onSuccess: () => {
+        setDeletePlant(null);
+        toast.success(`${plant.name} deleted`, {
+          description: "Removed from the fleet along with its defects, surveys and inspection history.",
+        });
+      },
+      onError: (err: Error) => toast.error(err.message || "Failed to delete plant"),
     });
   }
 
@@ -960,12 +1028,22 @@ function ControlCenter() {
                     </td>
                     <td className="px-4 py-4 text-xs mono text-muted-foreground">{p.nextInspection}</td>
                     <td className="px-4 py-4 text-right">
-                      <button
-                        onClick={() => setAssignPlant(p)}
-                        className="h-7 px-3 bg-ochre hover:bg-ochre-light text-ochre-fg font-medium text-xs"
-                      >
-                        Assign
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setAssignPlant(p)}
+                          className="h-7 px-3 bg-ochre hover:bg-ochre-light text-ochre-fg font-medium text-xs"
+                        >
+                          Assign
+                        </button>
+                        <button
+                          onClick={() => setDeletePlant(p)}
+                          disabled={BUILT_IN_PLANT_IDS.has(p.id)}
+                          title={BUILT_IN_PLANT_IDS.has(p.id) ? "The built-in demo plant can't be deleted here" : `Delete ${p.name}`}
+                          className="h-7 w-7 inline-flex items-center justify-center border border-grey-200 text-critical hover:bg-critical/10 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -998,12 +1076,22 @@ function ControlCenter() {
                   ) : (
                     <p className="text-xs text-critical font-medium">⚠ No inspector assigned</p>
                   )}
-                  <button
-                    onClick={() => setAssignPlant(p)}
-                    className="h-7 px-3 bg-ochre hover:bg-ochre-light text-ochre-fg font-medium text-xs"
-                  >
-                    Assign
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setAssignPlant(p)}
+                      className="h-7 px-3 bg-ochre hover:bg-ochre-light text-ochre-fg font-medium text-xs"
+                    >
+                      Assign
+                    </button>
+                    <button
+                      onClick={() => setDeletePlant(p)}
+                      disabled={BUILT_IN_PLANT_IDS.has(p.id)}
+                      title={BUILT_IN_PLANT_IDS.has(p.id) ? "The built-in demo plant can't be deleted here" : `Delete ${p.name}`}
+                      className="h-7 w-7 inline-flex items-center justify-center border border-grey-200 text-critical hover:bg-critical/10 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -1111,6 +1199,16 @@ function ControlCenter() {
           onClose={() => setEditMember(null)}
           onSubmit={handleEditMember}
           isPending={editTeamMember.isPending}
+        />
+      )}
+
+      {/* Delete plant confirmation */}
+      {deletePlant && (
+        <DeletePlantModal
+          plant={deletePlant}
+          onClose={() => setDeletePlant(null)}
+          onConfirm={handleDeletePlant}
+          isPending={deletePlantMutation.isPending}
         />
       )}
 

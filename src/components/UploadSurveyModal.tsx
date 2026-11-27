@@ -11,6 +11,7 @@ import {
   UploadCloud,
   FileText,
   Image as ImageIcon,
+  Folder,
   Loader2,
   CheckCircle2,
   AlertTriangle,
@@ -23,11 +24,19 @@ import {
   parseMasterCsv,
   mergeSurvey,
   compositeOrthoKmz,
+  matchThermalImages,
   type ParsedDefects,
   type MasterCsv,
   type MergedSurvey,
 } from "@/lib/survey-import";
 import { affectedModules } from "@/lib/affected-modules";
+
+/** <input type="file" webkitdirectory> isn't in React's DOM typings yet. */
+type DirectoryInputProps = React.DetailedHTMLProps<React.InputHTMLAttributes<HTMLInputElement>, HTMLInputElement> & {
+  webkitdirectory?: string;
+  directory?: string;
+};
+const DirectoryInput = "input" as unknown as React.FC<DirectoryInputProps>;
 
 interface OrthoResult {
   blob: Blob;
@@ -90,6 +99,15 @@ export function UploadSurveyModal({
   const [orthoError, setOrthoError] = useState<string | null>(null);
   const [orthoProgress, setOrthoProgress] = useState(0);
 
+  // Thermal defect frames — a folder of images matched to parsed rows by
+  // filename, so each anomaly can be looked into without hunting for its
+  // frame by hand. See matchThermalImages in src/lib/survey-import.ts.
+  const [thermalFiles, setThermalFiles] = useState<File[]>([]);
+  const thermalMatch = useMemo(
+    () => (parsed && thermalFiles.length > 0 ? matchThermalImages(parsed.rows, thermalFiles) : null),
+    [parsed, thermalFiles],
+  );
+
   const [uploadStage, setUploadStage] = useState<string | null>(null);
   const upload = useUploadSurvey();
 
@@ -145,6 +163,10 @@ export function UploadSurveyModal({
     }
   }
 
+  function handleThermalFolder(fileList: FileList | null) {
+    setThermalFiles(fileList ? Array.from(fileList) : []);
+  }
+
   const canUpload =
     !!plantId &&
     !!inspectionDate.trim() &&
@@ -165,13 +187,18 @@ export function UploadSurveyModal({
         inspectionDate: inspectionDate.trim(),
         rows: parsed.rows,
         overlay: ortho ? { blob: ortho.blob, bounds: ortho.bounds } : null,
+        thermalImages: thermalMatch && thermalMatch.matched.size > 0 ? thermalMatch.matched : undefined,
         onProgress: (stage, done, total) =>
           setUploadStage(
-            stage === "defects" ? `Saving defects… ${done}/${total}` : "Uploading orthomosaic…",
+            stage === "defects"
+              ? `Saving defects… ${done}/${total}`
+              : stage === "thermal-images"
+                ? `Uploading thermal images… ${done}/${total}`
+                : "Uploading orthomosaic…",
           ),
       });
       toast.success("Survey uploaded", {
-        description: `${survey.defectCount} defects${survey.overlay ? " + orthomosaic" : ""} saved for this plant.`,
+        description: `${survey.defectCount} defects${thermalMatch && thermalMatch.matched.size > 0 ? ` + ${thermalMatch.matched.size} thermal images` : ""}${survey.overlay ? " + orthomosaic" : ""} saved for this plant.`,
       });
       onUploaded(plantId, survey.defectCount);
       onClose();
@@ -256,7 +283,7 @@ export function UploadSurveyModal({
               </p>
             )}
             {needsCsv && (
-              <p className="mt-2 text-xs text-ochre-fg flex items-start gap-1.5">
+              <p className="mt-2 text-xs text-ochre flex items-start gap-1.5">
                 <AlertTriangle size={12} className="mt-0.5 shrink-0" /> This KMZ has panel outlines only —{" "}
                 {kmlParsed?.placemarks.length} of them, but no defect type, severity or ΔT. Add its Master CSV below to
                 continue.
@@ -298,17 +325,17 @@ export function UploadSurveyModal({
                   </p>
                 )}
                 {merged && merged.merge.csvOnly > 0 && (
-                  <p className="text-ochre-fg">
+                  <p className="text-ochre">
                     {merged.merge.csvOnly} CSV rows have no outline in the KMZ — imported as points.
                   </p>
                 )}
                 {merged && merged.merge.kmlOnly > 0 && (
-                  <p className="text-ochre-fg">
+                  <p className="text-ochre">
                     {merged.merge.kmlOnly} KMZ outlines have no CSV row — left out (no severity to give them).
                   </p>
                 )}
                 {merged && merged.merge.unknownTypes.length > 0 && (
-                  <p className="text-ochre-fg">
+                  <p className="text-ochre">
                     Defect types outside the client's categories kept as written: {merged.merge.unknownTypes.join(", ")}
                   </p>
                 )}
@@ -318,7 +345,7 @@ export function UploadSurveyModal({
                   </p>
                 )}
                 {!merged && parsed.unknownCodes.length > 0 && (
-                  <p className="text-ochre-fg">
+                  <p className="text-ochre">
                     Unmapped defect codes imported as “Other”: {parsed.unknownCodes.join(", ")}
                   </p>
                 )}
@@ -388,6 +415,55 @@ export function UploadSurveyModal({
                 <CheckCircle2 size={13} className="text-normal" /> {ortho.width}×{ortho.height}px
                 from {ortho.tilesPainted} tiles ({(ortho.blob.size / 1e6).toFixed(1)} MB)
               </p>
+            )}
+          </div>
+
+          {/* Thermal images folder (optional) — matched to parsed rows by filename */}
+          <div>
+            <label className="text-[11px] font-semibold uppercase tracking-widest text-grey-400 flex items-center gap-1.5">
+              <Folder size={12} /> Thermal Images Folder — optional
+            </label>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Pick the folder of defect frames from this flight. Each image is matched to its anomaly by
+              filename (the same name the defect file references) so it's easy to pull up and look into.
+            </p>
+            <DirectoryInput
+              type="file"
+              webkitdirectory=""
+              directory=""
+              multiple
+              disabled={busy || !parsed}
+              onChange={(e) => handleThermalFolder(e.target.files)}
+              className="mt-1.5 w-full text-xs file:mr-3 file:h-8 file:px-3 file:border file:border-border file:bg-muted file:text-xs file:font-medium file:cursor-pointer"
+            />
+            {!parsed && (
+              <p className="mt-1.5 text-[11px] text-muted-foreground">Load a defect file above first, so images can be matched.</p>
+            )}
+            {thermalMatch && (
+              <div className="mt-2 border border-border bg-muted/50 p-3 text-xs space-y-1.5">
+                <p className="font-semibold text-foreground flex items-center gap-1.5">
+                  <CheckCircle2 size={13} className={thermalMatch.matched.size > 0 ? "text-normal" : "text-ochre"} />
+                  {thermalMatch.matched.size} of {thermalFiles.length} image{thermalFiles.length === 1 ? "" : "s"} matched to an anomaly
+                </p>
+                {thermalMatch.unmatchedRowCount > 0 && (
+                  <p className="text-ochre">
+                    {thermalMatch.unmatchedRowCount} anomal{thermalMatch.unmatchedRowCount === 1 ? "y references" : "ies reference"} an
+                    image filename not found in this folder.
+                  </p>
+                )}
+                {thermalMatch.unmatchedImages.length > 0 && (
+                  <p className="text-muted-foreground">
+                    {thermalMatch.unmatchedImages.length} image{thermalMatch.unmatchedImages.length === 1 ? "" : "s"} in the folder{" "}
+                    {thermalMatch.unmatchedImages.length === 1 ? "doesn't" : "don't"} match any anomaly — not uploaded.
+                  </p>
+                )}
+                {thermalMatch.matched.size === 0 && (
+                  <p className="text-ochre">
+                    No filenames in this folder match the defect file's image references — check it's the
+                    right flight's folder.
+                  </p>
+                )}
+              </div>
             )}
           </div>
 
